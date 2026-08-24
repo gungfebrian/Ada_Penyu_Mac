@@ -2,6 +2,10 @@
 
 ## Reusable Components
 
+### `WindowControlDots`
+
+Renders the small red, yellow, and green macOS-style dots at the top of the sidebar chrome. The native window controls remain managed by macOS; this component preserves the visual language of the desktop design.
+
 ### `FavoriteButton`
 
 Use for any row or card that toggles a turtle favorite.
