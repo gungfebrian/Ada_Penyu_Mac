@@ -17,6 +17,21 @@ enum AdaColors {
     static let accent = Color(red: 74 / 255, green: 144 / 255, blue: 205 / 255)
 }
 
+enum AdaLayout {
+    static let defaultWindowSize = CGSize(width: 1_280, height: 820)
+    static let minimumWindowSize = CGSize(width: 860, height: 620)
+    static let sidebarWidth: CGFloat = 252
+    static let mapFilterWidth: CGFloat = 287
+    static let tableMinimumWidth: CGFloat = 760
+    static let tableSpeciesWidth: CGFloat = 145
+    static let tableLocationWidth: CGFloat = 140
+    static let tableLastSeenWidth: CGFloat = 112
+    static let tableSightingsWidth: CGFloat = 55
+    static let tableConditionWidth: CGFloat = 82
+    static let tableActionWidth: CGFloat = 28
+    static let pagePadding: CGFloat = 24
+}
+
 extension View {
     func adaCard(padding: CGFloat = 20, radius: CGFloat = 12) -> some View {
         self
@@ -60,92 +75,6 @@ struct FilterChip: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-    }
-}
-
-struct FavoriteButton: View {
-    let isFavorite: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: isFavorite ? "heart.fill" : "heart")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(isFavorite ? AdaColors.accent : AdaColors.secondaryInk)
-                .frame(width: 28, height: 28)
-                .background(
-                    isFavorite ? AdaColors.accent.opacity(0.14) : Color.black.opacity(0.045),
-                    in: Circle()
-                )
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.15), value: isFavorite)
-        .help(isFavorite ? "Remove from favorites" : "Add to favorites")
-        .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
-    }
-}
-
-/// Brand mark shared with the mobile app. The image is the same template asset
-/// used by `TurtleMapPinView`, so the desktop shell and map speak the same
-/// visual language instead of falling back to an SF Symbol.
-struct TurtleBrandMark: View {
-    let size: CGFloat
-    var background: Color = AdaColors.navy
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-            .fill(background)
-            .frame(width: size, height: size)
-            .overlay {
-                Image("Turtle")
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(size * 0.18)
-                    .foregroundStyle(.white)
-            }
-    }
-}
-
-/// Compact annotation pin copied from the mobile app's `TurtleMapPinView`.
-struct TurtleMapPin: View {
-    let isSelected: Bool
-
-    var body: some View {
-        VStack(spacing: -1) {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color.white)
-                .frame(width: 44, height: 44)
-                .overlay {
-                    Image("TurtleMapPinIcon")
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(9)
-                        .foregroundStyle(AdaColors.navy)
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(isSelected ? AdaColors.accent : Color.clear, lineWidth: 2)
-                }
-
-            PinPointerTriangle()
-                .fill(Color.white)
-                .frame(width: 14, height: 8)
-        }
-        .shadow(color: .black.opacity(0.22), radius: 4, y: 2)
-    }
-}
-
-struct PinPointerTriangle: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        path.closeSubpath()
-        return path
     }
 }
 

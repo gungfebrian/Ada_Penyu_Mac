@@ -42,9 +42,10 @@ struct MapPageView: View {
                 onFocus: focus,
                 onSelect: onSelect
             )
-            .frame(width: 287)
+            .frame(width: AdaLayout.mapFilterWidth)
         }
         .background(AdaColors.canvas)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { fitMapIfNeeded() }
         .onChange(of: filteredSightings.map(\.id)) { _, _ in
             fitMapIfNeeded()

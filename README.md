@@ -28,15 +28,19 @@ Ada_Penyu_Desktop/
 ├── Ada_Penyu_Desktop.xcodeproj
 └── Ada_Penyu_Desktop/
     ├── AppModel.swift          # Demo models and sample turtle data
-    ├── ContentView.swift       # App shell, dashboard, sidebar, navigation, and shared favorite state
+    ├── ContentView.swift       # App shell, navigation, and shared favorite state
     ├── CollectionViews.swift   # Individuals and Favorites screens
     ├── MapCanvasView.swift     # MapKit canvas and map controls
     ├── TurtleDetailView.swift  # Individual turtle detail screen
-    ├── DesignSystem.swift      # Colors, pills, buttons, and turtle brand components
+    ├── DesignSystem.swift      # Colors, layout tokens, pills, and shared styling
     ├── PreviewGallery.swift    # SwiftUI preview gallery
     ├── Ada_Penyu_DesktopApp.swift # macOS app entry point
+    ├── Components/             # Reusable shell, favorite, and branding components
+    ├── Views/                  # Page-level compositions such as DashboardView
     └── Assets.xcassets         # App icons and turtle artwork
 ```
+
+Additional product and engineering documentation lives in [`design.md`](design.md) and [`docs/`](docs/).
 
 ## Run Locally
 

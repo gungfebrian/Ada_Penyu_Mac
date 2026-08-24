@@ -37,6 +37,7 @@ struct IndividualsView: View {
                     onSelect: onSelect
                 )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(22)
         }
         .scrollIndicators(.hidden)
@@ -97,6 +98,7 @@ struct FavoritesView: View {
                     onSelect: onSelect
                 )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(22)
         }
         .scrollIndicators(.hidden)
@@ -145,15 +147,24 @@ private struct TurtleTableView: View {
     let onSelect: (Turtle) -> Void
 
     var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            tableContent
+                .frame(minWidth: AdaLayout.tableMinimumWidth)
+        }
+        .background(AdaColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var tableContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text("Individual").frame(maxWidth: .infinity, alignment: .leading)
-                Text("Species").frame(width: 210, alignment: .leading)
-                Text("Location").frame(width: 195, alignment: .leading)
-                Text("Last seen ↓").frame(width: 145, alignment: .leading)
-                Text("Sightings").frame(width: 70, alignment: .trailing)
-                Text("Condition").frame(width: 100, alignment: .leading)
-                Text("").frame(width: 28)
+                Text("Species").frame(width: AdaLayout.tableSpeciesWidth, alignment: .leading)
+                Text("Location").frame(width: AdaLayout.tableLocationWidth, alignment: .leading)
+                Text("Last seen ↓").frame(width: AdaLayout.tableLastSeenWidth, alignment: .leading)
+                Text("Sightings").frame(width: AdaLayout.tableSightingsWidth, alignment: .trailing)
+                Text("Condition").frame(width: AdaLayout.tableConditionWidth, alignment: .leading)
+                Text("").frame(width: AdaLayout.tableActionWidth)
             }
             .font(.system(size: 11))
             .foregroundStyle(AdaColors.tertiaryInk)
@@ -181,12 +192,13 @@ private struct TurtleTableView: View {
                         onToggleFavorite: { onToggleFavorite(turtle) },
                         onSelect: onSelect
                     )
-                    if turtle.id != turtles.last?.id { Divider().overlay(AdaColors.line).padding(.leading, 18) }
+                    if turtle.id != turtles.last?.id {
+                        Divider().overlay(AdaColors.line).padding(.leading, 18)
+                    }
                 }
             }
         }
         .background(AdaColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -199,10 +211,10 @@ private struct TurtleTableRow: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 4) {
-                PlaceholderImage(size: 30)
-                PlaceholderImage(size: 30)
                 FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
-                    .padding(.leading, 3)
+                    .padding(.trailing, 3)
+                PlaceholderImage(size: 30)
+                PlaceholderImage(size: 30)
                 Text(turtle.id)
                     .font(.system(size: 13))
                     .foregroundStyle(AdaColors.ink)
@@ -213,25 +225,25 @@ private struct TurtleTableRow: View {
             Text(turtle.species.rawValue)
                 .font(.system(size: 12))
                 .foregroundStyle(AdaColors.secondaryInk)
-                .frame(width: 210, alignment: .leading)
+                .frame(width: AdaLayout.tableSpeciesWidth, alignment: .leading)
             Text(turtle.location)
                 .font(.system(size: 12))
                 .foregroundStyle(AdaColors.secondaryInk)
-                .frame(width: 195, alignment: .leading)
+                .frame(width: AdaLayout.tableLocationWidth, alignment: .leading)
             Text(turtle.lastSeen)
                 .font(.system(size: 12))
                 .foregroundStyle(AdaColors.secondaryInk)
-                .frame(width: 145, alignment: .leading)
+                .frame(width: AdaLayout.tableLastSeenWidth, alignment: .leading)
             Text("\(turtle.sightings)")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(AdaColors.ink)
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: AdaLayout.tableSightingsWidth, alignment: .trailing)
             ConditionPill(condition: turtle.condition)
-                .frame(width: 100, alignment: .leading)
+                .frame(width: AdaLayout.tableConditionWidth, alignment: .leading)
             Image(systemName: "arrow.down")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(AdaColors.tertiaryInk)
-                .frame(width: 28, height: 28)
+                .frame(width: AdaLayout.tableActionWidth, height: 28)
                 .background(Color.black.opacity(0.04))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
