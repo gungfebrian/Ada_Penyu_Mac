@@ -32,6 +32,7 @@ enum AdaLayout {
     static let pagePadding: CGFloat = 24
     static let cardRadius: CGFloat = 12
     static let containerRadius: CGFloat = 20
+    static let windowChromeTopPadding: CGFloat = 28
 }
 
 extension View {

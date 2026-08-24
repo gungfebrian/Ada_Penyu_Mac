@@ -11,7 +11,7 @@ struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             WindowControlDots()
-            .padding(.top, 15)
+            .padding(.top, AdaLayout.windowChromeTopPadding)
             .padding(.horizontal, 12)
 
             HStack(spacing: 14) {
