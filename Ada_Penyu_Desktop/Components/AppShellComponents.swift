@@ -11,8 +11,8 @@ struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             WindowControlDots()
-            .padding(.top, AdaLayout.windowChromeTopPadding)
-            .padding(.horizontal, 12)
+                .padding(.top, AdaLayout.windowChromeTopPadding)
+                .padding(.horizontal, 12)
 
             HStack(spacing: 14) {
                 TurtleAppIconMark(size: 36)
@@ -112,13 +112,17 @@ private struct SidebarRow: View {
                 }
             }
             .foregroundStyle(AdaColors.ink)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 9)
             .padding(.vertical, 8)
             .background(isSelected ? Color.black.opacity(0.08) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
+        .contentShape(Rectangle())
         .accessibilityLabel(section.title)
     }
 }
