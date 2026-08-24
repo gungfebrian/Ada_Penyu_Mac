@@ -30,10 +30,12 @@ enum AdaLayout {
     static let tableConditionWidth: CGFloat = 82
     static let tableActionWidth: CGFloat = 28
     static let pagePadding: CGFloat = 24
+    static let cardRadius: CGFloat = 12
+    static let containerRadius: CGFloat = 20
 }
 
 extension View {
-    func adaCard(padding: CGFloat = 20, radius: CGFloat = 12) -> some View {
+    func adaCard(padding: CGFloat = 20, radius: CGFloat = AdaLayout.cardRadius) -> some View {
         self
             .padding(padding)
             .background(AdaColors.card)

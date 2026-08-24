@@ -88,7 +88,7 @@ struct MapPageView: View {
                 .padding(14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AdaLayout.containerRadius, style: .continuous))
     }
 
     private func focus(_ sighting: Sighting) {
@@ -277,6 +277,6 @@ private struct MapResultCard: View {
         .padding(.trailing, 12)
         .frame(height: 56)
         .background(isSelected ? AdaColors.navy.opacity(0.08) : AdaColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AdaLayout.cardRadius, style: .continuous))
     }
 }

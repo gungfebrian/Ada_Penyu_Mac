@@ -33,6 +33,14 @@ The desktop experience prioritizes:
 | Scarred | `#E6AC3E` | Scarred condition |
 | Injured | `#D62828` | Injured condition |
 
+## Radius Rules
+
+- **Card radius:** `12pt` for dashboard cards, tables, result cards, and detail panels.
+- **Container corner radius:** `20pt` for larger map/content containers.
+- Pills, controls, thumbnails, and map pins keep their own geometry-specific radius.
+
+These values are centralized as `AdaLayout.cardRadius` and `AdaLayout.containerRadius`.
+
 The source of truth for these values is `AdaColors` and `AdaLayout` in `DesignSystem.swift`.
 
 ## Shell Anatomy

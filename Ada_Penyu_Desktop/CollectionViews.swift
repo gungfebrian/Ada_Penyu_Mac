@@ -152,7 +152,7 @@ private struct TurtleTableView: View {
                 .frame(minWidth: AdaLayout.tableMinimumWidth)
         }
         .background(AdaColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AdaLayout.cardRadius, style: .continuous))
     }
 
     private var tableContent: some View {

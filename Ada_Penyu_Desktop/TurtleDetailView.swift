@@ -119,6 +119,6 @@ private struct DetailPanel: View {
             Spacer(minLength: 0)
         }
         .background(AdaColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AdaLayout.cardRadius, style: .continuous))
     }
 }
