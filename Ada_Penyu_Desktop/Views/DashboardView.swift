@@ -4,23 +4,15 @@ struct DashboardView: View {
     let snapshot: DashboardSnapshot
     let turtles: [Turtle]
     let recentSightings: [Sighting]
-    let dataMode: DataMode
-    let isFallback: Bool
-    @Binding var chartMode: String
+    @Binding var chartMode: ChartMode
+    @Binding var chartSpecies: TurtleSpecies?
+    let onExport: () -> Void
     let onSelect: (Turtle) -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                HStack(alignment: .bottom) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Monitoring overview").font(.system(size: 22, weight: .semibold)).foregroundStyle(AdaColors.ink)
-                        Text("A quick read of sightings and individual health across the group.").font(.system(size: 12)).foregroundStyle(AdaColors.tertiaryInk)
-                    }
-                    Spacer()
-                    Text("Updated just now").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk)
-                }
-                SightingsChartCard(months: snapshot.months, dataMode: dataMode, isFallback: isFallback, chartMode: $chartMode)
+                SightingsChartCard(months: snapshot.months, chartMode: $chartMode, chartSpecies: $chartSpecies, onExport: onExport)
 
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 24) {
@@ -42,30 +34,30 @@ struct DashboardView: View {
 
 private struct SightingsChartCard: View {
     let months: [DashboardSnapshot.Month]
-    let dataMode: DataMode
-    let isFallback: Bool
-    @Binding var chartMode: String
+    @Binding var chartMode: ChartMode
+    @Binding var chartSpecies: TurtleSpecies?
+    let onExport: () -> Void
 
-    private var values: [CGFloat] { months.map { CGFloat(chartMode == "Sightings" ? $0.sightings : $0.newIndividuals) } }
+    private var values: [CGFloat] {
+        months.map { month in
+            switch chartMode {
+            case .sightings: CGFloat(month.sightings)
+            case .newIndividuals: CGFloat(month.newIndividuals)
+            }
+        }
+    }
     private var maxValue: CGFloat { max(values.max() ?? 1, 1) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack(alignment: .top, spacing: 10) {
-                SectionTitle("Sightings over time", subtitle: "\(chartMode) · All species · last 12 months")
+                SectionTitle("Sightings over time", subtitle: "\(chartMode.title) · \(chartSpecies?.rawValue ?? "All species") · last 12 months")
                 Spacer(minLength: 8)
                 HStack(spacing: 8) {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(isFallback ? AdaColors.orange : (dataMode == .live ? AdaColors.green : AdaColors.accent))
-                            .frame(width: 6, height: 6)
-                        Text(isFallback ? "Fixture fallback" : (dataMode == .live ? "Live backend" : "Fixture data"))
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                    }
+                    SpeciesFilterMenu(selection: $chartSpecies)
                     HStack(spacing: 0) {
-                        ForEach(["Sightings", "New individuals"], id: \.self) { mode in
-                            Button(mode) { chartMode = mode }
+                        ForEach(ChartMode.allCases) { mode in
+                            Button(mode.title) { chartMode = mode }
                                 .font(.system(size: 11, weight: chartMode == mode ? .medium : .regular))
                                 .foregroundStyle(chartMode == mode ? AdaColors.ink : AdaColors.tertiaryInk)
                                 .padding(.horizontal, 10)
@@ -76,6 +68,17 @@ private struct SightingsChartCard: View {
                     .background(Color.black.opacity(0.045))
                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                     .buttonStyle(.plain)
+                    Button(action: onExport) {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AdaColors.ink)
+                            .frame(width: 29, height: 29)
+                            .background(Color.black.opacity(0.045))
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Export dashboard data")
+                    .accessibilityLabel("Export dashboard data")
                 }
             }
 
@@ -120,9 +123,50 @@ private struct SightingsChartCard: View {
     }
 }
 
+private struct SpeciesFilterMenu: View {
+    @Binding var selection: TurtleSpecies?
+
+    var body: some View {
+        Menu {
+            Button {
+                selection = nil
+            } label: {
+                if selection == nil { Label("All species", systemImage: "checkmark") } else { Text("All species") }
+            }
+            Divider()
+            ForEach(TurtleSpecies.allCases) { species in
+                Button {
+                    selection = species
+                } label: {
+                    if selection == species { Label(species.rawValue, systemImage: "checkmark") } else { Text(species.rawValue) }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(selection?.rawValue ?? "All species")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AdaColors.ink)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(AdaColors.tertiaryInk)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 29)
+            .background(Color.black.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Filter chart by species")
+        .help("Filter chart by species")
+    }
+}
+
 private struct SightingsChart: View {
     let months: [DashboardSnapshot.Month]
-    let chartMode: String
+    let chartMode: ChartMode
     let values: [CGFloat]
     let maxValue: CGFloat
     @State private var hoveredIndex: Int?
@@ -160,7 +204,7 @@ private struct SightingsChart: View {
                         Text(monthLabel(months[hoveredIndex].month))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(AdaColors.secondaryInk)
-                        Text("\(Int(values[hoveredIndex])) \(chartMode.lowercased())")
+                        Text("\(Int(values[hoveredIndex])) \(chartMode.title.lowercased())")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(AdaColors.ink)
                     }

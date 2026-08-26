@@ -43,6 +43,7 @@ enum IndividualSort: String, CaseIterable, Identifiable {
 struct IndividualQuery: Hashable, Sendable {
     var search: String?
     var species: [TurtleSpecies]
+    /// Optional single-select body-condition filter. `nil` means "no filter".
     var condition: TurtleCondition?
     var sort: IndividualSort
     var page: PageRequest
@@ -80,7 +81,10 @@ struct DashboardQuery: Hashable, Sendable {
     var until: Date?
     var species: TurtleSpecies?
 
-    static let lastTwelveMonths = DashboardQuery(since: Calendar.current.date(byAdding: .month, value: -11, to: Date()), until: Date())
+    static var lastTwelveMonths: DashboardQuery {
+        let now = Date()
+        return DashboardQuery(since: Calendar.current.date(byAdding: .month, value: -11, to: now), until: now)
+    }
 
     var queryItems: [URLQueryItem] {
         var result: [URLQueryItem] = []
@@ -231,6 +235,29 @@ struct TurtleLogSummary: Identifiable, Hashable {
     let condition: TurtleCondition?
     let notes: String?
     let coordinate: TurtleCoordinate?
+    /// Only populated for body-condition records. `nil` for regular sighting
+    /// entries. The Body Condition tab filters on this.
+    let bodyPart: TurtleBodyPart?
+
+    init(
+        id: String,
+        date: String,
+        location: String,
+        status: String,
+        condition: TurtleCondition?,
+        notes: String?,
+        coordinate: TurtleCoordinate?,
+        bodyPart: TurtleBodyPart? = nil
+    ) {
+        self.id = id
+        self.date = date
+        self.location = location
+        self.status = status
+        self.condition = condition
+        self.notes = notes
+        self.coordinate = coordinate
+        self.bodyPart = bodyPart
+    }
 }
 
 struct TurtleDetailData {
@@ -644,8 +671,18 @@ final class DemoTurtleRepository: TurtleRepository {
             let conditionMatches = query.condition == nil || turtle.condition == query.condition
             return searchMatches && speciesMatches && conditionMatches
         }
-        if query.sort == .lastSeenDescending { results.sort { $0.lastSeen > $1.lastSeen } }
-        else { results.sort { $0.id < $1.id } }
+        if query.sort == .lastSeenDescending {
+            // Parse the display date so we don't fall back to lexicographic
+            // ordering (which mis-orders "Aug" vs "Feb", etc.).
+            let formatter = APIFormatters.display
+            results.sort { lhs, rhs in
+                let lhsDate = formatter.date(from: lhs.lastSeen) ?? .distantPast
+                let rhsDate = formatter.date(from: rhs.lastSeen) ?? .distantPast
+                return lhsDate > rhsDate
+            }
+        } else {
+            results.sort { $0.id < $1.id }
+        }
         let start = min(query.page.offset, results.count)
         let end = min(start + query.page.limit, results.count)
         return Page(items: results[start..<end].map { withFavorite($0) }, total: results.count, request: query.page)
@@ -666,9 +703,11 @@ final class DemoTurtleRepository: TurtleRepository {
             guard let date = calendar.date(byAdding: .month, value: -11 + index, to: Date()) else { return nil }
             return String(format: "%04d-%02d", calendar.component(.year, from: date), calendar.component(.month, from: date))
         }
-        let sightingCounts = Dictionary(grouping: sightings, by: { monthKey(for: $0.date) })
+        let scopedSightings = query.species.map { species in sightings.filter { $0.species == species } } ?? sightings
+        let scopedTurtles = query.species.map { species in turtles.filter { $0.species == species } } ?? turtles
+        let sightingCounts = Dictionary(grouping: scopedSightings, by: { monthKey(for: $0.date) })
             .mapValues(\.count)
-        let newIndividualCounts = Dictionary(grouping: turtles, by: { monthKey(for: $0.firstRecorded) })
+        let newIndividualCounts = Dictionary(grouping: scopedTurtles, by: { monthKey(for: $0.firstRecorded) })
             .mapValues(\.count)
         let months = monthKeys.map { key in
             DashboardSnapshot.Month(
@@ -696,20 +735,109 @@ final class DemoTurtleRepository: TurtleRepository {
     }
 
     func detail(for turtle: Turtle) async throws -> TurtleDetailData {
-        let logs = sightings.filter { $0.turtleID == turtle.id }.map {
+        let sightingLogs = sightings.filter { $0.turtleID == turtle.id }.map {
             TurtleLogSummary(id: $0.id, date: $0.date, location: $0.location, status: "Sighting", condition: $0.condition, notes: "Foraging near reef edge", coordinate: $0.coordinate)
         }
+        let bodyConditionLogs = Self.demoBodyConditionLogs(for: turtle)
         let measurements = [
             TurtleMeasurement(id: "measurement-\(turtle.id)", date: turtle.lastSeen, length: 84.2, width: 68.4, weight: 31.6)
         ]
-        return TurtleDetailData(turtle: withFavorite(turtle), measurements: measurements, logs: logs)
+        return TurtleDetailData(turtle: withFavorite(turtle), measurements: measurements, logs: sightingLogs + bodyConditionLogs)
+    }
+
+    /// Synthesises body-condition records for the demo profile view so the
+    /// Body Condition tab has something to render. Real body_part data will
+    /// come from the API once that field lands server-side.
+    private static func demoBodyConditionLogs(for turtle: Turtle) -> [TurtleLogSummary] {
+        switch turtle.condition {
+        case .healthy:
+            return []
+        case .injured:
+            return [
+                TurtleLogSummary(
+                    id: "bc-\(turtle.id)-head",
+                    date: turtle.lastSeen,
+                    location: turtle.location,
+                    status: "Injury",
+                    condition: .injured,
+                    notes: "Crack on the head, likely a boat strike. Linear fracture above the right eye socket, 3 cm. Consistent with propeller or hull contact. Animal responsive, no bleeding at time of observation.",
+                    coordinate: turtle.coordinate,
+                    bodyPart: .head
+                ),
+                TurtleLogSummary(
+                    id: "bc-\(turtle.id)-shell-1",
+                    date: "14 Jun 2026",
+                    location: turtle.location,
+                    status: "Injury",
+                    condition: .injured,
+                    notes: "Crack on the shell, likely a boat strike.",
+                    coordinate: turtle.coordinate,
+                    bodyPart: .carapace
+                ),
+                TurtleLogSummary(
+                    id: "bc-\(turtle.id)-flipper",
+                    date: "02 Jun 2026",
+                    location: turtle.location,
+                    status: "Scar",
+                    condition: .scarred,
+                    notes: "Faint healed scar along the left front flipper.",
+                    coordinate: turtle.coordinate,
+                    bodyPart: .flipperLeft
+                ),
+            ]
+        case .scarred:
+            return [
+                TurtleLogSummary(
+                    id: "bc-\(turtle.id)-shell",
+                    date: turtle.firstRecorded,
+                    location: turtle.location,
+                    status: "Scar",
+                    condition: .scarred,
+                    notes: "Old healed abrasion across the carapace ridge.",
+                    coordinate: turtle.coordinate,
+                    bodyPart: .carapace
+                ),
+                TurtleLogSummary(
+                    id: "bc-\(turtle.id)-tail",
+                    date: turtle.firstRecorded,
+                    location: turtle.location,
+                    status: "Scar",
+                    condition: .scarred,
+                    notes: "Notch on the tail, fully healed.",
+                    coordinate: turtle.coordinate,
+                    bodyPart: .tail
+                ),
+            ]
+        }
     }
 
     func export(_ request: ExportRequest) async throws -> DownloadedFile {
         let page = try await listIndividuals(query: request.query)
-        let header = "id,name,species,location,last_seen,sightings,condition\n"
-        let rows = page.items.map { "\($0.id),\($0.species.rawValue),\($0.species.rawValue),\($0.location),\($0.lastSeen),\($0.sightings),\($0.condition.rawValue)" }.joined(separator: "\n")
-        return DownloadedFile(data: Data((header + rows + "\n").utf8), filename: "turtle-individuals.csv", contentType: "text/csv")
+        let columns: [(header: String, value: (Turtle) -> String)] = [
+            ("id", { $0.id }),
+            ("species", { $0.species.rawValue }),
+            ("location", { $0.location }),
+            ("last_seen", { $0.lastSeen }),
+            ("first_recorded", { $0.firstRecorded }),
+            ("sightings", { String($0.sightings) }),
+            ("condition", { $0.condition.rawValue }),
+        ]
+        let header = columns.map(\.header).joined(separator: ",")
+        let rows = page.items.map { turtle in
+            columns.map { Self.csvEscape($0.value(turtle)) }.joined(separator: ",")
+        }
+        let body = ([header] + rows).joined(separator: "\n") + "\n"
+        return DownloadedFile(data: Data(body.utf8), filename: "turtle-individuals.csv", contentType: "text/csv")
+    }
+
+    /// Wraps values that contain commas, quotes, or newlines to keep the CSV
+    /// well-formed. Non-conflicting values are returned untouched.
+    private static func csvEscape(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains("\n") {
+            let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+            return "\"\(escaped)\""
+        }
+        return value
     }
 
     private func withFavorite(_ turtle: Turtle) -> Turtle {
