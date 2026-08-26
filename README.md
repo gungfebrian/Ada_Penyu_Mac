@@ -27,8 +27,10 @@ Ada Penyu Mac is a native macOS dashboard for monitoring sea turtle individuals,
 Ada_Penyu_Desktop/
 ├── Ada_Penyu_Desktop.xcodeproj
 └── Ada_Penyu_Desktop/
-    ├── AppModel.swift          # Demo models and sample turtle data
-    ├── ContentView.swift       # App shell, navigation, and shared favorite state
+    ├── AppModel.swift          # Domain models and display formatting
+    ├── DataLayer.swift         # API contract, client, adapters, and demo repository
+    ├── AppStore.swift          # Screen state, loading, fallback, and commands
+    ├── ContentView.swift       # App shell and route composition
     ├── CollectionViews.swift   # Individuals and Favorites screens
     ├── MapCanvasView.swift     # MapKit canvas and map controls
     ├── TurtleDetailView.swift  # Individual turtle detail screen
@@ -63,11 +65,29 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-## Current Data State
+## Data modes
 
-The desktop app currently uses local demo data from `AppModel.swift`. Favorite changes are stored in an in-memory `Set<String>` shared by the app shell, Individuals page, Favorites page, and sidebar. This keeps the UI fully interactive while the mobile/API data integration is being prepared.
+The app opens in **Demo mode** so a presentation is deterministic and does not depend on a network connection. Use the mode menu in the top bar to switch to **Live API**. If the API is unavailable, the store automatically returns to demo data and shows a visible fallback notice instead of leaving a blank screen.
 
-Favorites will reset to the demo defaults when the app is relaunched. Persistent favorites and live turtle data can be connected in a later integration step.
+The live adapter expects the backend at `http://127.0.0.1:8010` and sends a stable `X-User-Id` header for favorites. Change the base URL in UserDefaults with the key `ada.apiBaseURL` when the backend is hosted elsewhere.
+
+Favorites, search, filters, map period, detail navigation, and export are all wired through `AppStore`; replacing the repository does not require changing the views.
+
+## Demo runbook
+
+The backend worktree contains an idempotent seed script and a tested local stack. From the backend repository:
+
+```bash
+POSTGRES_PORT=55432 docker-compose -p ada-penyu-demo up -d postgres
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_identification_api \
+  uv run alembic upgrade head
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_identification_api \
+  uv run python scripts/seed_desktop_demo.py
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_identification_api \
+  ML_MODELS_ENABLED=false uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
+```
+
+Then build and open the desktop app in Xcode. Start in Demo mode for the safest walkthrough; switch to Live API only after `curl http://127.0.0.1:8010/health` returns `{"status":"ok"}`.
 
 ## Preview Screens
 

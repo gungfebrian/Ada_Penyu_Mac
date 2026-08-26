@@ -1,64 +1,80 @@
-# Architecture
+# Ada Penyu Desktop architecture
 
-## Overview
+The desktop app is a native SwiftUI client with one state owner and a replaceable data boundary. The default repository is deterministic demo data; the live repository calls the FastAPI backend without coupling screens to HTTP or database details.
 
-Ada Penyu Mac is a small SwiftUI application organized around a single app shell and focused feature views. The shell owns navigation and shared UI state; feature views render pages and communicate through closures and bindings.
+## Runtime architecture
+
+```mermaid
+flowchart LR
+    UI[SwiftUI pages\nDashboard · Map · Individuals · Favorites · Detail]
+    STORE[AppStore\nroute + filters + loading + fallback]
+    REPO[TurtleRepository\nasync feature contract]
+    DEMO[DemoTurtleRepository\n8 deterministic turtles]
+    API[RemoteTurtleRepository\nDTO mapping + APIClient]
+    BE[FastAPI backend\n/api/v1]
+    DB[(Postgres\nprofiles · logs · favorites)]
+    UI <--> STORE
+    STORE --> REPO
+    REPO --> DEMO
+    REPO --> API
+    API --> BE --> DB
+    API -. error .-> STORE
+    STORE -. automatic demo fallback .-> DEMO
+```
 
 ## Responsibilities
 
-| Area | Responsibility |
-| --- | --- |
-| `ContentView` | Owns active section, selected turtle, search text, chart mode, export alert, and temporary favorite IDs. |
-| `Components/AppShellComponents.swift` | Sidebar navigation and top bar. |
-| `Components/FavoriteButton.swift` | Reusable favorite interaction and accessibility labels. |
-| `Components/TurtleBranding.swift` | App icon mark, template brand mark, map pin, and map pin pointer. |
-| `Views/DashboardView.swift` | Dashboard chart and summary cards. |
-| `CollectionViews.swift` | Individuals and Favorites collection flows. |
-| `MapCanvasView.swift` | MapKit canvas, map annotations, filters, and results. |
-| `TurtleDetailView.swift` | Detail summary and detail panels. |
-| `AppModel.swift` | Domain models and demo data. |
-| `DesignSystem.swift` | Colors, layout constants, cards, condition pills, filters, and placeholders. |
+| Layer | Files | Responsibility |
+| --- | --- | --- |
+| Shell | `ContentView.swift`, `Components/AppShellComponents.swift` | Navigation, top bar, mode switch, contextual export, global error/loading surfaces. |
+| State | `AppStore.swift` | Owns route, query state, selected turtle, async loading, optimistic favorites, fallback status, and export command. |
+| Contract | `DataLayer.swift` | Shared query/value types, `TurtleRepository`, API DTOs, date/status mapping, and repository implementations. |
+| Feature views | `Views/DashboardView.swift`, `MapCanvasView.swift`, `CollectionViews.swift`, `TurtleDetailView.swift` | Render realistic data and emit user intent through bindings/closures. No view performs HTTP. |
+| Domain/design | `AppModel.swift`, `DesignSystem.swift`, `Components/` | Stable display models, colors, spacing, condition semantics, branding, and reusable controls. |
+| Backend | `app/api/`, `app/services/`, `scripts/seed_desktop_demo.py` | REST endpoints, persistence, and reproducible demo records. |
 
-## Data Flow
+## User flow
 
 ```text
-DemoData
-   │
-   ├── ContentView initializes favoriteIDs
-   │       │
-   │       ├── SidebarView(favoriteCount:)
-   │       ├── IndividualsView(favoriteIDs:, onToggleFavorite:)
-   │       └── FavoritesView(favoriteIDs:, onToggleFavorite:)
-   │
-   ├── MapPageView filters DemoData.sightings
-   └── DashboardView reads summary collections
+Launch
+  → AppStore.bootstrap()
+  → parallel individuals + favorites + dashboard + map requests
+  → dashboard is immediately usable
+
+Individuals
+  → search/species/condition/sort
+  → repository query with pagination
+  → select row
+  → detail loads measurements, locations, and sighting log
+
+Map
+  → period/species/condition filters
+  → focus a pin or result card
+  → explicit “Open turtle detail” action
+
+Any API failure in Live mode
+  → preserve the user's context
+  → switch to deterministic Demo mode
+  → show a non-blocking fallback notice
 ```
 
-The favorite set is keyed by `Turtle.id`, so row state does not depend on the immutable demo model. This is the intended seam for a future persistence or mobile/API adapter.
+## API contract used by the desktop client
 
-## Folder Convention
+| Capability | Endpoint |
+| --- | --- |
+| Individuals | `GET /api/v1/individuals` |
+| Favorites | `GET/PUT/DELETE /api/v1/favorites` |
+| Dashboard | `GET /api/v1/dashboard/summary` |
+| Map sightings | `GET /api/v1/dashboard/map/sightings` |
+| Turtle detail | `GET /api/v1/individuals/{id}/logs` |
+| Export | `GET /api/v1/exports/individuals` |
 
-- `Components/` contains reusable UI pieces that can be used by multiple pages.
-- `Views/` contains page-level compositions and feature-specific child views.
-- Root Swift files contain models, page flows that have not yet grown beyond one focused responsibility, or app entry points.
-- `Assets.xcassets/` contains all runtime images and app branding assets.
-- `docs/` contains implementation-facing documentation; `design.md` is the product-facing visual contract.
+All requests are made through `APIClient`, which centralizes base URL, user identity, ISO-8601 decoding, and HTTP error handling. `RemoteTurtleRepository` translates backend DTOs into the view-facing models, so page code stays independent of response shape.
 
-## Navigation
+## Why this shape
 
-`AppSection` is the navigation enum. The sidebar changes `activeSection`; selecting a turtle stores `selectedTurtle` and moves to `.detail`. Returning from detail clears the selection and routes back to Individuals.
-
-## Future Integration Boundary
-
-Keep view APIs stable while replacing `DemoData`:
-
-```swift
-IndividualsView(
-    searchText: $searchText,
-    favoriteIDs: $favoriteIDs,
-    onToggleFavorite: toggleFavorite,
-    onSelect: showDetail
-)
-```
-
-An API-backed repository can feed the same view models, while a persistence layer can replace the in-memory `favoriteIDs` set without changing the favorite button or table row.
+- A single store prevents favorites, counts, search, and detail navigation from drifting between screens.
+- A repository boundary makes Demo mode reliable for tomorrow's demo while keeping Live API one menu action away.
+- Parallel bootstrap reduces the perceived wait for a cold API.
+- Empty, loading, and fallback states are explicit, so a slow or sparse backend never renders a misleading blank panel.
+- Map filters are scoped to the map and no longer leak the Individuals page's filters.
