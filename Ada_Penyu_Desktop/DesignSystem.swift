@@ -1,15 +1,16 @@
 import SwiftUI
 
 enum AdaColors {
-    // Shared with the mobile app's turtle design system.
-    static let canvas = Color(red: 232 / 255, green: 232 / 255, blue: 232 / 255)
-    static let sidebar = Color(red: 242 / 255, green: 242 / 255, blue: 242 / 255)
+    // Sampled from the approved 1512 x 982 desktop compositions.
+    static let canvas = Color(red: 245 / 255, green: 245 / 255, blue: 247 / 255)
+    static let sidebar = Color(red: 239 / 255, green: 240 / 255, blue: 241 / 255)
     static let card = Color.white
     static let ink = Color(red: 0.08, green: 0.09, blue: 0.11)
     static let secondaryInk = Color(red: 0.43, green: 0.46, blue: 0.51)
     static let tertiaryInk = Color(red: 0.61, green: 0.64, blue: 0.69)
     static let navy = Color(red: 12 / 255, green: 42 / 255, blue: 62 / 255)
     static let navySoft = Color(red: 24 / 255, green: 58 / 255, blue: 82 / 255)
+    static let brandBlue = Color(red: 22 / 255, green: 60 / 255, blue: 96 / 255)
     static let line = Color.black.opacity(0.08)
     static let green = Color(red: 0.09, green: 0.48, blue: 0.31)
     static let orange = Color(red: 230 / 255, green: 172 / 255, blue: 62 / 255)
@@ -18,19 +19,19 @@ enum AdaColors {
 }
 
 enum AdaLayout {
-    static let defaultWindowSize = CGSize(width: 1_280, height: 820)
-    static let minimumWindowSize = CGSize(width: 860, height: 620)
-    static let sidebarWidth: CGFloat = 252
+    static let defaultWindowSize = CGSize(width: 1_512, height: 900)
+    static let minimumWindowSize = CGSize(width: 1_100, height: 680)
+    static let sidebarWidth: CGFloat = 253
     static let mapFilterWidth: CGFloat = 287
     static let tableMinimumWidth: CGFloat = 760
-    static let tableSpeciesWidth: CGFloat = 145
-    static let tableLocationWidth: CGFloat = 140
-    static let tableLastSeenWidth: CGFloat = 112
+    static let tableSpeciesWidth: CGFloat = 220
+    static let tableLocationWidth: CGFloat = 180
+    static let tableLastSeenWidth: CGFloat = 192
     static let tableSightingsWidth: CGFloat = 55
     static let tableConditionWidth: CGFloat = 82
     static let tableActionWidth: CGFloat = 28
-    static let pagePadding: CGFloat = 24
-    static let cardRadius: CGFloat = 12
+    static let pagePadding: CGFloat = 22
+    static let cardRadius: CGFloat = 11
     static let containerRadius: CGFloat = 20
     static let windowChromeTopPadding: CGFloat = 28
 }
@@ -63,6 +64,8 @@ struct ConditionPill: View {
 struct FilterChip: View {
     let title: String
     let isSelected: Bool
+    var horizontalPadding: CGFloat = 13
+    var unselectedBackground: Color = AdaColors.card
     let action: () -> Void
 
     var body: some View {
@@ -72,9 +75,9 @@ struct FilterChip: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
                 .foregroundStyle(isSelected ? Color.white : AdaColors.secondaryInk)
-                .padding(.horizontal, 14)
-                .frame(height: 29)
-                .background(isSelected ? AdaColors.navy : AdaColors.card)
+                .padding(.horizontal, horizontalPadding)
+                .frame(height: 28)
+                .background(isSelected ? AdaColors.navy : unselectedBackground)
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)

@@ -15,7 +15,7 @@ struct TurtleAppIconMark: View {
 
 struct TurtleBrandMark: View {
     let size: CGFloat
-    var background: Color = AdaColors.navy
+    var background: Color = AdaColors.brandBlue
 
     var body: some View {
         RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
