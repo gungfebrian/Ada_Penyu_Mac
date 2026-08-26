@@ -73,9 +73,36 @@ struct Turtle: Identifiable, Hashable {
     let condition: TurtleCondition
     let firstRecorded: String
     let isFavorite: Bool
+    /// Stable backend identifier when the record comes from the API. Demo
+    /// records intentionally keep this optional so the app can run offline.
+    let backendID: UUID?
     /// Mirrors the mobile app's `Turtle.coordinate` shape so API-backed data
     /// can be adapted here later without changing the map view.
     let coordinate: TurtleCoordinate?
+
+    init(
+        id: String,
+        species: TurtleSpecies,
+        location: String,
+        lastSeen: String,
+        sightings: Int,
+        condition: TurtleCondition,
+        firstRecorded: String,
+        isFavorite: Bool,
+        coordinate: TurtleCoordinate?,
+        backendID: UUID? = nil
+    ) {
+        self.id = id
+        self.species = species
+        self.location = location
+        self.lastSeen = lastSeen
+        self.sightings = sightings
+        self.condition = condition
+        self.firstRecorded = firstRecorded
+        self.isFavorite = isFavorite
+        self.coordinate = coordinate
+        self.backendID = backendID
+    }
 }
 
 struct TurtleCoordinate: Hashable {
