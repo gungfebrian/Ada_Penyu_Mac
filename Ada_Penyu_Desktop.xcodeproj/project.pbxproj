@@ -8,12 +8,36 @@
 
 /* Begin PBXFileReference section */
 		B3CA6E7F303C19B000C7B987 /* Ada_Penyu_Desktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Ada_Penyu_Desktop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D4F1A2B3C4D5E6F700000001 /* Ada_Penyu_DesktopTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Ada_Penyu_DesktopTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXContainerItemProxy section */
+		D4F1A2B3C4D5E6F70000000C /* Proxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B3CA6E77303C19B000C7B987 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B3CA6E7E303C19B000C7B987;
+			remoteInfo = Ada_Penyu_Desktop;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		D4F1A2B3C4D5E6F70000000D /* Ada_Penyu_Desktop */ = {
+			isa = PBXTargetDependency;
+			target = B3CA6E7E303C19B000C7B987 /* Ada_Penyu_Desktop */;
+			targetProxy = D4F1A2B3C4D5E6F70000000C /* Proxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B3CA6E81303C19B000C7B987 /* Ada_Penyu_Desktop */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Ada_Penyu_Desktop;
+			sourceTree = "<group>";
+		};
+		D4F1A2B3C4D5E6F700000002 /* Ada_Penyu_DesktopTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Ada_Penyu_DesktopTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -33,6 +57,7 @@
 			isa = PBXGroup;
 			children = (
 				B3CA6E81303C19B000C7B987 /* Ada_Penyu_Desktop */,
+				D4F1A2B3C4D5E6F700000002 /* Ada_Penyu_DesktopTests */,
 				B3CA6E80303C19B000C7B987 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +66,7 @@
 			isa = PBXGroup;
 			children = (
 				B3CA6E7F303C19B000C7B987 /* Ada_Penyu_Desktop.app */,
+				D4F1A2B3C4D5E6F700000001 /* Ada_Penyu_DesktopTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,6 +96,27 @@
 			productReference = B3CA6E7F303C19B000C7B987 /* Ada_Penyu_Desktop.app */;
 			productType = "com.apple.product-type.application";
 		};
+		D4F1A2B3C4D5E6F700000003 /* Ada_Penyu_DesktopTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D4F1A2B3C4D5E6F700000009 /* Build configuration list for PBXNativeTarget "Ada_Penyu_DesktopTests" */;
+			buildPhases = (
+				D4F1A2B3C4D5E6F700000006 /* Sources */,
+				D4F1A2B3C4D5E6F700000007 /* Frameworks */,
+				D4F1A2B3C4D5E6F700000008 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D4F1A2B3C4D5E6F70000000D /* Ada_Penyu_Desktop */,
+			);
+			fileSystemSynchronizedGroups = (
+				D4F1A2B3C4D5E6F700000002 /* Ada_Penyu_DesktopTests */,
+			);
+			name = Ada_Penyu_DesktopTests;
+			productName = Ada_Penyu_DesktopTests;
+			productReference = D4F1A2B3C4D5E6F700000001 /* Ada_Penyu_DesktopTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +129,10 @@
 				TargetAttributes = {
 					B3CA6E7E303C19B000C7B987 = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					D4F1A2B3C4D5E6F700000003 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = B3CA6E7E303C19B000C7B987;
 					};
 				};
 			};
@@ -100,6 +151,7 @@
 			projectRoot = "";
 			targets = (
 				B3CA6E7E303C19B000C7B987 /* Ada_Penyu_Desktop */,
+				D4F1A2B3C4D5E6F700000003 /* Ada_Penyu_DesktopTests */,
 			);
 		};
 /* End PBXProject section */
@@ -122,7 +174,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D4F1A2B3C4D5E6F700000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D4F1A2B3C4D5E6F700000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D4F1A2B3C4D5E6F700000008 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
 		B3CA6E88303C19B100C7B987 /* Debug */ = {
@@ -255,6 +334,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 7Y44BM6QU8;
 				ENABLE_APP_SANDBOX = YES;
+				CODE_SIGN_ENTITLEMENTS = Ada_Penyu_Desktop/Ada_Penyu_Desktop.entitlements;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -287,6 +367,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 7Y44BM6QU8;
 				ENABLE_APP_SANDBOX = YES;
+				CODE_SIGN_ENTITLEMENTS = Ada_Penyu_Desktop/Ada_Penyu_Desktop.entitlements;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -309,6 +390,48 @@
 			};
 			name = Release;
 		};
+		D4F1A2B3C4D5E6F70000000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "test.Ada-Penyu-DesktopTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Ada_Penyu_Desktop.app/Contents/MacOS/Ada_Penyu_Desktop";
+			};
+			name = Debug;
+		};
+		D4F1A2B3C4D5E6F70000000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "test.Ada-Penyu-DesktopTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Ada_Penyu_Desktop.app/Contents/MacOS/Ada_Penyu_Desktop";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -326,6 +449,15 @@
 			buildConfigurations = (
 				B3CA6E8B303C19B100C7B987 /* Debug */,
 				B3CA6E8C303C19B100C7B987 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D4F1A2B3C4D5E6F700000009 /* Build configuration list for PBXNativeTarget "Ada_Penyu_DesktopTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D4F1A2B3C4D5E6F70000000A /* Debug */,
+				D4F1A2B3C4D5E6F70000000B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
