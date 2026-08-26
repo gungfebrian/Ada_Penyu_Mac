@@ -3,6 +3,7 @@ import SwiftUI
 struct SidebarView: View {
     @Binding var selection: AppSection
     let favoriteCount: Int
+    let individualCount: Int
 
     private var highlightedSection: AppSection {
         selection == .detail ? .individuals : selection
@@ -10,9 +11,15 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WindowControlDots()
-                .padding(.top, AdaLayout.windowChromeTopPadding)
-                .padding(.horizontal, 12)
+            HStack {
+                Spacer()
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaColors.ink.opacity(0.82))
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 40)
 
             HStack(spacing: 14) {
                 TurtleAppIconMark(size: 36)
@@ -20,8 +27,8 @@ struct SidebarView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AdaColors.ink)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 19)
+            .padding(.horizontal, 15)
+            .padding(.top, 14)
             .padding(.bottom, 24)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -29,7 +36,6 @@ struct SidebarView: View {
                 SidebarRow(section: .map, selection: $selection)
 
                 HStack(spacing: 8) {
-                    TurtleAppIconMark(size: 20)
                     Text("Sea Turtle Group")
                         .font(.system(size: 12))
                         .foregroundStyle(AdaColors.secondaryInk)
@@ -42,18 +48,8 @@ struct SidebarView: View {
                 .padding(.top, 19)
                 .padding(.bottom, 5)
 
-                SidebarRow(
-                    section: .individuals,
-                    selection: $selection,
-                    count: DemoData.turtles.count,
-                    isHighlighted: highlightedSection == .individuals
-                )
-                SidebarRow(
-                    section: .favorites,
-                    selection: $selection,
-                    count: favoriteCount,
-                    isHighlighted: highlightedSection == .favorites
-                )
+                SidebarRow(section: .individuals, selection: $selection, count: individualCount, isHighlighted: highlightedSection == .individuals)
+                SidebarRow(section: .favorites, selection: $selection, count: favoriteCount, isHighlighted: highlightedSection == .favorites)
             }
 
             Spacer(minLength: 16)
@@ -62,23 +58,12 @@ struct SidebarView: View {
                 Circle()
                     .fill(AdaColors.navy)
                     .frame(width: 28, height: 28)
-                    .overlay {
-                        Text("B")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
+                    .overlay { Text("B").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Bli Wayan")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(AdaColors.ink)
-                    Text("Field researcher")
-                        .font(.system(size: 10))
-                        .foregroundStyle(AdaColors.tertiaryInk)
+                    Text("Bli Wayan").font(.system(size: 12, weight: .medium)).foregroundStyle(AdaColors.ink)
+                    Text("Field researcher").font(.system(size: 10)).foregroundStyle(AdaColors.tertiaryInk)
                 }
                 Spacer()
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AdaColors.tertiaryInk)
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 14)
@@ -102,27 +87,20 @@ private struct SidebarRow: View {
                 Image(systemName: section.icon)
                     .font(.system(size: 15, weight: .medium))
                     .frame(width: 14)
-                Text(section.title)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                Text(section.title).font(.system(size: 13, weight: isSelected ? .medium : .regular))
                 Spacer()
-                if let count {
-                    Text("\(count)")
-                        .font(.system(size: 12))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                }
+                if let count { Text("\(count)").font(.system(size: 12)).foregroundStyle(AdaColors.tertiaryInk) }
             }
             .foregroundStyle(AdaColors.ink)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 9)
             .padding(.vertical, 8)
-            .background(isSelected ? Color.black.opacity(0.08) : Color.clear)
+            .background(isSelected ? Color.black.opacity(0.075) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
-        .contentShape(Rectangle())
         .accessibilityLabel(section.title)
     }
 }
@@ -131,69 +109,100 @@ struct TopBar: View {
     let title: String
     let subtitle: String?
     @Binding var searchText: String
-    let onExport: () -> Void
+    let onExport: (() -> Void)?
     let onBack: (() -> Void)?
+    let mode: DataMode
+    let isFallback: Bool
+    let onModeChange: (DataMode) -> Void
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         HStack(spacing: 10) {
-            if let onBack {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                        .frame(width: 25, height: 25)
-                        .background(Color.black.opacity(0.05))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Back to Individuals")
-            }
-
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(AdaColors.ink)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                }
+                Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(AdaColors.ink)
+                if let subtitle { Text(subtitle).font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk) }
             }
 
             Spacer(minLength: 12)
 
+            Menu {
+                ForEach(DataMode.allCases) { value in
+                    Button {
+                        onModeChange(value)
+                    } label: {
+                        if value == mode && !isFallback {
+                            Label(value.title, systemImage: "checkmark")
+                        } else {
+                            Text(value.title)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(isFallback ? AdaColors.orange : (mode == .live ? AdaColors.green : AdaColors.accent))
+                        .frame(width: 6, height: 6)
+                    Text(isFallback ? "Demo fallback" : mode.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(AdaColors.tertiaryInk)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(AdaColors.card)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(AdaColors.line, lineWidth: 1)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(AdaColors.tertiaryInk)
-                TextField("Search individuals", text: $searchText)
+                Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(AdaColors.tertiaryInk)
+                TextField(
+                    "",
+                    text: $searchText,
+                    prompt: Text("Search individuals").foregroundStyle(AdaColors.secondaryInk)
+                )
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
-                    .frame(minWidth: 90, idealWidth: 178, maxWidth: 220)
+                    .foregroundStyle(AdaColors.ink)
+                    .tint(AdaColors.navy)
+                    .focused($isSearchFocused)
+                    .frame(width: 214)
             }
             .padding(.horizontal, 11)
             .frame(height: 30)
-            .background(Color.black.opacity(0.045))
+            .background(AdaColors.card)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-            Button(action: onExport) {
-                HStack(spacing: 7) {
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("Export")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .frame(height: 30)
-                .background(AdaColors.navy)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(isSearchFocused ? AdaColors.accent : AdaColors.line, lineWidth: isSearchFocused ? 1.5 : 1)
             }
-            .buttonStyle(.plain)
+
+            if let onExport {
+                Button(action: onExport) {
+                    HStack(spacing: 7) {
+                        Image(systemName: "arrow.down").font(.system(size: 10, weight: .bold))
+                        Text("Export").font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .background(AdaColors.navy)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .padding(.horizontal, 24)
+        .padding(.leading, 23)
+        .padding(.trailing, 32)
         .frame(maxWidth: .infinity)
         .frame(height: 52)
-        .background(AdaColors.card)
+        .background(AdaColors.canvas)
     }
 }
