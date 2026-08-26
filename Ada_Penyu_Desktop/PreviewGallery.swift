@@ -3,21 +3,30 @@ import SwiftUI
 private struct PreviewCollectionScreen: View {
     let favorites: Bool
     @State private var searchText = ""
-    @State private var favoriteIDs = Set(DemoData.turtles.filter { $0.isFavorite }.map { $0.id })
+    @State private var selectedSpecies: TurtleSpecies?
+    @State private var selectedCondition: TurtleCondition?
+    @State private var favoriteIDs = Set(DemoFixtures.turtles.filter { $0.isFavorite }.map { $0.id })
 
     var body: some View {
         Group {
             if favorites {
                 FavoritesView(
+                    turtles: DemoFixtures.turtles.filter { favoriteIDs.contains($0.id) },
                     searchText: $searchText,
-                    favoriteIDs: $favoriteIDs,
+                    selectedCondition: $selectedCondition,
+                    favoriteIDs: favoriteIDs,
                     onToggleFavorite: toggleFavorite,
-                    onSelect: { _ in }
+                    onSelect: { _ in },
+                    onBrowseIndividuals: {}
                 )
             } else {
                 IndividualsView(
+                    turtles: DemoFixtures.turtles,
+                    total: DemoFixtures.turtles.count,
                     searchText: $searchText,
-                    favoriteIDs: $favoriteIDs,
+                    selectedSpecies: $selectedSpecies,
+                    selectedCondition: $selectedCondition,
+                    favoriteIDs: favoriteIDs,
                     onToggleFavorite: toggleFavorite,
                     onSelect: { _ in }
                 )
@@ -42,7 +51,7 @@ private struct PreviewCollectionScreen: View {
 }
 
 #Preview("Sea Turtle Group · Map") {
-    MapPageView(onSelect: { _ in })
+    MapPageView(turtles: DemoFixtures.turtles, sightings: DemoFixtures.sightings, selectedPeriod: .constant(.thirtyDays), selectedSpecies: .constant(nil), selectedCondition: .constant(nil), onReload: {}, onSelect: { _ in })
         .frame(width: 1_260, height: 750)
 }
 
@@ -55,7 +64,7 @@ private struct PreviewCollectionScreen: View {
 }
 
 #Preview("Sea Turtle Group · Turtle detail") {
-    TurtleDetailView(turtle: DemoData.turtles[0], onBack: {})
+    TurtleDetailView(turtle: DemoFixtures.turtles[0], detail: nil, isFavorite: false, onToggleFavorite: {}, onExport: {})
         .frame(width: 1_260, height: 750)
         .background(AdaColors.canvas)
 }
