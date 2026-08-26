@@ -1,111 +1,71 @@
 import SwiftUI
 
 struct IndividualsView: View {
+    let turtles: [Turtle]
+    let total: Int
     @Binding var searchText: String
-    @Binding var favoriteIDs: Set<String>
+    @Binding var selectedSpecies: TurtleSpecies?
+    @Binding var selectedCondition: TurtleCondition?
+    let favoriteIDs: Set<String>
     let onToggleFavorite: (Turtle) -> Void
     let onSelect: (Turtle) -> Void
-    @State private var selectedSpecies: TurtleSpecies?
-    @State private var selectedCondition: TurtleCondition?
-
-    private var filteredTurtles: [Turtle] {
-        DemoData.turtles.filter { turtle in
-            let matchesSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || turtle.id.localizedCaseInsensitiveContains(searchText)
-                || turtle.species.rawValue.localizedCaseInsensitiveContains(searchText)
-                || turtle.location.localizedCaseInsensitiveContains(searchText)
-            let matchesSpecies = selectedSpecies == nil || turtle.species == selectedSpecies
-            let matchesCondition = selectedCondition == nil || turtle.condition == selectedCondition
-            return matchesSearch && matchesSpecies && matchesCondition
-        }
-    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                TurtleFilterBar(selectedSpecies: $selectedSpecies, selectedCondition: $selectedCondition)
-                HStack {
-                    Spacer()
-                    Text("\(filteredTurtles.count) individuals")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                }
-                TurtleTableView(
-                    turtles: filteredTurtles,
-                    favoriteIDs: favoriteIDs,
-                    onToggleFavorite: onToggleFavorite,
-                    onSelect: onSelect
-                )
+            VStack(alignment: .leading, spacing: 11) {
+                TurtleFilterBar(resultCount: turtles.count, selectedSpecies: $selectedSpecies, selectedCondition: $selectedCondition)
+                TurtleTableView(turtles: turtles, favoriteIDs: favoriteIDs, onToggleFavorite: onToggleFavorite, onSelect: onSelect)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(22)
+            .padding(.leading, 22)
+            .padding(.trailing, 32)
+            .padding(.top, 24)
+            .padding(.bottom, 22)
         }
         .scrollIndicators(.hidden)
     }
 }
 
 struct FavoritesView: View {
+    let turtles: [Turtle]
     @Binding var searchText: String
-    @Binding var favoriteIDs: Set<String>
+    @Binding var selectedCondition: TurtleCondition?
+    let favoriteIDs: Set<String>
     let onToggleFavorite: (Turtle) -> Void
     let onSelect: (Turtle) -> Void
-    @State private var selectedCondition: TurtleCondition?
+    let onBrowseIndividuals: () -> Void
 
-    private var favoriteTurtles: [Turtle] {
-        DemoData.turtles.filter { turtle in
-            let matchesSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || turtle.id.localizedCaseInsensitiveContains(searchText)
-                || turtle.location.localizedCaseInsensitiveContains(searchText)
-            let matchesCondition = selectedCondition == nil || turtle.condition == selectedCondition
-            return favoriteIDs.contains(turtle.id) && matchesSearch && matchesCondition
+    private var filtered: [Turtle] {
+        turtles.filter { turtle in
+            (searchText.isEmpty || turtle.id.localizedCaseInsensitiveContains(searchText) || turtle.location.localizedCaseInsensitiveContains(searchText)) &&
+            (selectedCondition == nil || selectedCondition == turtle.condition)
         }
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 11) {
                 HStack(spacing: 8) {
-                    Text("Favorites")
-                        .font(.system(size: 12))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                    Text("\(favoriteIDs.count) of \(DemoData.turtles.count)")
-                        .font(.system(size: 12))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                }
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        Text("Condition")
-                            .font(.system(size: 11))
-                            .foregroundStyle(AdaColors.tertiaryInk)
-                        FilterChip(title: "All", isSelected: selectedCondition == nil) { selectedCondition = nil }
-                        FilterChip(title: "Healthy", isSelected: selectedCondition == .healthy) { selectedCondition = .healthy }
-                        FilterChip(title: "Scarred", isSelected: selectedCondition == .scarred) { selectedCondition = .scarred }
-                        FilterChip(title: "Injured", isSelected: selectedCondition == .injured) { selectedCondition = .injured }
-                    }
-                }
-
-                HStack {
+                    Text("Condition").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk)
+                    FilterChip(title: "All", isSelected: selectedCondition == nil) { selectedCondition = nil }
+                    ForEach(TurtleCondition.allCases) { condition in FilterChip(title: condition.rawValue, isSelected: selectedCondition == condition) { selectedCondition = condition } }
                     Spacer()
-                    Text("\(favoriteTurtles.count) individuals")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AdaColors.tertiaryInk)
+                    Text("\(filtered.count) favorites").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk)
                 }
-                TurtleTableView(
-                    turtles: favoriteTurtles,
-                    favoriteIDs: favoriteIDs,
-                    onToggleFavorite: onToggleFavorite,
-                    onSelect: onSelect
-                )
+                TurtleTableView(turtles: filtered, favoriteIDs: favoriteIDs, onToggleFavorite: onToggleFavorite, onSelect: onSelect, emptyAction: onBrowseIndividuals, emptyTitle: "No favorites yet", emptyMessage: "Favorite a turtle to keep it one click away.")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(22)
+            .padding(.leading, 22)
+            .padding(.trailing, 32)
+            .padding(.top, 24)
+            .padding(.bottom, 22)
         }
         .scrollIndicators(.hidden)
     }
 }
 
 private struct TurtleFilterBar: View {
+    let resultCount: Int
     @Binding var selectedSpecies: TurtleSpecies?
     @Binding var selectedCondition: TurtleCondition?
 
@@ -115,27 +75,26 @@ private struct TurtleFilterBar: View {
                 HStack(spacing: 8) {
                     FilterChip(title: "All", isSelected: selectedSpecies == nil) { selectedSpecies = nil }
                     ForEach(TurtleSpecies.allCases) { species in
-                        FilterChip(title: species.rawValue, isSelected: selectedSpecies == species) {
-                            selectedSpecies = species
-                        }
+                        FilterChip(title: species.rawValue, isSelected: selectedSpecies == species) { selectedSpecies = species }
                     }
                 }
             }
-
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    Text("Condition")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                        .padding(.trailing, 4)
+                    Text("Condition").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk).padding(.trailing, 4)
                     FilterChip(title: "All", isSelected: selectedCondition == nil) { selectedCondition = nil }
                     ForEach(TurtleCondition.allCases) { condition in
-                        FilterChip(title: condition.rawValue, isSelected: selectedCondition == condition) {
-                            selectedCondition = condition
-                        }
+                        FilterChip(title: condition.rawValue, isSelected: selectedCondition == condition) { selectedCondition = condition }
                     }
+                    Spacer(minLength: 8)
                 }
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Text("\(resultCount) individuals")
+                .font(.system(size: 11))
+                .foregroundStyle(AdaColors.tertiaryInk)
+                .frame(height: 28)
         }
     }
 }
@@ -145,12 +104,36 @@ private struct TurtleTableView: View {
     let favoriteIDs: Set<String>
     let onToggleFavorite: (Turtle) -> Void
     let onSelect: (Turtle) -> Void
+    let emptyAction: (() -> Void)?
+    let emptyTitle: String
+    let emptyMessage: String
+
+    init(
+        turtles: [Turtle],
+        favoriteIDs: Set<String>,
+        onToggleFavorite: @escaping (Turtle) -> Void,
+        onSelect: @escaping (Turtle) -> Void,
+        emptyAction: (() -> Void)? = nil,
+        emptyTitle: String = "No individuals match these filters",
+        emptyMessage: String = "Try clearing a filter or search term."
+    ) {
+        self.turtles = turtles
+        self.favoriteIDs = favoriteIDs
+        self.onToggleFavorite = onToggleFavorite
+        self.onSelect = onSelect
+        self.emptyAction = emptyAction
+        self.emptyTitle = emptyTitle
+        self.emptyMessage = emptyMessage
+    }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            tableContent
-                .frame(minWidth: AdaLayout.tableMinimumWidth)
+        GeometryReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                tableContent
+                    .frame(width: max(proxy.size.width, 1_100))
+            }
         }
+        .frame(height: turtles.isEmpty ? 261 : 41 + CGFloat(turtles.count * 51))
         .background(AdaColors.card)
         .clipShape(RoundedRectangle(cornerRadius: AdaLayout.cardRadius, style: .continuous))
     }
@@ -161,40 +144,19 @@ private struct TurtleTableView: View {
                 Text("Individual").frame(maxWidth: .infinity, alignment: .leading)
                 Text("Species").frame(width: AdaLayout.tableSpeciesWidth, alignment: .leading)
                 Text("Location").frame(width: AdaLayout.tableLocationWidth, alignment: .leading)
-                Text("Last seen ↓").frame(width: AdaLayout.tableLastSeenWidth, alignment: .leading)
+                Text("Last seen").frame(width: AdaLayout.tableLastSeenWidth, alignment: .leading)
                 Text("Sightings").frame(width: AdaLayout.tableSightingsWidth, alignment: .trailing)
-                Text("Condition").frame(width: AdaLayout.tableConditionWidth, alignment: .leading)
+                Text("Condition").frame(width: AdaLayout.tableConditionWidth, alignment: .trailing)
                 Text("").frame(width: AdaLayout.tableActionWidth)
             }
-            .font(.system(size: 11))
-            .foregroundStyle(AdaColors.tertiaryInk)
-            .padding(.horizontal, 18)
-            .frame(height: 38)
-
+            .font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk).padding(.horizontal, 18).frame(height: 40)
             Divider().overlay(AdaColors.line)
-
             if turtles.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "tortoise")
-                        .font(.system(size: 24))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                    Text("No individuals match these filters")
-                        .font(.system(size: 13))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 180)
+                EmptyCollectionState(title: emptyTitle, message: emptyMessage, action: emptyAction).frame(maxWidth: .infinity).frame(height: 220)
             } else {
                 ForEach(turtles) { turtle in
-                    TurtleTableRow(
-                        turtle: turtle,
-                        isFavorite: favoriteIDs.contains(turtle.id),
-                        onToggleFavorite: { onToggleFavorite(turtle) },
-                        onSelect: onSelect
-                    )
-                    if turtle.id != turtles.last?.id {
-                        Divider().overlay(AdaColors.line).padding(.leading, 18)
-                    }
+                    TurtleTableRow(turtle: turtle, isFavorite: favoriteIDs.contains(turtle.id), onToggleFavorite: { onToggleFavorite(turtle) }, onSelect: { onSelect(turtle) })
+                    if turtle.id != turtles.last?.id { Divider().overlay(AdaColors.line).padding(.leading, 18) }
                 }
             }
         }
@@ -202,54 +164,54 @@ private struct TurtleTableView: View {
     }
 }
 
+private struct EmptyCollectionState: View {
+    let title: String
+    let message: String
+    let action: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            TurtleBrandMark(size: 42)
+                .opacity(0.72)
+            Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(AdaColors.ink)
+            Text(message).font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk)
+            if let action {
+                Button("Browse individuals", action: action)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AdaColors.brandBlue)
+                    .buttonStyle(.plain)
+                    .padding(.top, 3)
+            }
+        }
+    }
+}
+
 private struct TurtleTableRow: View {
     let turtle: Turtle
     let isFavorite: Bool
     let onToggleFavorite: () -> Void
-    let onSelect: (Turtle) -> Void
+    let onSelect: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
                 FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
-                    .padding(.trailing, 3)
                 PlaceholderImage(size: 30)
-                PlaceholderImage(size: 30)
-                Text(turtle.id)
-                    .font(.system(size: 13))
-                    .foregroundStyle(AdaColors.ink)
-                    .padding(.leading, 4)
+                Text(turtle.id).font(.system(size: 13, weight: .medium)).foregroundStyle(AdaColors.ink).padding(.leading, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(turtle.species.rawValue)
-                .font(.system(size: 12))
-                .foregroundStyle(AdaColors.secondaryInk)
-                .frame(width: AdaLayout.tableSpeciesWidth, alignment: .leading)
-            Text(turtle.location)
-                .font(.system(size: 12))
-                .foregroundStyle(AdaColors.secondaryInk)
-                .frame(width: AdaLayout.tableLocationWidth, alignment: .leading)
-            Text(turtle.lastSeen)
-                .font(.system(size: 12))
-                .foregroundStyle(AdaColors.secondaryInk)
-                .frame(width: AdaLayout.tableLastSeenWidth, alignment: .leading)
-            Text("\(turtle.sightings)")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(AdaColors.ink)
-                .frame(width: AdaLayout.tableSightingsWidth, alignment: .trailing)
-            ConditionPill(condition: turtle.condition)
-                .frame(width: AdaLayout.tableConditionWidth, alignment: .leading)
-            Image(systemName: "arrow.down")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(AdaColors.tertiaryInk)
-                .frame(width: AdaLayout.tableActionWidth, height: 28)
-                .background(Color.black.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(turtle.species.rawValue).font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk).frame(width: AdaLayout.tableSpeciesWidth, alignment: .leading)
+            Text(turtle.location).font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk).frame(width: AdaLayout.tableLocationWidth, alignment: .leading)
+            Text(turtle.lastSeen).font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk).frame(width: AdaLayout.tableLastSeenWidth, alignment: .leading)
+            Text("\(turtle.sightings)").font(.system(size: 12, weight: .medium)).foregroundStyle(AdaColors.ink).frame(width: AdaLayout.tableSightingsWidth, alignment: .trailing)
+            ConditionPill(condition: turtle.condition).frame(width: AdaLayout.tableConditionWidth, alignment: .trailing)
+            Image(systemName: "arrow.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(AdaColors.tertiaryInk).frame(width: AdaLayout.tableActionWidth, height: 28).background(Color.black.opacity(0.025)).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .padding(.horizontal, 18)
-        .frame(height: 50)
+        .frame(height: 51)
         .contentShape(Rectangle())
-        .onTapGesture { onSelect(turtle) }
+        .onTapGesture(perform: onSelect)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Open turtle detail")
     }
 }
