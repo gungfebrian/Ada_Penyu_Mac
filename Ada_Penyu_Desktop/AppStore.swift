@@ -9,13 +9,29 @@ final class AppStore: ObservableObject {
     @Published var searchText = "" {
         didSet { scheduleIndividualsReload() }
     }
-    @Published var selectedSpecies: TurtleSpecies?
-    @Published var selectedCondition: TurtleCondition?
+    // Species and body condition are one sidebar filter, not two — picking
+    // either clears the other so exactly one filter chip is ever active at
+    // once, and the individuals list is always scoped by just that one thing.
+    @Published var selectedSpecies: TurtleSpecies? {
+        didSet {
+            if selectedSpecies != nil, selectedCondition != nil { selectedCondition = nil }
+            scheduleIndividualsReload()
+        }
+    }
+    @Published var selectedCondition: TurtleCondition? {
+        didSet {
+            if selectedCondition != nil, selectedSpecies != nil { selectedSpecies = nil }
+            scheduleIndividualsReload()
+        }
+    }
     @Published var selectedMapPeriod: MapPeriod = .thirtyDays
     @Published var mapSpecies: TurtleSpecies?
     @Published var mapCondition: TurtleCondition?
     @Published var sort: IndividualSort = .lastSeenDescending
-    @Published var chartMode = "Sightings"
+    @Published var chartMode: ChartMode = .sightings
+    @Published var chartSpecies: TurtleSpecies? {
+        didSet { Task { await reloadDashboard() } }
+    }
     @Published private(set) var turtles: [Turtle] = []
     @Published private(set) var favoriteTurtles: [Turtle] = []
     @Published private(set) var sightings: [Sighting] = []
@@ -58,7 +74,7 @@ final class AppStore: ObservableObject {
         do {
             async let individuals = repository.listIndividuals(query: currentIndividualQuery)
             async let favorites = repository.listFavorites()
-            async let dashboard = repository.dashboard(query: .lastTwelveMonths)
+            async let dashboard = repository.dashboard(query: currentDashboardQuery)
             async let sightings = repository.mapSightings(query: currentMapQuery)
             let (individualPage, favoriteItems, dashboardSnapshot, mapItems) = try await (individuals, favorites, dashboard, sightings)
             turtles = individualPage.items
@@ -91,6 +107,14 @@ final class AppStore: ObservableObject {
     func reloadMap() async {
         do {
             sightings = try await repository.mapSightings(query: currentMapQuery)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func reloadDashboard() async {
+        do {
+            dashboard = try await repository.dashboard(query: currentDashboardQuery)
         } catch {
             lastError = error.localizedDescription
         }
@@ -168,6 +192,12 @@ final class AppStore: ObservableObject {
 
     var currentIndividualQuery: IndividualQuery {
         IndividualQuery(search: searchText, species: selectedSpecies.map { [$0] } ?? [], condition: selectedCondition, sort: sort)
+    }
+
+    var currentDashboardQuery: DashboardQuery {
+        var query = DashboardQuery.lastTwelveMonths
+        query.species = chartSpecies
+        return query
     }
 
     var currentMapQuery: MapQuery {

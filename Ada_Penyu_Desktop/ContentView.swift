@@ -8,18 +8,26 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             HStack(spacing: 0) {
-                SidebarView(selection: $store.activeSection, favoriteCount: store.favoriteTurtles.count, individualCount: store.totalIndividuals)
+                SidebarView(
+                    selection: $store.activeSection,
+                    selectedCondition: $store.selectedCondition,
+                    favoriteCount: store.favoriteTurtles.count,
+                    selectedSpecies: store.selectedSpecies,
+                    onSelectSpecies: { species in
+                        store.selectedSpecies = species
+                        store.activeSection = .individuals
+                    },
+                    dataMode: store.mode,
+                    isFallback: store.isUsingFallback,
+                    onModeChange: store.switchMode
+                )
 
                 VStack(spacing: 0) {
                     TopBar(
                         title: pageTitle,
                         subtitle: pageSubtitle,
                         searchText: searchBinding,
-                        onExport: store.activeSection == .individuals ? { exportQueryOverride = nil; showingExport = true } : nil,
-                        onBack: nil,
-                        mode: store.mode,
-                        isFallback: store.isUsingFallback,
-                        onModeChange: store.switchMode
+                        onExport: { exportQueryOverride = nil; showingExport = true }
                     )
 
                     ZStack {
@@ -110,9 +118,7 @@ struct ContentView: View {
         }
     }
 
-    private var pageTitle: String {
-        store.activeSection == .detail ? AppSection.individuals.title : store.activeSection.title
-    }
+    private var pageTitle: String { store.activeSection.title }
 
     private var searchBinding: Binding<String> {
         Binding(
@@ -138,15 +144,13 @@ struct ContentView: View {
     private var pageView: some View {
         switch store.activeSection {
         case .dashboard:
-            DashboardView(snapshot: store.dashboard, turtles: store.turtles, recentSightings: store.sightings, dataMode: store.mode, isFallback: store.isUsingFallback, chartMode: $store.chartMode) { turtle in store.select(turtle) }
+            DashboardView(snapshot: store.dashboard, turtles: store.turtles, recentSightings: store.sightings, chartMode: $store.chartMode, chartSpecies: $store.chartSpecies, onExport: { exportQueryOverride = nil; showingExport = true }) { turtle in store.select(turtle) }
         case .map:
             MapPageView(turtles: store.turtles, sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod, selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition, onReload: { Task { await store.reloadMap() } }, onSelect: store.select)
         case .individuals:
-            IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText, selectedSpecies: $store.selectedSpecies, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select)
+            IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select)
         case .favorites:
             FavoritesView(turtles: store.favoriteTurtles, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select, onBrowseIndividuals: { store.searchText = ""; store.selectedCondition = nil; store.activeSection = .individuals })
-        case .detail:
-            IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText, selectedSpecies: $store.selectedSpecies, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select)
         }
     }
 }

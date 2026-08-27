@@ -1,59 +1,141 @@
 import SwiftUI
 
+/// App shell chrome — the sidebar and top bar. Both are shell-level (never
+/// embedded inside a page) so they live together in one file.
+
+// MARK: - Sidebar
+
 struct SidebarView: View {
     @Binding var selection: AppSection
+    @Binding var selectedCondition: TurtleCondition?
     let favoriteCount: Int
-    let individualCount: Int
+    let selectedSpecies: TurtleSpecies?
+    /// Called when the user taps a species row. Pass `nil` to clear the
+    /// species filter. The caller is expected to route to `.individuals`.
+    let onSelectSpecies: (TurtleSpecies?) -> Void
 
-    private var highlightedSection: AppSection {
-        selection == .detail ? .individuals : selection
-    }
+    // Data-source picker lives in the sidebar user menu so we only have one
+    // menu affordance in the shell (top bar stays clean).
+    let dataMode: DataMode
+    let isFallback: Bool
+    let onModeChange: (DataMode) -> Void
+
+    @State private var speciesExpanded = true
+    @State private var conditionsExpanded = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Spacer()
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(AdaColors.ink.opacity(0.82))
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 40)
-
-            HStack(spacing: 14) {
-                TurtleAppIconMark(size: 36)
-                Text("Sea Turtle Group")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AdaColors.ink)
-            }
-            .padding(.horizontal, 15)
-            .padding(.top, 14)
-            .padding(.bottom, 24)
+            windowChrome
+            brandRow
 
             VStack(alignment: .leading, spacing: 3) {
-                SidebarRow(section: .dashboard, selection: $selection)
-                SidebarRow(section: .map, selection: $selection)
+                SidebarSectionRow(section: .dashboard, selection: $selection)
+                SidebarSectionRow(section: .map, selection: $selection)
+                SidebarSectionRow(section: .favorites, selection: $selection, count: favoriteCount)
+            }
 
-                HStack(spacing: 8) {
-                    Text("Sea Turtle Group")
-                        .font(.system(size: 12))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                }
-                .padding(.horizontal, 18)
+            SidebarGroupHeader(title: "Sea Turtle Group", isExpanded: $speciesExpanded)
                 .padding(.top, 19)
-                .padding(.bottom, 5)
+                .padding(.bottom, 3)
 
-                SidebarRow(section: .individuals, selection: $selection, count: individualCount, isHighlighted: highlightedSection == .individuals)
-                SidebarRow(section: .favorites, selection: $selection, count: favoriteCount, isHighlighted: highlightedSection == .favorites)
+            if speciesExpanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(TurtleSpecies.allCases) { species in
+                        SidebarSpeciesRow(
+                            species: species,
+                            isSelected: isSpeciesActive(species)
+                        ) {
+                            onSelectSpecies(selectedSpecies == species ? nil : species)
+                        }
+                    }
+                }
+            }
+
+            SidebarGroupHeader(title: "Body Condition", isExpanded: $conditionsExpanded)
+                .padding(.top, 19)
+                .padding(.bottom, 3)
+
+            if conditionsExpanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(TurtleCondition.allCases) { condition in
+                        SidebarConditionRow(
+                            condition: condition,
+                            isSelected: selectedCondition == condition
+                        ) {
+                            // Tap-again-to-clear keeps it a strict single-select
+                            // radio without needing a separate "All" row.
+                            selectedCondition = (selectedCondition == condition) ? nil : condition
+                        }
+                    }
+                }
             }
 
             Spacer(minLength: 16)
 
+            userMenu
+        }
+        .frame(width: AdaLayout.sidebarWidth)
+        .background(AdaColors.sidebar)
+    }
+
+    // The sidebar highlights a species only while the user is on the
+    // Individuals list. A filter carried in the background doesn't cause a
+    // misleading highlight on Dashboard/Map.
+    private func isSpeciesActive(_ species: TurtleSpecies) -> Bool {
+        selectedSpecies == species && selection == .individuals
+    }
+
+    private var windowChrome: some View {
+        HStack {
+            Spacer()
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(AdaColors.ink.opacity(0.82))
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 40)
+    }
+
+    private var brandRow: some View {
+        HStack(spacing: 14) {
+            TurtleAppIconMark(size: 36)
+            Text("Sea Turtle Group")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(AdaColors.ink)
+        }
+        .padding(.horizontal, 15)
+        .padding(.top, 14)
+        .padding(.bottom, 22)
+    }
+
+    // The user row is a Menu — the single settings surface for the whole
+    // shell. Right now it hosts the demo/live toggle; future account /
+    // preferences items can slot in here without adding new chrome.
+    private var userMenu: some View {
+        Menu {
+            Section("Data source") {
+                ForEach(DataMode.allCases) { value in
+                    Button {
+                        onModeChange(value)
+                    } label: {
+                        // Show a checkmark on the current mode, but only when
+                        // we're NOT in fallback (fallback means the user chose
+                        // live but is temporarily on demo).
+                        if value == dataMode && !isFallback {
+                            Label(value.title, systemImage: "checkmark")
+                        } else {
+                            Text(value.title)
+                        }
+                    }
+                }
+            }
+            if isFallback {
+                Section {
+                    Text("Live backend unreachable — showing demo data.")
+                }
+            }
+        } label: {
             HStack(spacing: 12) {
                 Circle()
                     .fill(AdaColors.navy)
@@ -61,25 +143,38 @@ struct SidebarView: View {
                     .overlay { Text("B").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white) }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Bli Wayan").font(.system(size: 12, weight: .medium)).foregroundStyle(AdaColors.ink)
-                    Text("Field researcher").font(.system(size: 10)).foregroundStyle(AdaColors.tertiaryInk)
+                    Text(isFallback ? "Demo fallback" : dataModeLabel)
+                        .font(.system(size: 10))
+                        .foregroundStyle(isFallback ? AdaColors.orange : AdaColors.tertiaryInk)
                 }
                 Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(AdaColors.tertiaryInk)
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 14)
+            .contentShape(Rectangle())
         }
-        .frame(width: AdaLayout.sidebarWidth)
-        .background(AdaColors.sidebar)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .accessibilityLabel("Bli Wayan, field researcher, \(dataModeLabel)")
+        .help("Account and data source")
+    }
+
+    private var dataModeLabel: String {
+        dataMode == .live ? "Field researcher · Live" : "Field researcher · Demo"
     }
 }
 
-private struct SidebarRow: View {
+// MARK: - Sidebar rows
+
+private struct SidebarSectionRow: View {
     let section: AppSection
     @Binding var selection: AppSection
-    var count: Int?
-    var isHighlighted: Bool?
+    var count: Int? = nil
 
-    private var isSelected: Bool { isHighlighted ?? (selection == section) }
+    private var isSelected: Bool { selection == section }
 
     var body: some View {
         Button { selection = section } label: {
@@ -89,7 +184,11 @@ private struct SidebarRow: View {
                     .frame(width: 14)
                 Text(section.title).font(.system(size: 13, weight: isSelected ? .medium : .regular))
                 Spacer()
-                if let count { Text("\(count)").font(.system(size: 12)).foregroundStyle(AdaColors.tertiaryInk) }
+                if let count {
+                    Text("\(count)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(AdaColors.tertiaryInk)
+                }
             }
             .foregroundStyle(AdaColors.ink)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,18 +201,110 @@ private struct SidebarRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .accessibilityLabel(section.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
+
+private struct SidebarGroupHeader: View {
+    let title: String
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { isExpanded.toggle() }
+        } label: {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 12))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AdaColors.tertiaryInk)
+                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+}
+
+private struct SidebarSpeciesRow: View {
+    let species: TurtleSpecies
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "tortoise.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaColors.ink)
+                    .frame(width: 14)
+                Text(species.rawValue).font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                Spacer()
+            }
+            .foregroundStyle(AdaColors.ink)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 8)
+            .background(isSelected ? Color.black.opacity(0.075) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .accessibilityLabel(species.rawValue)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .help(isSelected ? "Clear species filter" : "Filter by \(species.rawValue)")
+    }
+}
+
+/// Radio-style single-select condition row. Colored dot prefix maps to the
+/// condition tint (green/orange/red). Tapping the selected row clears the
+/// filter — the "All" state is implicit (no row highlighted).
+private struct SidebarConditionRow: View {
+    let condition: TurtleCondition
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(condition.tint)
+                    .frame(width: 8, height: 8)
+                    .frame(width: 14)
+                Text(condition.rawValue).font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                Spacer()
+            }
+            .foregroundStyle(AdaColors.ink)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 8)
+            .background(isSelected ? Color.black.opacity(0.075) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .accessibilityLabel(condition.rawValue)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .help(isSelected ? "Clear condition filter" : "Filter by \(condition.rawValue)")
+    }
+}
+
+// MARK: - Top bar
 
 struct TopBar: View {
     let title: String
     let subtitle: String?
     @Binding var searchText: String
     let onExport: (() -> Void)?
-    let onBack: (() -> Void)?
-    let mode: DataMode
-    let isFallback: Bool
-    let onModeChange: (DataMode) -> Void
     @FocusState private var isSearchFocused: Bool
 
     var body: some View {
@@ -124,42 +315,6 @@ struct TopBar: View {
             }
 
             Spacer(minLength: 12)
-
-            Menu {
-                ForEach(DataMode.allCases) { value in
-                    Button {
-                        onModeChange(value)
-                    } label: {
-                        if value == mode && !isFallback {
-                            Label(value.title, systemImage: "checkmark")
-                        } else {
-                            Text(value.title)
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(isFallback ? AdaColors.orange : (mode == .live ? AdaColors.green : AdaColors.accent))
-                        .frame(width: 6, height: 6)
-                    Text(isFallback ? "Demo fallback" : mode.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(AdaColors.card)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(AdaColors.line, lineWidth: 1)
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
 
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(AdaColors.tertiaryInk)

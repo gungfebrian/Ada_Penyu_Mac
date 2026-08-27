@@ -3,7 +3,6 @@ import SwiftUI
 private struct PreviewCollectionScreen: View {
     let favorites: Bool
     @State private var searchText = ""
-    @State private var selectedSpecies: TurtleSpecies?
     @State private var selectedCondition: TurtleCondition?
     @State private var favoriteIDs = Set(DemoFixtures.turtles.filter { $0.isFavorite }.map { $0.id })
 
@@ -24,7 +23,6 @@ private struct PreviewCollectionScreen: View {
                     turtles: DemoFixtures.turtles,
                     total: DemoFixtures.turtles.count,
                     searchText: $searchText,
-                    selectedSpecies: $selectedSpecies,
                     selectedCondition: $selectedCondition,
                     favoriteIDs: favoriteIDs,
                     onToggleFavorite: toggleFavorite,

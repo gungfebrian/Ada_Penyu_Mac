@@ -4,7 +4,6 @@ struct IndividualsView: View {
     let turtles: [Turtle]
     let total: Int
     @Binding var searchText: String
-    @Binding var selectedSpecies: TurtleSpecies?
     @Binding var selectedCondition: TurtleCondition?
     let favoriteIDs: Set<String>
     let onToggleFavorite: (Turtle) -> Void
@@ -13,7 +12,7 @@ struct IndividualsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 11) {
-                TurtleFilterBar(resultCount: turtles.count, selectedSpecies: $selectedSpecies, selectedCondition: $selectedCondition)
+                TurtleFilterBar(resultCount: turtles.count, selectedCondition: $selectedCondition)
                 TurtleTableView(turtles: turtles, favoriteIDs: favoriteIDs, onToggleFavorite: onToggleFavorite, onSelect: onSelect)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -47,8 +46,7 @@ struct FavoritesView: View {
             VStack(alignment: .leading, spacing: 11) {
                 HStack(spacing: 8) {
                     Text("Condition").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk)
-                    FilterChip(title: "All", isSelected: selectedCondition == nil) { selectedCondition = nil }
-                    ForEach(TurtleCondition.allCases) { condition in FilterChip(title: condition.rawValue, isSelected: selectedCondition == condition) { selectedCondition = condition } }
+                    ConditionFilterChips(selectedCondition: $selectedCondition)
                     Spacer()
                     Text("\(filtered.count) favorites").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk)
                 }
@@ -66,28 +64,14 @@ struct FavoritesView: View {
 
 private struct TurtleFilterBar: View {
     let resultCount: Int
-    @Binding var selectedSpecies: TurtleSpecies?
     @Binding var selectedCondition: TurtleCondition?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    FilterChip(title: "All", isSelected: selectedSpecies == nil) { selectedSpecies = nil }
-                    ForEach(TurtleSpecies.allCases) { species in
-                        FilterChip(title: species.rawValue, isSelected: selectedSpecies == species) { selectedSpecies = species }
-                    }
-                }
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    Text("Condition").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk).padding(.trailing, 4)
-                    FilterChip(title: "All", isSelected: selectedCondition == nil) { selectedCondition = nil }
-                    ForEach(TurtleCondition.allCases) { condition in
-                        FilterChip(title: condition.rawValue, isSelected: selectedCondition == condition) { selectedCondition = condition }
-                    }
-                    Spacer(minLength: 8)
-                }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Text("Condition").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk).padding(.trailing, 4)
+                ConditionFilterChips(selectedCondition: $selectedCondition)
+                Spacer(minLength: 8)
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -95,6 +79,24 @@ private struct TurtleFilterBar: View {
                 .font(.system(size: 11))
                 .foregroundStyle(AdaColors.tertiaryInk)
                 .frame(height: 28)
+        }
+    }
+}
+
+/// Single-select condition chip row. Selecting "All" clears the filter;
+/// tapping the currently-selected condition also clears it. Shared by
+/// IndividualsView and FavoritesView so their behavior can't drift apart.
+private struct ConditionFilterChips: View {
+    @Binding var selectedCondition: TurtleCondition?
+
+    var body: some View {
+        FilterChip(title: "All", isSelected: selectedCondition == nil) {
+            selectedCondition = nil
+        }
+        ForEach(TurtleCondition.allCases) { condition in
+            FilterChip(title: condition.rawValue, isSelected: selectedCondition == condition) {
+                selectedCondition = (selectedCondition == condition) ? nil : condition
+            }
         }
     }
 }

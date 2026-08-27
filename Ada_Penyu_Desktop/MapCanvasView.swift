@@ -121,7 +121,12 @@ private struct MapFilterPanel: View {
                     }
                 }
             }
-            HStack { Text("\(sightings.count) results").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk); Spacer(); Text("Export ↓").font(.system(size: 10)).foregroundStyle(AdaColors.navySoft) }
+            HStack {
+                Text("\(sightings.count) results")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AdaColors.tertiaryInk)
+                Spacer()
+            }
             ScrollView {
                 VStack(spacing: 8) {
                     ForEach(sightings) { sighting in

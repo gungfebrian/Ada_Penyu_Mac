@@ -2,10 +2,6 @@
 
 ## Reusable Components
 
-### `WindowControlDots`
-
-Renders the small red, yellow, and green macOS-style controls at the top of the sidebar chrome. Each dot is an interactive button mapped to the active window's close, minimize, and zoom actions. The native titlebar controls remain available as well.
-
 ### `FavoriteButton`
 
 Use for any row or card that toggles a turtle favorite.
@@ -41,7 +37,7 @@ These components standardize filter interaction, condition semantics, and small 
 ## Adding a Component
 
 1. Give it one visual responsibility.
-2. Pass state and actions in from the parent; do not reach into `DemoData` unless the component is explicitly data-display-only.
+2. Pass state and actions in from the parent; do not reach into `DemoFixtures` unless the component is explicitly data-display-only.
 3. Keep colors, spacing, and window dimensions in `DesignSystem.swift`.
 4. Add an accessibility label when the component's visual meaning is not represented by visible text.
 5. Add or update a SwiftUI preview when the component has a distinct visual state.
