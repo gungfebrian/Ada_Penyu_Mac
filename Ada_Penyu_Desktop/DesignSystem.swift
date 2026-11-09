@@ -16,6 +16,13 @@ enum AdaColors {
     static let orange = Color(red: 230 / 255, green: 172 / 255, blue: 62 / 255)
     static let red = Color(red: 214 / 255, green: 40 / 255, blue: 40 / 255)
     static let accent = Color(red: 74 / 255, green: 144 / 255, blue: 205 / 255)
+    static let accentSoft = Color(red: 74 / 255, green: 144 / 255, blue: 205 / 255).opacity(0.14)
+    static let surface = card
+    static let surfaceMuted = Color(red: 245 / 255, green: 246 / 255, blue: 248 / 255)
+    static let border = line
+    static let textPrimary = ink
+    static let textSecondary = secondaryInk
+    static let textMuted = tertiaryInk
 }
 
 enum AdaLayout {
