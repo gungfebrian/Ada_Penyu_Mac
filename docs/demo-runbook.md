@@ -3,7 +3,7 @@
 ## Fast path (offline-safe)
 
 1. Build and run `Ada_Penyu_Desktop.xcodeproj` with the `Ada_Penyu_Desktop` scheme.
-2. Leave the top-bar mode menu on **Demo mode**.
+2. Select **Demo mode** in the account menu; the app otherwise starts in Live API mode.
 3. Walk through Dashboard → Map → select a result → **Open turtle detail** → back to Individuals.
 4. On Individuals, search `Turtle #004`, toggle the heart, open Favorites, then use Export.
 
@@ -21,6 +21,10 @@ DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_ident
 ```
 
 Verify `curl http://127.0.0.1:8010/health` before switching the app to **Live API**. The desktop client uses the seeded records (`Turtle #001` … `Turtle #008`). If the API stops responding, the app falls back to Demo mode and labels the state in the top bar.
+
+The `ML_MODELS_ENABLED=false` setup above is for browsing seeded records. It does not verify live photo identification. For a matching walkthrough, enable and configure the backend models, then check single-photo and paired-photo requests separately. Demo candidate results are presentation fixtures, not model predictions.
+
+For local I3S comparison, follow the [fingerprint workflow](i3s-reference.md). Load the gallery `.fgp` belonging to the actual displayed candidate; missing photos are not replaced with samples.
 
 ## Presentation checklist
 

@@ -12,12 +12,14 @@ Ada Penyu Mac is a native macOS dashboard for monitoring sea turtle individuals,
 - Shared turtle branding from the mobile app, including the app icon, brand mark, and map pin artwork.
 - SwiftUI previews for dashboard, map, individuals, favorites, and turtle detail screens.
 - Responsive desktop layout with horizontal filter scrolling to prevent clipped labels.
+- Guided facial-scale annotation, `.fgp` import/export, and visual candidate inspection in the I3S workspace.
+- Local I3S fingerprint comparison checked against the original C++ implementation, alongside backend MiewID/XFeat search.
 
 ## Technology
 
 - SwiftUI
 - MapKit
-- Xcode 17+
+- Xcode with a macOS 26.5-compatible SDK
 - Swift 5
 - macOS 26.5 deployment target
 
@@ -26,10 +28,13 @@ Ada Penyu Mac is a native macOS dashboard for monitoring sea turtle individuals,
 ```text
 Ada_Penyu_Desktop/
 ├── Ada_Penyu_Desktop.xcodeproj
+├── Ada_Penyu_DesktopTests/      # App-flow and original-C++ matcher regression tests
+├── scripts/                    # Offline reference-fixture generation
 └── Ada_Penyu_Desktop/
     ├── AppModel.swift          # Domain models and display formatting
     ├── DataLayer.swift         # API contract, client, adapters, and demo repository
     ├── AppStore.swift          # Screen state, loading, fallback, and commands
+    ├── I3SEngine.swift         # Fingerprint format, approximate blob extraction, and reference matcher
     ├── ContentView.swift       # App shell and route composition
     ├── CollectionViews.swift   # Individuals and Favorites screens
     ├── MapCanvasView.swift     # MapKit canvas and map controls
@@ -67,11 +72,34 @@ xcodebuild \
 
 ## Data modes
 
-The app opens in **Demo mode** so a presentation is deterministic and does not depend on a network connection. Use the mode menu in the top bar to switch to **Live API**. If the API is unavailable, the store automatically returns to demo data and shows a visible fallback notice instead of leaving a blank screen.
+The app starts in **Live API** mode. Use the account menu to select **Demo mode** for a deterministic offline walkthrough. If live data loading fails, the store automatically switches to demo data and shows a visible fallback notice.
 
-The live adapter expects the backend at `http://127.0.0.1:8010` and sends a stable `X-User-Id` header for favorites. Change the base URL in UserDefaults with the key `ada.apiBaseURL` when the backend is hosted elsewhere.
+The live adapter defaults to `http://127.0.0.1:8010`, authenticates requests with bearer tokens, and sends a stable `X-User-Id` header for favorites. Configure the server and account through the account menu when using another backend.
 
 Favorites, search, filters, map period, detail navigation, and export are all wired through `AppStore`; replacing the repository does not require changing the views.
+
+## Photo identification
+
+`Search in Database` calls the backend's single-photo or left/right-pair matching endpoint. Backend results use MiewID/XFeat; local I3S distances do not reorder those results.
+
+To compare saved I3S fingerprints, load or annotate the query photo, open a candidate's visual comparison, and choose **Load Gallery .fgp…** for that gallery photo. The workspace does not substitute sample photos or annotations when a candidate is unavailable. The head template places fixed coordinates that need manual adjustment, and the local blob extractor remains an approximation of OpenCV SURF.
+
+See [I3S reference verification](docs/i3s-reference.md) for the original-source oracle, fixture generation, retained evidence, and licensing.
+
+## Validation
+
+Run the complete test suite:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  xcodebuild test \
+  -project Ada_Penyu_Desktop.xcodeproj \
+  -scheme Ada_Penyu_Desktop \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+The suite checks all 97 same-side fingerprint combinations against the original C++ scores and pair counts, plus a separate encounter-ranking regression using the 13 bundled photos. These checks establish compatibility on saved examples. They do not establish production accuracy, new-photo extraction parity, end-to-end backend matching, or load/stress-test capacity. A successful `/health` response establishes service availability only.
 
 ## Demo runbook
 
