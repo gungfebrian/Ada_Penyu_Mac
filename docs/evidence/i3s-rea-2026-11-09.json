@@ -1,0 +1,40 @@
+{
+  "rea_version": "6.8.0",
+  "node_version": "24.22.2",
+  "analysis_kind": "static package and PE export inspection; original-source oracle",
+  "records": [
+    {
+      "file": "docs/evidence/i3s-rea/installer-pe-resources.json",
+      "sha256": "e76c78d57a502411e28dcd11493adc0ad0ff29a1521e760de115a0a61d128a6e",
+      "evidence_id": "ev_896616954a93a8c202c2d98f7b6d4aece3bed51768a5d3ac1af80493d980a113",
+      "operation": "inspect_pe_resources",
+      "provider": {
+        "id": "rea-pe-resources",
+        "name": "REA PE resource parser",
+        "version": "1"
+      }
+    },
+    {
+      "file": "docs/evidence/i3s-rea/desktop.json",
+      "sha256": "fc7074a1a8b94f8480fe764e4f50e4193bfe97fc6b8cadf9e805d29711a0ca13",
+      "evidence_id": "ev_bc3a0fa8040bef9e3b0cd4698caf9064aa4577d50f5f229c0cc9eebee9382592",
+      "operation": "inspect_desktop_application",
+      "provider": {
+        "id": "rea-artifact-graph",
+        "name": "REA safe artifact graph provider",
+        "version": "1"
+      }
+    },
+    {
+      "file": "docs/evidence/i3s-rea/compare-exports.json",
+      "sha256": "36f893034268cc13182e1ed3d2f42307ce7810a247a00999ef2f7c278b56a49f",
+      "evidence_id": "ev_a77f3dc6eb62da424c1db2622c2f795f8f9440d33475920069c34ce4fa3de48c",
+      "operation": "inspect_native_exports",
+      "provider": {
+        "id": "rea-native-exports",
+        "name": "REA PE/ELF export table reader",
+        "version": "1"
+      }
+    }
+  ]
+}
