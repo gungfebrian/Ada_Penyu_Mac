@@ -19,7 +19,8 @@ struct ContentView: View {
                     },
                     dataMode: store.mode,
                     isFallback: store.isUsingFallback,
-                    onModeChange: store.switchMode
+                    onModeChange: store.switchMode,
+                    onOpenAuthSettings: { store.isAuthSheetPresented = true }
                 )
 
                 VStack(spacing: 0) {
@@ -116,6 +117,9 @@ struct ContentView: View {
         } message: {
             Text(store.lastError ?? "Please try again.")
         }
+        .sheet(isPresented: $store.isAuthSheetPresented) {
+            BackendAuthSheet(store: store)
+        }
     }
 
     private var pageTitle: String { store.activeSection.title }
@@ -137,6 +141,7 @@ struct ContentView: View {
     private var pageSubtitle: String? {
         if store.activeSection == .map { return "last seen 30 days" }
         if store.activeSection == .dashboard { return "Sea Turtle Group · Bali monitoring" }
+        if store.activeSection == .identification { return "Interactive Individual Identification System (I3S Pattern v4.02 + MiewID/XFeat)" }
         return nil
     }
 
@@ -149,6 +154,8 @@ struct ContentView: View {
             MapPageView(turtles: store.turtles, sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod, selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition, onReload: { Task { await store.reloadMap() } }, onSelect: store.select)
         case .individuals:
             IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select)
+        case .identification:
+            I3SWorkspaceView(store: store)
         case .favorites:
             FavoritesView(turtles: store.favoriteTurtles, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select, onBrowseIndividuals: { store.searchText = ""; store.selectedCondition = nil; store.activeSection = .individuals })
         }
@@ -392,5 +399,80 @@ private struct ModalPrimaryButtonStyle: ButtonStyle {
 private struct ModalSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk).padding(.horizontal, 15).frame(height: 30).background(Color.black.opacity(configuration.isPressed ? 0.08 : 0.045)).clipShape(Capsule())
+    }
+}
+
+private struct BackendAuthSheet: View {
+    @ObservedObject var store: AppStore
+    @State private var baseURLString: String = APIClient.shared.baseURL.absoluteString
+    @State private var email: String = APIClient.shared.authEmail
+    @State private var password: String = APIClient.shared.authPassword
+    @State private var isSigningIn = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Turtle Identification Backend Connection")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(AdaColors.ink)
+
+            Text("Connects to CodingProject/turtle-identification-be using Bearer JWT authentication (/api/v1/auth/login).")
+                .font(.system(size: 12))
+                .foregroundStyle(AdaColors.secondaryInk)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Server URL").font(.system(size: 11, weight: .semibold)).foregroundStyle(AdaColors.secondaryInk)
+                TextField("http://127.0.0.1:8010", text: $baseURLString)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Account Email").font(.system(size: 11, weight: .semibold)).foregroundStyle(AdaColors.secondaryInk)
+                TextField("admin@adapenyu.org", text: $email)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Password").font(.system(size: 11, weight: .semibold)).foregroundStyle(AdaColors.secondaryInk)
+                SecureField("Password", text: $password)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AdaColors.red)
+            }
+
+            HStack {
+                Button("Close") {
+                    store.isAuthSheetPresented = false
+                }
+                .buttonStyle(ModalSecondaryButtonStyle())
+
+                Spacer()
+
+                Button {
+                    Task {
+                        isSigningIn = true
+                        errorMessage = nil
+                        do {
+                            try await store.signIn(email: email, password: password, baseURLString: baseURLString)
+                            store.isAuthSheetPresented = false
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
+                        isSigningIn = false
+                    }
+                } label: {
+                    Text(isSigningIn ? "Connecting…" : "Sign In & Reload Live Data")
+                }
+                .buttonStyle(ModalPrimaryButtonStyle())
+                .disabled(isSigningIn)
+            }
+            .padding(.top, 4)
+        }
+        .padding(24)
+        .frame(width: 440)
     }
 }

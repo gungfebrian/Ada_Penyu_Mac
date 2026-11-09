@@ -46,9 +46,14 @@ final class AppStore: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var mode: DataMode
     @Published private(set) var isUsingFallback = false
+    @Published var isAuthSheetPresented = false
+    @Published var authEmail: String = APIClient.shared.authEmail
+    @Published var apiBaseURLString: String = APIClient.shared.baseURL.absoluteString
+    @Published private(set) var isAuthenticated: Bool = APIClient.shared.accessToken != nil
 
     private var repository: TurtleRepository
     private var searchTask: Task<Void, Never>?
+    private var photoCache: [String: NSImage] = [:]
 
     init(mode: DataMode = .live, repository: TurtleRepository? = nil) {
         self.mode = mode
@@ -157,7 +162,20 @@ final class AppStore: ObservableObject {
                 favoriteTurtles = try await repository.listFavorites()
                 turtles = turtles.map { value in
                     guard value.id == turtle.id else { return value }
-                    return Turtle(id: value.id, species: value.species, location: value.location, lastSeen: value.lastSeen, sightings: value.sightings, condition: value.condition, firstRecorded: value.firstRecorded, isFavorite: nextValue, coordinate: value.coordinate, backendID: value.backendID)
+                    return Turtle(
+                        id: value.id,
+                        species: value.species,
+                        location: value.location,
+                        lastSeen: value.lastSeen,
+                        sightings: value.sightings,
+                        condition: value.condition,
+                        firstRecorded: value.firstRecorded,
+                        isFavorite: nextValue,
+                        coordinate: value.coordinate,
+                        backendID: value.backendID,
+                        leftPhotoURL: value.leftPhotoURL,
+                        rightPhotoURL: value.rightPhotoURL
+                    )
                 }
             } catch {
                 lastError = error.localizedDescription
@@ -189,6 +207,110 @@ final class AppStore: ObservableObject {
     }
 
     func clearError() { lastError = nil }
+
+    func signIn(email: String, password: String, baseURLString: String) async throws {
+        if let url = URL(string: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme != nil {
+            APIClient.shared.baseURL = url
+            self.apiBaseURLString = url.absoluteString
+        }
+        _ = try await APIClient.shared.login(email: email, password: password)
+        self.authEmail = APIClient.shared.authEmail
+        self.isAuthenticated = APIClient.shared.accessToken != nil
+        self.mode = .live
+        self.isUsingFallback = false
+        self.repository = RemoteTurtleRepository(client: .shared)
+        self.photoCache.removeAll()
+        await reloadAll()
+    }
+
+    func signOut() {
+        APIClient.shared.logout()
+        isAuthenticated = false
+    }
+
+    func loadPhoto(for pathOrURL: String?) async -> NSImage? {
+        guard let pathOrURL, !pathOrURL.isEmpty else { return nil }
+        if let cached = photoCache[pathOrURL] {
+            return cached
+        }
+        do {
+            let data = try await repository.fetchPhotoData(pathOrURL: pathOrURL)
+            if let image = NSImage(data: data) {
+                photoCache[pathOrURL] = image
+                return image
+            }
+        } catch {
+            // Ignore image fetch failure and fall back to placeholder
+        }
+        return nil
+    }
+
+    func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
+        try await repository.matchPhoto(imageData: imageData, side: side, limit: limit)
+    }
+
+    func matchPhotoPair(leftData: Data, rightData: Data, limit: Int = 10) async throws -> MatchSearchOutcome {
+        try await repository.matchPhotoPair(leftData: leftData, rightData: rightData, limit: limit)
+    }
+
+    func fetchOverlayAnnotations(
+        imageData: Data,
+        side: TurtlePhotoSide,
+        candidateID: UUID,
+        candidateSide: TurtlePhotoSide,
+        maxThreads: Int = 35
+    ) async throws -> [OverlayAnnotationItem] {
+        try await repository.fetchOverlayAnnotations(
+            imageData: imageData,
+            side: side,
+            candidateID: candidateID,
+            candidateSide: candidateSide,
+            maxThreads: maxThreads
+        )
+    }
+
+    func fetchOverlayPNG(
+        imageData: Data,
+        side: TurtlePhotoSide,
+        candidateID: UUID,
+        candidateSide: TurtlePhotoSide,
+        maxThreads: Int = 35
+    ) async throws -> Data {
+        try await repository.fetchOverlayPNG(
+            imageData: imageData,
+            side: side,
+            candidateID: candidateID,
+            candidateSide: candidateSide,
+            maxThreads: maxThreads
+        )
+    }
+
+    func confirmMatchAndAttachPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws {
+        let url = try await repository.uploadIndividualPhoto(individualID: individualID, side: side, imageData: imageData)
+        photoCache.removeValue(forKey: url)
+        await reloadAll()
+    }
+
+    func enrollNewIndividual(
+        name: String,
+        species: TurtleSpecies,
+        condition: TurtleCondition,
+        notes: String?,
+        leftPhoto: Data?,
+        rightPhoto: Data?
+    ) async throws -> Turtle {
+        let created = try await repository.createIndividual(name: name, species: species, condition: condition, notes: notes)
+        if let backendID = created.backendID {
+            if let leftPhoto {
+                _ = try await repository.uploadIndividualPhoto(individualID: backendID, side: .left, imageData: leftPhoto)
+            }
+            if let rightPhoto {
+                _ = try await repository.uploadIndividualPhoto(individualID: backendID, side: .right, imageData: rightPhoto)
+            }
+        }
+        await reloadAll()
+        return turtles.first(where: { $0.backendID == created.backendID || $0.id == created.id }) ?? created
+    }
 
     var currentIndividualQuery: IndividualQuery {
         IndividualQuery(search: searchText, species: selectedSpecies.map { [$0] } ?? [], condition: selectedCondition, sort: sort)

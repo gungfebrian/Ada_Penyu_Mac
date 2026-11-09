@@ -19,6 +19,7 @@ struct SidebarView: View {
     let dataMode: DataMode
     let isFallback: Bool
     let onModeChange: (DataMode) -> Void
+    var onOpenAuthSettings: (() -> Void)? = nil
 
     @State private var speciesExpanded = true
     @State private var conditionsExpanded = true
@@ -31,6 +32,7 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 3) {
                 SidebarSectionRow(section: .dashboard, selection: $selection)
                 SidebarSectionRow(section: .map, selection: $selection)
+                SidebarSectionRow(section: .identification, selection: $selection)
                 SidebarSectionRow(section: .favorites, selection: $selection, count: favoriteCount)
             }
 
@@ -133,6 +135,14 @@ struct SidebarView: View {
             if isFallback {
                 Section {
                     Text("Live backend unreachable — showing demo data.")
+                }
+            }
+            if let onOpenAuthSettings {
+                Divider()
+                Button {
+                    onOpenAuthSettings()
+                } label: {
+                    Label("Backend Account & Server…", systemImage: "network.badge.shield.half.filled")
                 }
             }
         } label: {
