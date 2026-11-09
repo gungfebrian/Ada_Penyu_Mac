@@ -274,6 +274,54 @@ protocol TurtleRepository: AnyObject {
     func mapSightings(query: MapQuery) async throws -> [Sighting]
     func detail(for turtle: Turtle) async throws -> TurtleDetailData
     func export(_ request: ExportRequest) async throws -> DownloadedFile
+    func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int) async throws -> MatchSearchOutcome
+    func matchPhotoPair(leftData: Data, rightData: Data, limit: Int) async throws -> MatchSearchOutcome
+    func fetchOverlayAnnotations(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> [OverlayAnnotationItem]
+    func fetchOverlayPNG(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> Data
+    func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String
+    func createIndividual(name: String, species: TurtleSpecies, condition: TurtleCondition, notes: String?) async throws -> Turtle
+    func fetchPhotoData(pathOrURL: String) async throws -> Data
+}
+
+extension TurtleRepository {
+    func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
+        MatchSearchOutcome(querySide: side, gallerySize: 0, matchState: "no_match", candidates: [], isDualPair: false, pairAgreed: nil)
+    }
+
+    func matchPhotoPair(leftData: Data, rightData: Data, limit: Int = 10) async throws -> MatchSearchOutcome {
+        MatchSearchOutcome(querySide: .left, gallerySize: 0, matchState: "no_match", candidates: [], isDualPair: true, pairAgreed: nil)
+    }
+
+    func fetchOverlayAnnotations(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int = 35) async throws -> [OverlayAnnotationItem] {
+        []
+    }
+
+    func fetchOverlayPNG(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int = 35) async throws -> Data {
+        Data()
+    }
+
+    func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String {
+        "/api/v1/individuals/\(individualID.uuidString)/photos/\(side.rawValue)"
+    }
+
+    func createIndividual(name: String, species: TurtleSpecies, condition: TurtleCondition, notes: String?) async throws -> Turtle {
+        Turtle(
+            id: name,
+            species: species,
+            location: "Newly enrolled",
+            lastSeen: APIFormatters.display.string(from: Date()),
+            sightings: 1,
+            condition: condition,
+            firstRecorded: APIFormatters.display.string(from: Date()),
+            isFavorite: false,
+            coordinate: nil,
+            backendID: UUID()
+        )
+    }
+
+    func fetchPhotoData(pathOrURL: String) async throws -> Data {
+        throw APIError.invalidResponse
+    }
 }
 
 enum APIError: LocalizedError {
@@ -350,10 +398,70 @@ extension TurtleCondition {
     }
 }
 
+struct MultipartPart {
+    let name: String
+    let filename: String?
+    let contentType: String?
+    let data: Data
+}
+
+private struct AuthLoginPayload: Encodable {
+    let email: String
+    let password: String
+}
+
+private struct AuthRefreshPayload: Encodable {
+    let refreshToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case refreshToken = "refresh_token"
+    }
+}
+
+struct AuthTokenResponseDTO: Decodable {
+    let accessToken: String
+    let refreshToken: String
+    let tokenType: String
+    let expiresIn: Int
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case refreshToken = "refresh_token"
+        case tokenType = "token_type"
+        case expiresIn = "expires_in"
+    }
+}
+
 final class APIClient {
-    let baseURL: URL
+    static let shared = APIClient()
+
+    var baseURL: URL {
+        didSet {
+            UserDefaults.standard.set(baseURL.absoluteString, forKey: "ada.apiBaseURL")
+        }
+    }
     private let session: URLSession
     private let userID: String
+    private(set) var accessToken: String? {
+        didSet {
+            UserDefaults.standard.set(accessToken, forKey: "ada.accessToken")
+        }
+    }
+    private(set) var refreshToken: String? {
+        didSet {
+            UserDefaults.standard.set(refreshToken, forKey: "ada.refreshToken")
+        }
+    }
+    var authEmail: String {
+        didSet {
+            UserDefaults.standard.set(authEmail, forKey: "ada.authEmail")
+        }
+    }
+    var authPassword: String {
+        didSet {
+            UserDefaults.standard.set(authPassword, forKey: "ada.authPassword")
+        }
+    }
 
     init(
         baseURL: URL = URL(string: UserDefaults.standard.string(forKey: "ada.apiBaseURL") ?? "http://127.0.0.1:8010")!,
@@ -363,7 +471,62 @@ final class APIClient {
         self.baseURL = baseURL
         self.session = session
         self.userID = userID
+        self.accessToken = UserDefaults.standard.string(forKey: "ada.accessToken")
+        self.refreshToken = UserDefaults.standard.string(forKey: "ada.refreshToken")
+        self.authEmail = UserDefaults.standard.string(forKey: "ada.authEmail") ?? "admin@adapenyu.org"
+        self.authPassword = UserDefaults.standard.string(forKey: "ada.authPassword") ?? "Adapenyu2026!"
         UserDefaults.standard.set(userID, forKey: "ada.userID")
+    }
+
+    @discardableResult
+    func login(email: String? = nil, password: String? = nil) async throws -> AuthTokenResponseDTO {
+        let targetEmail = email ?? authEmail
+        let targetPassword = password ?? authPassword
+        let payload = try JSONEncoder.api.encode(AuthLoginPayload(email: targetEmail, password: targetPassword))
+        let (data, _) = try await rawRequestData(
+            path: "api/v1/auth/login",
+            method: "POST",
+            queryItems: [],
+            body: payload,
+            contentType: "application/json",
+            includeAuth: false
+        )
+        let tokens = try JSONDecoder.api.decode(AuthTokenResponseDTO.self, from: data)
+        self.authEmail = targetEmail
+        self.authPassword = targetPassword
+        self.accessToken = tokens.accessToken
+        self.refreshToken = tokens.refreshToken
+        return tokens
+    }
+
+    func logout() {
+        self.accessToken = nil
+        self.refreshToken = nil
+    }
+
+    private func ensureAuthenticated() async throws {
+        if accessToken != nil { return }
+        _ = try await login()
+    }
+
+    private func refreshOrRelogin() async throws {
+        if let refresh = refreshToken {
+            if let payload = try? JSONEncoder.api.encode(AuthRefreshPayload(refreshToken: refresh)),
+               let (data, _) = try? await rawRequestData(
+                   path: "api/v1/auth/refresh",
+                   method: "POST",
+                   queryItems: [],
+                   body: payload,
+                   contentType: "application/json",
+                   includeAuth: false
+               ),
+               let tokens = try? JSONDecoder.api.decode(AuthTokenResponseDTO.self, from: data) {
+                self.accessToken = tokens.accessToken
+                self.refreshToken = tokens.refreshToken
+                return
+            }
+        }
+        _ = try await login()
     }
 
     func get<T: Decodable>(_ path: String, queryItems: [URLQueryItem] = []) async throws -> T {
@@ -383,18 +546,121 @@ final class APIClient {
         }
     }
 
-    func requestData(path: String, method: String, queryItems: [URLQueryItem] = [], body: Data? = nil) async throws -> (Data, HTTPURLResponse) {
-        guard var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false) else {
+    func requestMultipart<T: Decodable>(
+        path: String,
+        method: String = "POST",
+        queryItems: [URLQueryItem] = [],
+        parts: [MultipartPart]
+    ) async throws -> T {
+        let (data, _) = try await requestMultipartData(path: path, method: method, queryItems: queryItems, parts: parts)
+        do {
+            return try JSONDecoder.api.decode(T.self, from: data)
+        } catch {
+            throw APIError.invalidResponse
+        }
+    }
+
+    func requestMultipartData(
+        path: String,
+        method: String = "POST",
+        queryItems: [URLQueryItem] = [],
+        parts: [MultipartPart],
+        accept: String = "application/json"
+    ) async throws -> (Data, HTTPURLResponse) {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var body = Data()
+        for part in parts {
+            body.append(Data("--\(boundary)\r\n".utf8))
+            if let filename = part.filename {
+                body.append(Data("Content-Disposition: form-data; name=\"\(part.name)\"; filename=\"\(filename)\"\r\n".utf8))
+            } else {
+                body.append(Data("Content-Disposition: form-data; name=\"\(part.name)\"\r\n".utf8))
+            }
+            if let contentType = part.contentType {
+                body.append(Data("Content-Type: \(contentType)\r\n".utf8))
+            }
+            body.append(Data("\r\n".utf8))
+            body.append(part.data)
+            body.append(Data("\r\n".utf8))
+        }
+        body.append(Data("--\(boundary)--\r\n".utf8))
+        return try await requestData(
+            path: path,
+            method: method,
+            queryItems: queryItems,
+            body: body,
+            contentType: "multipart/form-data; boundary=\(boundary)",
+            accept: accept
+        )
+    }
+
+    func requestData(
+        path: String,
+        method: String,
+        queryItems: [URLQueryItem] = [],
+        body: Data? = nil,
+        contentType: String = "application/json",
+        accept: String = "application/json"
+    ) async throws -> (Data, HTTPURLResponse) {
+        try await ensureAuthenticated()
+        do {
+            return try await rawRequestData(
+                path: path,
+                method: method,
+                queryItems: queryItems,
+                body: body,
+                contentType: contentType,
+                accept: accept,
+                includeAuth: true
+            )
+        } catch let APIError.http(status, _) where status == 401 {
+            try await refreshOrRelogin()
+            return try await rawRequestData(
+                path: path,
+                method: method,
+                queryItems: queryItems,
+                body: body,
+                contentType: contentType,
+                accept: accept,
+                includeAuth: true
+            )
+        }
+    }
+
+    private func rawRequestData(
+        path: String,
+        method: String,
+        queryItems: [URLQueryItem],
+        body: Data?,
+        contentType: String,
+        accept: String = "application/json",
+        includeAuth: Bool
+    ) async throws -> (Data, HTTPURLResponse) {
+        let resolvedURL: URL
+        if path.hasPrefix("http://") || path.hasPrefix("https://"), let direct = URL(string: path) {
+            resolvedURL = direct
+        } else {
+            let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+            resolvedURL = baseURL.appendingPathComponent(trimmed)
+        }
+        guard var components = URLComponents(url: resolvedURL, resolvingAgainstBaseURL: false) else {
             throw APIError.invalidURL
         }
-        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        if !queryItems.isEmpty {
+            components.queryItems = (components.queryItems ?? []) + queryItems
+        }
         guard let url = components.url else { throw APIError.invalidURL }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue(userID, forHTTPHeaderField: "X-User-Id")
-        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        if includeAuth, let token = accessToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if body != nil {
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
@@ -408,7 +674,18 @@ final class APIClient {
 private extension JSONDecoder {
     static let api: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let string = try container.decode(String.self)
+            if let date = fractional.date(from: string) ?? plain.date(from: string) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO8601 date: \(string)")
+        }
         return decoder
     }()
 }
@@ -556,8 +833,191 @@ private struct LogDTO: Decodable {
     }
 }
 
+private struct MatchCandidateDTO: Decodable {
+    let individualID: UUID
+    let name: String
+    let profileCode: String?
+    let species: String
+    let rank: Int
+    let fusedScore: Double
+    let confidence: Double
+    let confidencePercent: Int
+    let globalScore: Double
+    let localMatch: Int
+    let matchedPhotoSide: String
+    let photoURL: String?
+    let aboveThreshold: Bool
+    let lastSeenDate: Date?
+    let lastSeenLocation: String?
+    let currentHealthStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case individualID = "individual_id"
+        case name
+        case profileCode = "profile_code"
+        case species
+        case rank
+        case fusedScore = "fused_score"
+        case confidence
+        case confidencePercent = "confidence_percent"
+        case globalScore = "global_score"
+        case localMatch = "local_match"
+        case matchedPhotoSide = "matched_photo_side"
+        case photoURL = "photo_url"
+        case aboveThreshold = "above_threshold"
+        case lastSeenDate = "last_seen_date"
+        case lastSeenLocation = "last_seen_location"
+        case currentHealthStatus = "current_health_status"
+    }
+
+    func toItem() -> MatchCandidateItem {
+        MatchCandidateItem(
+            individualID: individualID,
+            name: name,
+            profileCode: profileCode,
+            species: TurtleSpecies(apiValue: species),
+            rank: rank,
+            fusedScore: fusedScore,
+            confidence: confidence,
+            confidencePercent: confidencePercent,
+            globalScore: globalScore,
+            localMatch: localMatch,
+            matchedPhotoSide: TurtlePhotoSide(rawValue: matchedPhotoSide) ?? .left,
+            photoURL: photoURL,
+            aboveThreshold: aboveThreshold,
+            lastSeenDate: lastSeenDate.map(APIFormatters.display.string(from:)),
+            lastSeenLocation: lastSeenLocation,
+            condition: TurtleCondition(apiValue: currentHealthStatus)
+        )
+    }
+}
+
+private struct MatchQueryInfoDTO: Decodable {
+    let side: String
+    let gallerySize: Int
+
+    enum CodingKeys: String, CodingKey {
+        case side
+        case gallerySize = "gallery_size"
+    }
+}
+
+private struct MatchResultDTO: Decodable {
+    let query: MatchQueryInfoDTO
+    let state: String
+    let candidates: [MatchCandidateDTO]
+}
+
+private struct PairedSideEvidenceDTO: Decodable {
+    let rank: Int?
+    let fusedScore: Double?
+    let confidence: Double?
+    let confidencePercent: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case rank
+        case fusedScore = "fused_score"
+        case confidence
+        case confidencePercent = "confidence_percent"
+    }
+}
+
+private struct PairedCandidateDTO: Decodable {
+    let individualID: UUID
+    let name: String
+    let profileCode: String?
+    let species: String
+    let rank: Int
+    let combinedScore: Double
+    let confidence: Double
+    let confidencePercent: Int
+    let left: PairedSideEvidenceDTO
+    let right: PairedSideEvidenceDTO
+    let photos: [String: PhotoDTO?]
+    let lastSeenDate: Date?
+    let lastSeenLocation: String?
+    let currentHealthStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case individualID = "individual_id"
+        case name
+        case profileCode = "profile_code"
+        case species
+        case rank
+        case combinedScore = "combined_score"
+        case confidence
+        case confidencePercent = "confidence_percent"
+        case left
+        case right
+        case photos
+        case lastSeenDate = "last_seen_date"
+        case lastSeenLocation = "last_seen_location"
+        case currentHealthStatus = "current_health_status"
+    }
+
+    func toItem() -> MatchCandidateItem {
+        let leftURL = photos["left"]??.url
+        let rightURL = photos["right"]??.url
+        let side: TurtlePhotoSide = leftURL != nil ? .left : .right
+        return MatchCandidateItem(
+            individualID: individualID,
+            name: name,
+            profileCode: profileCode,
+            species: TurtleSpecies(apiValue: species),
+            rank: rank,
+            fusedScore: combinedScore,
+            confidence: confidence,
+            confidencePercent: confidencePercent,
+            globalScore: left.fusedScore ?? right.fusedScore ?? combinedScore,
+            localMatch: 0,
+            matchedPhotoSide: side,
+            photoURL: leftURL ?? rightURL,
+            aboveThreshold: true,
+            lastSeenDate: lastSeenDate.map(APIFormatters.display.string(from:)),
+            lastSeenLocation: lastSeenLocation,
+            condition: TurtleCondition(apiValue: currentHealthStatus)
+        )
+    }
+}
+
+private struct DualMatchResultDTO: Decodable {
+    let state: String
+    let agreed: Bool
+    let candidates: [PairedCandidateDTO]
+    let photoA: MatchResultDTO
+    let photoB: MatchResultDTO
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case agreed
+        case candidates
+        case photoA = "photo_a"
+        case photoB = "photo_b"
+    }
+}
+
+private struct OverlayAnnotationsDTO: Decodable {
+    let annotations: [OverlayAnnotationItem]
+}
+
+private struct CreateIndividualPayload: Encodable {
+    let name: String
+    let species: String
+    let currentHealthStatus: String
+    let notes: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case species
+        case currentHealthStatus = "current_health_status"
+        case notes
+    }
+}
+
 private extension IndividualDTO {
     func turtle() -> Turtle {
+        let leftURL = photos["left"]??.url
+        let rightURL = photos["right"]??.url
         return Turtle(
             id: name.isEmpty ? profileCode : name,
             species: TurtleSpecies(apiValue: species),
@@ -568,16 +1028,18 @@ private extension IndividualDTO {
             firstRecorded: APIFormatters.display.string(from: firstSeenDate),
             isFavorite: false,
             coordinate: nil,
-            backendID: id
+            backendID: id,
+            leftPhotoURL: leftURL,
+            rightPhotoURL: rightURL
         )
     }
 }
 
 final class RemoteTurtleRepository: TurtleRepository {
-    private let client: APIClient
+    let client: APIClient
     private var cache: [String: Turtle] = [:]
 
-    init(client: APIClient = APIClient()) { self.client = client }
+    init(client: APIClient = .shared) { self.client = client }
 
     func listIndividuals(query: IndividualQuery) async throws -> Page<Turtle> {
         let dto: IndividualPageDTO = try await client.get("api/v1/individuals", queryItems: query.queryItems)
@@ -641,6 +1103,166 @@ final class RemoteTurtleRepository: TurtleRepository {
         let (data, response) = try await client.getData("api/v1/exports/individuals", queryItems: items)
         let filename = response.value(forHTTPHeaderField: "Content-Disposition")?.split(separator: "filename=").last.map(String.init)?.trimmingCharacters(in: CharacterSet(charactersIn: "\" ")) ?? "individuals.\(request.format.fileExtension)"
         return DownloadedFile(data: data, filename: filename, contentType: response.mimeType ?? "application/octet-stream")
+    }
+
+    func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
+        let queryItems = [
+            URLQueryItem(name: "side", value: side.rawValue),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "empty_on_no_reliable", value: "false"),
+        ]
+        let part = MultipartPart(name: "file", filename: "query.jpg", contentType: "image/jpeg", data: imageData)
+        let dto: MatchResultDTO = try await client.requestMultipart(
+            path: "api/v1/match",
+            method: "POST",
+            queryItems: queryItems,
+            parts: [part]
+        )
+        return MatchSearchOutcome(
+            querySide: TurtlePhotoSide(rawValue: dto.query.side) ?? side,
+            gallerySize: dto.query.gallerySize,
+            matchState: dto.state,
+            candidates: dto.candidates.map { $0.toItem() },
+            isDualPair: false,
+            pairAgreed: nil
+        )
+    }
+
+    func matchPhotoPair(leftData: Data, rightData: Data, limit: Int = 10) async throws -> MatchSearchOutcome {
+        let queryItems = [
+            URLQueryItem(name: "side_a", value: "left"),
+            URLQueryItem(name: "side_b", value: "right"),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "empty_on_no_reliable", value: "false"),
+        ]
+        let parts = [
+            MultipartPart(name: "file_a", filename: "left.jpg", contentType: "image/jpeg", data: leftData),
+            MultipartPart(name: "file_b", filename: "right.jpg", contentType: "image/jpeg", data: rightData),
+        ]
+        let dto: DualMatchResultDTO = try await client.requestMultipart(
+            path: "api/v1/match/pair",
+            method: "POST",
+            queryItems: queryItems,
+            parts: parts
+        )
+        let sideLookup = Dictionary(uniqueKeysWithValues: (dto.photoA.candidates + dto.photoB.candidates).map { ($0.individualID, $0) })
+        let items = dto.candidates.map { paired -> MatchCandidateItem in
+            var item = paired.toItem()
+            if let sideMatch = sideLookup[paired.individualID] {
+                item = MatchCandidateItem(
+                    individualID: item.individualID,
+                    name: item.name,
+                    profileCode: item.profileCode,
+                    species: item.species,
+                    rank: item.rank,
+                    fusedScore: item.fusedScore,
+                    confidence: item.confidence,
+                    confidencePercent: item.confidencePercent,
+                    globalScore: sideMatch.globalScore,
+                    localMatch: sideMatch.localMatch,
+                    matchedPhotoSide: item.matchedPhotoSide,
+                    photoURL: item.photoURL,
+                    aboveThreshold: item.aboveThreshold,
+                    lastSeenDate: item.lastSeenDate,
+                    lastSeenLocation: item.lastSeenLocation,
+                    condition: item.condition
+                )
+            }
+            return item
+        }
+        return MatchSearchOutcome(
+            querySide: .left,
+            gallerySize: dto.photoA.query.gallerySize + dto.photoB.query.gallerySize,
+            matchState: dto.state,
+            candidates: items,
+            isDualPair: true,
+            pairAgreed: dto.agreed
+        )
+    }
+
+    func fetchOverlayAnnotations(
+        imageData: Data,
+        side: TurtlePhotoSide,
+        candidateID: UUID,
+        candidateSide: TurtlePhotoSide,
+        maxThreads: Int = 35
+    ) async throws -> [OverlayAnnotationItem] {
+        let queryItems = [
+            URLQueryItem(name: "side", value: side.rawValue),
+            URLQueryItem(name: "candidate_individual_id", value: candidateID.uuidString),
+            URLQueryItem(name: "candidate_side", value: candidateSide.rawValue),
+            URLQueryItem(name: "max_threads", value: String(maxThreads)),
+        ]
+        let part = MultipartPart(name: "file", filename: "query.jpg", contentType: "image/jpeg", data: imageData)
+        let dto: OverlayAnnotationsDTO = try await client.requestMultipart(
+            path: "api/v1/match/overlay/annotations",
+            method: "POST",
+            queryItems: queryItems,
+            parts: [part]
+        )
+        return dto.annotations
+    }
+
+    func fetchOverlayPNG(
+        imageData: Data,
+        side: TurtlePhotoSide,
+        candidateID: UUID,
+        candidateSide: TurtlePhotoSide,
+        maxThreads: Int = 35
+    ) async throws -> Data {
+        let queryItems = [
+            URLQueryItem(name: "side", value: side.rawValue),
+            URLQueryItem(name: "candidate_individual_id", value: candidateID.uuidString),
+            URLQueryItem(name: "candidate_side", value: candidateSide.rawValue),
+            URLQueryItem(name: "max_threads", value: String(maxThreads)),
+        ]
+        let part = MultipartPart(name: "file", filename: "query.jpg", contentType: "image/jpeg", data: imageData)
+        let (data, _) = try await client.requestMultipartData(
+            path: "api/v1/match/overlay",
+            method: "POST",
+            queryItems: queryItems,
+            parts: [part],
+            accept: "image/png"
+        )
+        return data
+    }
+
+    func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String {
+        let part = MultipartPart(name: "file", filename: "\(side.rawValue).jpg", contentType: "image/jpeg", data: imageData)
+        let dto: PhotoDTO = try await client.requestMultipart(
+            path: "api/v1/individuals/\(individualID.uuidString)/photos/\(side.rawValue)",
+            method: "PUT",
+            parts: [part]
+        )
+        return dto.url
+    }
+
+    func createIndividual(name: String, species: TurtleSpecies, condition: TurtleCondition, notes: String?) async throws -> Turtle {
+        let payload = try JSONEncoder.api.encode(
+            CreateIndividualPayload(
+                name: name,
+                species: species.apiValue,
+                currentHealthStatus: condition.apiValue,
+                notes: notes
+            )
+        )
+        let dto: IndividualDTO = try await client.request(
+            path: "api/v1/individuals",
+            method: "POST",
+            body: payload
+        )
+        let created = dto.turtle()
+        cache[created.id] = created
+        return created
+    }
+
+    func fetchPhotoData(pathOrURL: String) async throws -> Data {
+        let (data, _) = try await client.requestData(
+            path: pathOrURL,
+            method: "GET",
+            accept: "image/*"
+        )
+        return data
     }
 }
 
@@ -841,7 +1463,82 @@ final class DemoTurtleRepository: TurtleRepository {
     }
 
     private func withFavorite(_ turtle: Turtle) -> Turtle {
-        Turtle(id: turtle.id, species: turtle.species, location: turtle.location, lastSeen: turtle.lastSeen, sightings: turtle.sightings, condition: turtle.condition, firstRecorded: turtle.firstRecorded, isFavorite: favoriteIDs.contains(turtle.id), coordinate: turtle.coordinate, backendID: turtle.backendID)
+        Turtle(
+            id: turtle.id,
+            species: turtle.species,
+            location: turtle.location,
+            lastSeen: turtle.lastSeen,
+            sightings: turtle.sightings,
+            condition: turtle.condition,
+            firstRecorded: turtle.firstRecorded,
+            isFavorite: favoriteIDs.contains(turtle.id),
+            coordinate: turtle.coordinate,
+            backendID: turtle.backendID,
+            leftPhotoURL: turtle.leftPhotoURL,
+            rightPhotoURL: turtle.rightPhotoURL
+        )
+    }
+
+    func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
+        let items = turtles.prefix(limit).enumerated().map { idx, t -> MatchCandidateItem in
+            let fused = max(0.02, 0.36 - Double(idx) * 0.08)
+            let conf = idx == 0 ? 0.94 : max(0.01, 0.18 - Double(idx) * 0.04)
+            return MatchCandidateItem(
+                individualID: t.backendID ?? UUID(),
+                name: t.id,
+                profileCode: String(format: "TUR-%03d", idx + 1),
+                species: t.species,
+                rank: idx + 1,
+                fusedScore: fused,
+                confidence: conf,
+                confidencePercent: Int((conf * 100).rounded()),
+                globalScore: max(0.25, 0.68 - Double(idx) * 0.07),
+                localMatch: max(18, 185 - idx * 34),
+                matchedPhotoSide: side,
+                photoURL: nil,
+                aboveThreshold: idx < 2,
+                lastSeenDate: t.lastSeen,
+                lastSeenLocation: t.location,
+                condition: t.condition
+            )
+        }
+        return MatchSearchOutcome(
+            querySide: side,
+            gallerySize: turtles.count,
+            matchState: "matched",
+            candidates: Array(items),
+            isDualPair: false,
+            pairAgreed: nil
+        )
+    }
+
+    func matchPhotoPair(leftData: Data, rightData: Data, limit: Int = 10) async throws -> MatchSearchOutcome {
+        let single = try await matchPhoto(imageData: leftData, side: .left, limit: limit)
+        return MatchSearchOutcome(
+            querySide: .left,
+            gallerySize: single.gallerySize * 2,
+            matchState: "matched",
+            candidates: single.candidates,
+            isDualPair: true,
+            pairAgreed: true
+        )
+    }
+
+    func createIndividual(name: String, species: TurtleSpecies, condition: TurtleCondition, notes: String?) async throws -> Turtle {
+        let created = Turtle(
+            id: name,
+            species: species,
+            location: "Sanur Reef",
+            lastSeen: APIFormatters.display.string(from: Date()),
+            sightings: 1,
+            condition: condition,
+            firstRecorded: APIFormatters.display.string(from: Date()),
+            isFavorite: false,
+            coordinate: TurtleCoordinate(latitude: -8.6870, longitude: 115.2620),
+            backendID: UUID()
+        )
+        turtles.insert(created, at: 0)
+        return created
     }
 
     private func monthKey(for displayDate: String) -> String {

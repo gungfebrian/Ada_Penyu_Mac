@@ -4,6 +4,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case dashboard
     case map
     case individuals
+    case identification
     case favorites
 
     var id: String { rawValue }
@@ -13,6 +14,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .dashboard: "Dashboard"
         case .map: "Map"
         case .individuals: "Individuals"
+        case .identification: "I3S Pattern ID"
         case .favorites: "Favorites"
         }
     }
@@ -22,6 +24,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .dashboard: "chart.xyaxis.line"
         case .map: "map"
         case .individuals: "tortoise"
+        case .identification: "viewfinder.circle"
         case .favorites: "heart"
         }
     }
@@ -120,6 +123,8 @@ struct Turtle: Identifiable, Hashable {
     let isFavorite: Bool
     let backendID: UUID?
     let coordinate: TurtleCoordinate?
+    let leftPhotoURL: String?
+    let rightPhotoURL: String?
 
     init(
         id: String,
@@ -131,7 +136,9 @@ struct Turtle: Identifiable, Hashable {
         firstRecorded: String,
         isFavorite: Bool,
         coordinate: TurtleCoordinate?,
-        backendID: UUID? = nil
+        backendID: UUID? = nil,
+        leftPhotoURL: String? = nil,
+        rightPhotoURL: String? = nil
     ) {
         self.id = id
         self.species = species
@@ -143,6 +150,77 @@ struct Turtle: Identifiable, Hashable {
         self.isFavorite = isFavorite
         self.coordinate = coordinate
         self.backendID = backendID
+        self.leftPhotoURL = leftPhotoURL
+        self.rightPhotoURL = rightPhotoURL
+    }
+}
+
+enum TurtlePhotoSide: String, CaseIterable, Identifiable, Codable, Hashable {
+    case left
+    case right
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .left: "Left Profile"
+        case .right: "Right Profile"
+        }
+    }
+}
+
+struct MatchCandidateItem: Identifiable, Hashable {
+    let individualID: UUID
+    let name: String
+    let profileCode: String?
+    let species: TurtleSpecies
+    let rank: Int
+    let fusedScore: Double
+    let confidence: Double
+    let confidencePercent: Int
+    let globalScore: Double
+    let localMatch: Int
+    let matchedPhotoSide: TurtlePhotoSide
+    let photoURL: String?
+    let aboveThreshold: Bool
+    let lastSeenDate: String?
+    let lastSeenLocation: String?
+    let condition: TurtleCondition?
+    var i3sDistanceScore: Double?
+    var i3sPairedCount: Int?
+
+    var id: UUID { individualID }
+}
+
+struct MatchSearchOutcome: Hashable {
+    let querySide: TurtlePhotoSide
+    let gallerySize: Int
+    let matchState: String
+    let candidates: [MatchCandidateItem]
+    let isDualPair: Bool
+    let pairAgreed: Bool?
+}
+
+struct OverlayMatchPoint: Hashable, Codable {
+    let x: Double
+    let y: Double
+}
+
+struct OverlayAnnotationItem: Identifiable, Hashable, Codable {
+    let featureID: String
+    let label: String
+    let score: Double?
+    let query: OverlayMatchPoint
+    let candidate: OverlayMatchPoint
+
+    var id: String { featureID }
+
+    enum CodingKeys: String, CodingKey {
+        case featureID = "feature_id"
+        case label
+        case score
+        case query
+        case candidate
     }
 }
 
