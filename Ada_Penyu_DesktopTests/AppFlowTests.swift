@@ -70,4 +70,53 @@ final class AppFlowTests: XCTestCase {
         XCTAssertEqual(snapshot.months.reduce(0) { $0 + $1.sightings }, DemoFixtures.sightings.count)
         XCTAssertEqual(snapshot.months.reduce(0) { $0 + $1.newIndividuals }, DemoFixtures.turtles.count)
     }
+
+    func testI3SBinaryFgpRoundTripAndCompareEngine() throws {
+        var roi = I3SRoi()
+        _ = try roi.add(I3SPoint2D(x: 100, y: 100))
+        _ = try roi.add(I3SPoint2D(x: 300, y: 100))
+        _ = try roi.add(I3SPoint2D(x: 300, y: 300))
+        _ = try roi.add(I3SPoint2D(x: 100, y: 300))
+        XCTAssertTrue(roi.closePolygonIfPossible())
+        XCTAssertTrue(roi.isFinal)
+        XCTAssertTrue(roi.contains(I3SPoint2D(x: 200, y: 200)))
+        XCTAssertFalse(roi.contains(I3SPoint2D(x: 40, y: 40)))
+
+        let original = I3SFingerprint(
+            ref1: I3SPoint2D(x: 110, y: 210),
+            ref2: I3SPoint2D(x: 160, y: 130),
+            ref3: I3SPoint2D(x: 280, y: 180),
+            roi: roi,
+            keypoints: [
+                I3SKeypoint(center: I3SPoint2D(x: 150, y: 180), size: 18),
+                I3SKeypoint(center: I3SPoint2D(x: 195, y: 210), size: 22),
+                I3SKeypoint(center: I3SPoint2D(x: 235, y: 175), size: 16),
+                I3SKeypoint(center: I3SPoint2D(x: 210, y: 245), size: 20),
+                I3SKeypoint(center: I3SPoint2D(x: 165, y: 240), size: 19),
+            ],
+            comment: "Amina_L test"
+        )
+
+        let data = I3SFingerprintFile.write(original)
+        let decoded = try I3SFingerprintFile.read(from: data, filename: "test.fgp")
+        XCTAssertEqual(decoded.keypoints.count, 5)
+        XCTAssertTrue(decoded.roi.isFinal)
+        XCTAssertEqual(decoded.comment, "Amina_L test")
+
+        let selfMatch = I3SCompareEngine.compareTwo(unknown: original, candidate: decoded)
+        XCTAssertGreaterThanOrEqual(selfMatch.pairCount, 3)
+        XCTAssertLessThan(selfMatch.score, 1.0)
+    }
+
+    func testI3SSampleLibraryAndSurfExtractor() throws {
+        XCTAssertFalse(I3SSampleLibrary.samples.isEmpty)
+        let first = try XCTUnwrap(I3SSampleLibrary.samples.first)
+        XCTAssertEqual(first.fingerprint.keypoints.count, 35)
+        XCTAssertTrue(first.fingerprint.roi.isFinal)
+
+        let image = try XCTUnwrap(I3SSampleLibrary.loadImage(for: first))
+        let extracted = I3SSurfExtractor.extractKeypoints(from: image, roi: first.fingerprint.roi)
+        XCTAssertFalse(extracted.isEmpty)
+        XCTAssertLessThanOrEqual(extracted.count, I3SExpertParameters.default.nrElements)
+    }
 }
