@@ -1,0 +1,584 @@
+[
+  {
+    "query": "Amina1_L",
+    "candidate": "Amina1_L",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Amina1_L",
+    "candidate": "Amina2_L",
+    "score": 12.112225087306864,
+    "pairs": 22
+  },
+  {
+    "query": "Amina1_L",
+    "candidate": "Amina3_L",
+    "score": 8.11152689034563,
+    "pairs": 22
+  },
+  {
+    "query": "Amina1_L",
+    "candidate": "Aikane1_L",
+    "score": 25.537448368949775,
+    "pairs": 21
+  },
+  {
+    "query": "Amina1_L",
+    "candidate": "Aikane2_L",
+    "score": 13.450264136873674,
+    "pairs": 27
+  },
+  {
+    "query": "Amina1_L",
+    "candidate": "Ghost1_L",
+    "score": 15.883210087238004,
+    "pairs": 25
+  },
+  {
+    "query": "Amina1_L",
+    "candidate": "Ghost2_L",
+    "score": 22.019657446276895,
+    "pairs": 22
+  },
+  {
+    "query": "Amina1_L",
+    "candidate": "Hoku1_L",
+    "score": 15.005318648851716,
+    "pairs": 25
+  },
+  {
+    "query": "Amina1_L",
+    "candidate": "Hoku2_L",
+    "score": 11.769128647598981,
+    "pairs": 27
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Amina1_L",
+    "score": 15.552623371589464,
+    "pairs": 23
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Amina2_L",
+    "score": 1.7395513573736318e-15,
+    "pairs": 35
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Amina3_L",
+    "score": 12.684377382377955,
+    "pairs": 27
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Aikane1_L",
+    "score": 43.01362931322255,
+    "pairs": 20
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Aikane2_L",
+    "score": 22.349201007338475,
+    "pairs": 22
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Ghost1_L",
+    "score": 28.412121390347608,
+    "pairs": 20
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Ghost2_L",
+    "score": 37.062609735790204,
+    "pairs": 19
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Hoku1_L",
+    "score": 39.85045572540312,
+    "pairs": 20
+  },
+  {
+    "query": "Amina2_L",
+    "candidate": "Hoku2_L",
+    "score": 35.81188868934425,
+    "pairs": 17
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Amina1_L",
+    "score": 7.76264177282529,
+    "pairs": 23
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Amina2_L",
+    "score": 12.614199459610301,
+    "pairs": 24
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Amina3_L",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Aikane1_L",
+    "score": 40.06436534937571,
+    "pairs": 18
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Aikane2_L",
+    "score": 19.627145123756275,
+    "pairs": 23
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Ghost1_L",
+    "score": 21.758434249123656,
+    "pairs": 21
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Ghost2_L",
+    "score": 19.111905671600194,
+    "pairs": 23
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Hoku1_L",
+    "score": 22.848115621752854,
+    "pairs": 23
+  },
+  {
+    "query": "Amina3_L",
+    "candidate": "Hoku2_L",
+    "score": 27.667260664185275,
+    "pairs": 21
+  },
+  {
+    "query": "Amina1_R",
+    "candidate": "Amina1_R",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Amina1_R",
+    "candidate": "Amina2_R",
+    "score": 13.203102743215299,
+    "pairs": 22
+  },
+  {
+    "query": "Amina1_R",
+    "candidate": "Zizo1_R",
+    "score": 25.69131879923479,
+    "pairs": 21
+  },
+  {
+    "query": "Amina1_R",
+    "candidate": "Zizo2_R",
+    "score": 34.48725815491558,
+    "pairs": 20
+  },
+  {
+    "query": "Amina2_R",
+    "candidate": "Amina1_R",
+    "score": 13.795551562692827,
+    "pairs": 22
+  },
+  {
+    "query": "Amina2_R",
+    "candidate": "Amina2_R",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Amina2_R",
+    "candidate": "Zizo1_R",
+    "score": 25.987753360295603,
+    "pairs": 23
+  },
+  {
+    "query": "Amina2_R",
+    "candidate": "Zizo2_R",
+    "score": 36.9799925549461,
+    "pairs": 17
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Amina1_L",
+    "score": 23.741537541176356,
+    "pairs": 21
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Amina2_L",
+    "score": 36.18063952469538,
+    "pairs": 20
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Amina3_L",
+    "score": 41.446417964703095,
+    "pairs": 18
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Aikane1_L",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Aikane2_L",
+    "score": 9.41348468268483,
+    "pairs": 24
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Ghost1_L",
+    "score": 19.57069966993537,
+    "pairs": 22
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Ghost2_L",
+    "score": 24.92593109492959,
+    "pairs": 21
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Hoku1_L",
+    "score": 22.815868883352927,
+    "pairs": 22
+  },
+  {
+    "query": "Aikane1_L",
+    "candidate": "Hoku2_L",
+    "score": 22.602848301523665,
+    "pairs": 21
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Amina1_L",
+    "score": 13.984219267921201,
+    "pairs": 26
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Amina2_L",
+    "score": 20.09082846701965,
+    "pairs": 23
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Amina3_L",
+    "score": 22.51482905086761,
+    "pairs": 22
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Aikane1_L",
+    "score": 8.806354036102876,
+    "pairs": 25
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Aikane2_L",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Ghost1_L",
+    "score": 14.925264555284073,
+    "pairs": 24
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Ghost2_L",
+    "score": 22.971756800080804,
+    "pairs": 22
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Hoku1_L",
+    "score": 19.808190877240015,
+    "pairs": 22
+  },
+  {
+    "query": "Aikane2_L",
+    "candidate": "Hoku2_L",
+    "score": 19.395315724087393,
+    "pairs": 23
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Amina1_L",
+    "score": 16.112307966499028,
+    "pairs": 26
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Amina2_L",
+    "score": 16.07803860324765,
+    "pairs": 24
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Amina3_L",
+    "score": 22.487973143162293,
+    "pairs": 22
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Aikane1_L",
+    "score": 17.83762195644691,
+    "pairs": 25
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Aikane2_L",
+    "score": 17.746922759874515,
+    "pairs": 23
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Ghost1_L",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Ghost2_L",
+    "score": 3.32933547466539,
+    "pairs": 29
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Hoku1_L",
+    "score": 16.26891651271549,
+    "pairs": 25
+  },
+  {
+    "query": "Ghost1_L",
+    "candidate": "Hoku2_L",
+    "score": 25.348486313594364,
+    "pairs": 21
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Amina1_L",
+    "score": 14.862931852548781,
+    "pairs": 25
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Amina2_L",
+    "score": 24.849188169535182,
+    "pairs": 21
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Amina3_L",
+    "score": 19.207402121700664,
+    "pairs": 23
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Aikane1_L",
+    "score": 19.453879489576043,
+    "pairs": 23
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Aikane2_L",
+    "score": 21.886644678301074,
+    "pairs": 22
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Ghost1_L",
+    "score": 3.277693107132817,
+    "pairs": 30
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Ghost2_L",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Hoku1_L",
+    "score": 14.880183911658213,
+    "pairs": 26
+  },
+  {
+    "query": "Ghost2_L",
+    "candidate": "Hoku2_L",
+    "score": 25.901636562146006,
+    "pairs": 22
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Amina1_L",
+    "score": 13.56792650342999,
+    "pairs": 25
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Amina2_L",
+    "score": 28.17566439408393,
+    "pairs": 20
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Amina3_L",
+    "score": 19.50477911196629,
+    "pairs": 23
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Aikane1_L",
+    "score": 21.901433594456265,
+    "pairs": 22
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Aikane2_L",
+    "score": 16.78818196758495,
+    "pairs": 22
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Ghost1_L",
+    "score": 16.434189330312716,
+    "pairs": 25
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Ghost2_L",
+    "score": 13.689255875672828,
+    "pairs": 25
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Hoku1_L",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Hoku1_L",
+    "candidate": "Hoku2_L",
+    "score": 5.605409389950533,
+    "pairs": 24
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Amina1_L",
+    "score": 11.159721499091107,
+    "pairs": 28
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Amina2_L",
+    "score": 24.984453529568743,
+    "pairs": 21
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Amina3_L",
+    "score": 29.596607685908495,
+    "pairs": 21
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Aikane1_L",
+    "score": 25.34506368570612,
+    "pairs": 22
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Aikane2_L",
+    "score": 20.46631016507759,
+    "pairs": 21
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Ghost1_L",
+    "score": 24.881649328577286,
+    "pairs": 21
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Ghost2_L",
+    "score": 27.71800236784051,
+    "pairs": 24
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Hoku1_L",
+    "score": 6.039529760881559,
+    "pairs": 24
+  },
+  {
+    "query": "Hoku2_L",
+    "candidate": "Hoku2_L",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Zizo1_R",
+    "candidate": "Amina1_R",
+    "score": 23.408751092073516,
+    "pairs": 22
+  },
+  {
+    "query": "Zizo1_R",
+    "candidate": "Amina2_R",
+    "score": 17.618549151866848,
+    "pairs": 25
+  },
+  {
+    "query": "Zizo1_R",
+    "candidate": "Zizo1_R",
+    "score": 0.0,
+    "pairs": 35
+  },
+  {
+    "query": "Zizo1_R",
+    "candidate": "Zizo2_R",
+    "score": 9.254708095503378,
+    "pairs": 21
+  },
+  {
+    "query": "Zizo2_R",
+    "candidate": "Amina1_R",
+    "score": 36.20325766182645,
+    "pairs": 21
+  },
+  {
+    "query": "Zizo2_R",
+    "candidate": "Amina2_R",
+    "score": 36.88036111081343,
+    "pairs": 19
+  },
+  {
+    "query": "Zizo2_R",
+    "candidate": "Zizo1_R",
+    "score": 11.92423598190619,
+    "pairs": 21
+  },
+  {
+    "query": "Zizo2_R",
+    "candidate": "Zizo2_R",
+    "score": 0.0,
+    "pairs": 35
+  }
+]

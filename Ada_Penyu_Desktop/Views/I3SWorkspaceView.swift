@@ -3,44 +3,85 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum I3SComparisonTab: String, CaseIterable, Identifiable {
-    case bothImages = "Images (Side-by-Side)"
-    case unknownIndividual = "Unknown Individual"
-    case foundIndividual = "Found Individual"
+    case bothImages = "Side-by-Side"
     case pointCloud = "Point Cloud"
+    case unknownIndividual = "Query Photo"
+    case foundIndividual = "Gallery Photo"
 
     var id: String { rawValue }
+}
+
+/// Interactive step mode so the user always knows what clicking the canvas will do,
+/// and can click any step pill to jump back and re-pick a specific point.
+enum I3SAnnotationStep: Int, CaseIterable, Identifiable {
+    case ref1 = 0
+    case ref2 = 1
+    case ref3 = 2
+    case roi = 3
+    case keypoints = 4
+
+    var id: Int { rawValue }
+
+    var shortTitle: String {
+        switch self {
+        case .ref1: "1. Beak Edge"
+        case .ref2: "2. Eye Area"
+        case .ref3: "3. Outer Scale"
+        case .roi: "4. Draw ROI"
+        case .keypoints: "5. Keypoints"
+        }
+    }
+
+    var instructionText: String {
+        switch self {
+        case .ref1:
+            "Click on the photo to place Reference Point 1: Beak edge (tip of upper beak)."
+        case .ref2:
+            "Click on the photo to place Reference Point 2: Inner edge of eye area (nasal corner of orbit)."
+        case .ref3:
+            "Click on the photo to place Reference Point 3: Edge of outer postorbital scale."
+        case .roi:
+            "Click around the cheek scales to draw a polygon ROI. Click the first green point (or 'Finish ROI') to extract keypoints."
+        case .keypoints:
+            "ROI finalized! Click any red keypoint circle to remove glare artifacts, or click inside the ROI to add a keypoint."
+        }
+    }
 }
 
 struct I3SWorkspaceView: View {
     @ObservedObject var store: AppStore
 
-    // Query state
+    // Query state — starts clean & unannotated!
     @State private var isDualMode = false
     @State private var querySide: TurtlePhotoSide = .left
     @State private var queryImage: NSImage?
     @State private var queryImageData: Data?
-    @State private var queryTitle: String = "No image loaded"
+    @State private var queryTitle: String = "No photo loaded"
     @State private var fingerprint = I3SFingerprint()
+    @State private var companionFgp: I3SFingerprint?
     @State private var undoStack: [I3SFingerprint] = []
     @State private var redoStack: [I3SFingerprint] = []
 
     // Optional second photo for Dual L/R Pair mode (`/api/v1/match/pair`)
     @State private var secondaryImage: NSImage?
     @State private var secondaryImageData: Data?
-    @State private var secondaryTitle: String = "No right-side image"
+    @State private var secondaryTitle: String = "No right photo"
     @State private var secondaryFingerprint = I3SFingerprint()
     @State private var editingSecondary = false
 
-    // Annotation & canvas controls
-    @State private var editMode = true
+    // Active step & canvas controls
+    @State private var activeStep: I3SAnnotationStep = .ref1
     @State private var canvasZoom: Double = 1.0
-    @State private var showKeypointLabels = true
-    @State private var showReferenceTriangle = true
+    @State private var canvasPan: CGSize = .zero
+    @State private var showKeypointLabels = false
     @State private var expertParams = I3SExpertParameters.default
     @State private var isExpertPopoverPresented = false
+    @State private var isDropTargeted = false
 
-    // Search & comparison state
+    // Search & candidate state
     @State private var isSearching = false
+    @State private var queryRevision = 0
+    @State private var candidateRevision = 0
     @State private var searchOutcome: MatchSearchOutcome?
     @State private var candidates: [MatchCandidateItem] = []
     @State private var selectedCandidate: MatchCandidateItem?
@@ -51,7 +92,8 @@ struct I3SWorkspaceView: View {
     @State private var backendOverlayImage: NSImage?
     @State private var isOverlayLoading = false
 
-    // CompareResults 4-tab inspector state
+    // Visual Comparison Modal (`CompareResults.java`)
+    @State private var isComparisonModalPresented = false
     @State private var comparisonTab: I3SComparisonTab = .bothImages
     @State private var autoZoomOn = false
     @State private var showMatchThreads = true
@@ -79,594 +121,975 @@ struct I3SWorkspaceView: View {
         editingSecondary ? secondaryImage : queryImage
     }
 
+    private var comparisonUsesSecondary: Bool {
+        isDualMode && selectedCandidate?.matchedPhotoSide == .right
+    }
+
+    private var comparisonFingerprint: I3SFingerprint {
+        comparisonUsesSecondary ? secondaryFingerprint : fingerprint
+    }
+
+    private var comparisonImage: NSImage? {
+        comparisonUsesSecondary ? secondaryImage : queryImage
+    }
+
+    private var comparisonImageData: Data? {
+        comparisonUsesSecondary ? secondaryImageData : queryImageData
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            headerBar
-            i3sToolbarCard
-            guidedHintBanner
+        ZStack {
+            HStack(spacing: 0) {
+                mainWorkspaceArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            HSplitView {
-                annotationPane
-                    .frame(minWidth: 460, idealWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
+                Divider().overlay(AdaColors.line)
 
-                comparisonAndResultsPane
-                    .frame(minWidth: 460, idealWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
+                rightInspectorPanel
+                    .frame(width: 348)
+                    .background(AdaColors.card)
             }
+            .background(AdaColors.canvas)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(.horizontal, 28)
-        .padding(.top, 22)
-        .padding(.bottom, 20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear {
-            if queryImage == nil, let defaultSample = I3SSampleLibrary.samples.first(where: { $0.id == "Amina3_L" }) ?? I3SSampleLibrary.samples.first {
-                loadSample(defaultSample, forSecondary: false)
-            }
-            if secondaryImage == nil, let rightSample = I3SSampleLibrary.samples.first(where: { $0.id == "Amina2_R" }) {
-                loadSample(rightSample, forSecondary: true)
+
+            // Full-size CompareResults Visual Comparison Modal
+            if isComparisonModalPresented, let selected = selectedCandidate {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Color.black.opacity(0.28))
+                    .ignoresSafeArea()
+                    .onTapGesture { isComparisonModalPresented = false }
+
+                GeometryReader { proxy in
+                    visualComparisonModal(for: selected)
+                        .frame(
+                            width: min(max(proxy.size.width - 64, 860), 1_180),
+                            height: min(max(proxy.size.height - 64, 620), 820)
+                        )
+                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
         .sheet(isPresented: $isEnrollSheetPresented) {
             enrollNewIndividualSheet
         }
+        .onChange(of: fingerprint) { _, _ in invalidateI3SScores() }
+        .onChange(of: secondaryFingerprint) { _, _ in invalidateI3SScores() }
+        .onChange(of: expertParams) { _, _ in invalidateI3SScores() }
+        .onChange(of: querySide) { _, _ in invalidateI3SScores() }
+        .onChange(of: isDualMode) { _, _ in invalidateI3SScores() }
+        .onChange(of: queryImageData) { _, _ in invalidateI3SScores() }
+        .onChange(of: secondaryImageData) { _, _ in invalidateI3SScores() }
     }
 
-    // MARK: - Header Bar
+    // MARK: - Left / Center Main Workspace Area
 
-    private var headerBar: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text("I3S Pattern v4.02 — Photo Identification Workspace")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(AdaColors.textPrimary)
-                    Text("MiewID + XFeat + I3SSurf")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(AdaColors.accent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(AdaColors.accentSoft, in: Capsule())
+    private var mainWorkspaceArea: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            topActionToolbar
+            stepProgressBanner
+
+            ZStack {
+                if activeImage == nil {
+                    emptyImportDropZone
+                } else {
+                    interactiveCanvasCard
                 }
-                Text("Anatomical 3-point reference alignment, closed facial-scale ROI, 35-keypoint SURF blob extraction, and calibrated database matching.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(AdaColors.textSecondary)
             }
-
-            Spacer()
-
-            // Single vs Dual Pair Mode
-            Picker("", selection: $isDualMode) {
-                Text("Single Photo").tag(false)
-                Text("Dual L/R Pair").tag(true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
+                handleDrop(providers: providers)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 210)
-            .onChange(of: isDualMode) { _, newValue in
-                if !newValue { editingSecondary = false }
-            }
-
-            Button {
-                Task { await runDatabaseSearch() }
-            } label: {
-                HStack(spacing: 7) {
-                    if isSearching {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "magnifyingglass.circle.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                    }
-                    Text(isSearching ? "Searching..." : "Search in Database")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(queryImageData != nil ? AdaColors.accent : AdaColors.textMuted, in: RoundedRectangle(cornerRadius: 8))
-            }
-            .buttonStyle(.plain)
-            .disabled(queryImageData == nil || isSearching)
         }
+        .padding(18)
     }
 
-    // MARK: - I3S Toolbar Card
+    // MARK: - Clean Top Action Toolbar
 
-    private var i3sToolbarCard: some View {
-        HStack(spacing: 10) {
-            // Side selector or L/R tab in Dual mode
-            if isDualMode {
-                HStack(spacing: 4) {
-                    Button {
-                        editingSecondary = false
-                    } label: {
-                        Text("Left Photo")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(!editingSecondary ? .white : AdaColors.textPrimary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(!editingSecondary ? AdaColors.accent : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        editingSecondary = true
-                    } label: {
-                        Text("Right Photo")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(editingSecondary ? .white : AdaColors.textPrimary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(editingSecondary ? AdaColors.accent : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(3)
-                .background(AdaColors.surfaceMuted, in: RoundedRectangle(cornerRadius: 8))
-            } else {
-                Picker("Side", selection: $querySide) {
-                    ForEach(TurtlePhotoSide.allCases) { side in
-                        Text(side.title).tag(side)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 125)
-            }
-
+    private var topActionToolbar: some View {
+        HStack(spacing: 8) {
+            // Primary Import Photo button
             Button {
                 openImageFromDisk(forSecondary: editingSecondary)
             } label: {
-                Label("Open Image…", systemImage: "folder")
-                    .font(.system(size: 12, weight: .medium))
+                Label("Import Photo…", systemImage: "photo.badge.plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 13)
+                    .frame(height: 30)
+                    .background(AdaColors.navy, in: Capsule())
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
 
+            // Sample Photos menu (loads UNANNOTATED photo by default!)
             Menu {
-                Section("I3S Pattern v4.02 Bundled Sea Turtle Samples") {
+                Section("Load Unannotated Sample Photo (Annotate Yourself)") {
                     ForEach(I3SSampleLibrary.samples) { sample in
-                        Button("\(sample.title) — \(sample.fgpFile)") {
-                            loadSample(sample, forSecondary: editingSecondary)
+                        Button("\(sample.title) (\(sample.photoSide.title))") {
+                            loadSample(sample, includeAnnotations: false, forSecondary: editingSecondary)
+                        }
+                    }
+                }
+                Divider()
+                Section("Load Sample with Pre-Saved .fgp Annotations") {
+                    ForEach(I3SSampleLibrary.samples) { sample in
+                        Button("\(sample.title) + .fgp (35 keypoints)") {
+                            loadSample(sample, includeAnnotations: true, forSecondary: editingSecondary)
                         }
                     }
                 }
             } label: {
-                Label("Sample Library", systemImage: "photo.on.rectangle.angled")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .menuStyle(.borderedButton)
-            .frame(width: 145)
-
-            Divider().frame(height: 18)
-
-            // Edit Mode toggle (`SharkPanel.toggleEditMode`)
-            Button {
-                editMode.toggle()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: editMode ? "pencil.and.outline" : "hand.draw")
-                    Text(editMode ? "Annotate ON" : "View Only")
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(editMode ? AdaColors.accent : AdaColors.textSecondary)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(editMode ? AdaColors.accentSoft : AdaColors.surfaceMuted, in: RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                autoAnnotateCurrentImage()
-            } label: {
-                Label("Auto ROI + SURF", systemImage: "wand.and.stars")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-            .disabled(activeImage == nil)
-            .help("Automatically place the 3 anatomical reference points, close the facial scale ROI, and extract 35 multi-scale SURF keypoints.")
-
-            if !activeFingerprint.roi.isFinal && activeFingerprint.roi.vertices.count >= 3 {
-                Button {
-                    closeRoiAndExtract()
-                } label: {
-                    Label("Close ROI", systemImage: "checkmark.seal")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.borderedProminent)
-            }
-
-            Button {
-                performUndo()
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-            }
-            .buttonStyle(.bordered)
-            .disabled(undoStack.isEmpty)
-            .help("Undo last annotation step")
-
-            Button {
-                deleteROI()
-            } label: {
-                Label("Delete ROI", systemImage: "Lasso.badge.sparkles")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.bordered)
-            .disabled(activeFingerprint.roi.vertices.isEmpty)
-
-            Button {
-                resetCurrentFingerprint()
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.bordered)
-            .help("Reset all reference points, ROI, and keypoints")
-
-            Spacer()
-
-            // .fgp file import/export
-            Menu {
-                Button("Import I3S .fgp Fingerprint…") {
-                    importFgpFile()
-                }
-                Button("Export I3S .fgp Fingerprint…") {
-                    exportFgpFile()
-                }
-                .disabled(!activeFingerprint.readyForProcessing)
-            } label: {
-                Label(".fgp", systemImage: "doc.badge.gearshape")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .menuStyle(.borderedButton)
-            .frame(width: 76)
-
-            Button {
-                isExpertPopoverPresented.toggle()
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-            }
-            .buttonStyle(.bordered)
-            .popover(isPresented: $isExpertPopoverPresented, arrowEdge: .bottom) {
-                expertParametersPopover
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(AdaColors.surface, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(AdaColors.border, lineWidth: 1))
-    }
-
-    // MARK: - Yellow I3S Instruction Banner (`I3S.displayHints`)
-
-    private var guidedHintBanner: some View {
-        HStack(spacing: 10) {
-            Image(systemName: activeFingerprint.readyForProcessing ? "checkmark.circle.fill" : "info.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(activeFingerprint.readyForProcessing ? AdaColors.green : Color(red: 0.55, green: 0.40, blue: 0.0))
-
-            Text(statusBannerMessage ?? activeFingerprint.guidedStatusBanner)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color(red: 0.25, green: 0.20, blue: 0.04))
-                .lineLimit(1)
-
-            Spacer()
-
-            HStack(spacing: 12) {
-                legendDot(color: .blue, label: "Ref 1–3 (Anatomical)")
-                legendDot(color: .green, label: "Polygon ROI")
-                legendDot(color: .red, label: "SURF Keypoints (\(activeFingerprint.keypoints.count))")
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(red: 1.0, green: 0.96, blue: 0.78))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(red: 0.92, green: 0.80, blue: 0.35), lineWidth: 1)
-        )
-    }
-
-    private func legendDot(color: Color, label: String) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color(red: 0.30, green: 0.25, blue: 0.10))
-        }
-    }
-
-    // MARK: - Left Pane: Interactive SharkPanel Annotation Canvas
-
-    private var annotationPane: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(editingSecondary ? "Query Right Profile: \(secondaryTitle)" : "Query \(querySide.title): \(queryTitle)")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AdaColors.textPrimary)
-                    Text("Left-click: place Ref 1–3 & ROI vertices • Click start vertex: close ROI & run I3SSurf • Right-click / Option-click: remove nearest point")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AdaColors.textSecondary)
-                }
-                Spacer()
                 HStack(spacing: 6) {
-                    Toggle("Labels", isOn: $showKeypointLabels)
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 11))
+                    Image(systemName: "photo.on.rectangle")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("Sample Photos")
+                        .font(.system(size: 12, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(AdaColors.ink)
+                .padding(.horizontal, 11)
+                .frame(height: 30)
+                .background(AdaColors.card, in: Capsule())
+                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+
+            // Side selector
+            if isDualMode {
+                HStack(spacing: 2) {
+                    FilterChip(title: "Left Photo", isSelected: !editingSecondary, horizontalPadding: 10) {
+                        editingSecondary = false
+                        syncActiveStepToFingerprint()
+                    }
+                    FilterChip(title: "Right Photo", isSelected: editingSecondary, horizontalPadding: 10) {
+                        editingSecondary = true
+                        syncActiveStepToFingerprint()
+                    }
+                }
+            } else {
+                HStack(spacing: 4) {
+                    ForEach(TurtlePhotoSide.allCases) { side in
+                        FilterChip(title: side.title, isSelected: querySide == side, horizontalPadding: 10) {
+                            querySide = side
+                        }
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if activeImage != nil {
+                // Zoom controls
+                HStack(spacing: 4) {
                     Button {
                         canvasZoom = max(0.5, canvasZoom / 1.2)
                     } label: {
                         Image(systemName: "minus.magnifyingglass")
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(width: 26, height: 26)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Button("\(Int((canvasZoom * 100).rounded()))%") {
-                        canvasZoom = 1.0
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
 
                     Button {
-                        canvasZoom = min(3.5, canvasZoom * 1.2)
+                        canvasZoom = 1.0
+                        canvasPan = .zero
+                    } label: {
+                        Text("\(Int((canvasZoom * 100).rounded()))%")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .padding(.horizontal, 6)
+                            .frame(height: 26)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        canvasZoom = min(4.0, canvasZoom * 1.2)
                     } label: {
                         Image(systemName: "plus.magnifyingglass")
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(width: 26, height: 26)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(AdaColors.ink)
+                .padding(.horizontal, 4)
+                .background(AdaColors.card, in: Capsule())
+                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+
+                Button {
+                    performUndo()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(undoStack.isEmpty ? AdaColors.tertiaryInk : AdaColors.ink)
+                        .frame(width: 28, height: 28)
+                        .background(AdaColors.card, in: Circle())
+                        .overlay(Circle().stroke(AdaColors.line, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(undoStack.isEmpty)
+                .help("Undo last step")
+
+                Button {
+                    resetCurrentFingerprint()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Clear")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(AdaColors.ink)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(AdaColors.card, in: Capsule())
+                    .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help("Clear all reference points and ROI to annotate from scratch")
+            }
+
+            // .fgp & Expert settings menu
+            Menu {
+                Button("Import .fgp Fingerprint File…") {
+                    importFgpFile()
+                }
+                .disabled(activeImage == nil)
+
+                Button("Export .fgp Fingerprint File…") {
+                    exportFgpFile()
+                }
+                .disabled(!activeFingerprint.readyForProcessing)
+
+                if let companion = companionFgp {
+                    Divider()
+                    Button("Load Companion .fgp (\(companion.keypoints.count) keypoints)") {
+                        pushUndoState()
+                        if editingSecondary {
+                            secondaryFingerprint = companion
+                        } else {
+                            fingerprint = companion
+                        }
+                        syncActiveStepToFingerprint()
+                        statusBannerMessage = "Loaded companion .fgp annotations."
+                    }
+                }
+
+                Divider()
+                Button("Auto-Place Head ROI & Extract 35 Keypoints") {
+                    autoAnnotateCurrentImage()
+                }
+                .disabled(activeImage == nil)
+
+                Button("Expert I3S Parameters…") {
+                    isExpertPopoverPresented = true
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AdaColors.ink)
+                    .frame(width: 30, height: 30)
+                    .background(AdaColors.card, in: Circle())
+                    .overlay(Circle().stroke(AdaColors.line, lineWidth: 1))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .popover(isPresented: $isExpertPopoverPresented, arrowEdge: .bottom) {
+                expertParametersPopover
+            }
+        }
+    }
+
+    // MARK: - Interactive Step-by-Step Progress Bar
+
+    private var stepProgressBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(I3SAnnotationStep.allCases) { step in
+                    let isDone = isStepCompleted(step)
+                    let isCurrent = activeStep == step
+                    Button {
+                        activeStep = step
+                        statusBannerMessage = nil
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: isDone ? "checkmark.circle.fill" : (isCurrent ? "record.circle" : "circle"))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(isCurrent ? .white : (isDone ? AdaColors.green : AdaColors.tertiaryInk))
+                            Text(step.shortTitle)
+                                .font(.system(size: 11, weight: isCurrent ? .semibold : .medium))
+                                .foregroundStyle(isCurrent ? .white : AdaColors.ink)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(
+                            isCurrent ? AdaColors.navy : (isDone ? AdaColors.green.opacity(0.10) : AdaColors.canvas),
+                            in: Capsule()
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
+
+                if !activeFingerprint.roi.isFinal && activeFingerprint.roi.vertices.count >= 3 {
+                    Button {
+                        closeRoiAndExtract()
+                    } label: {
+                        Label("Finish ROI & Extract Keypoints", systemImage: "sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 26)
+                            .background(AdaColors.green, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                } else if activeImage != nil && !activeFingerprint.readyForProcessing {
+                    Button {
+                        autoAnnotateCurrentImage()
+                    } label: {
+                        Label("Use Head Template", systemImage: "wand.and.stars")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AdaColors.navy)
+                            .padding(.horizontal, 10)
+                            .frame(height: 26)
+                            .background(AdaColors.accentSoft, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
 
+            HStack(spacing: 8) {
+                Image(systemName: "hand.point.up.left.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AdaColors.navy)
+                Text(statusBannerMessage ?? (activeImage == nil ? "Import or drag-and-drop a sea turtle head photo to start step-by-step I3S annotation." : activeStep.instructionText))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaColors.ink)
+                    .lineLimit(1)
+                Spacer()
+                if activeImage != nil {
+                    Text("Tip: Drag any point to adjust • Right-click to undo point")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AdaColors.tertiaryInk)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(AdaColors.line, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Empty Import / Drag-and-Drop Zone
+
+    private var emptyImportDropZone: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(AdaColors.navy.opacity(0.07))
+                    .frame(width: 72, height: 72)
+                Image(systemName: "viewfinder.circle")
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(AdaColors.navy)
+            }
+
+            VStack(spacing: 6) {
+                Text("Import or Drop a Sea Turtle Head Photo")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
+                Text("Photos open unannotated so you can mark Reference Points 1–3 and trace the facial scale ROI yourself.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 440)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    openImageFromDisk(forSecondary: editingSecondary)
+                } label: {
+                    Label("Choose Photo from Mac…", systemImage: "folder.badge.plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .frame(height: 36)
+                        .background(AdaColors.navy, in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                if let defaultSample = I3SSampleLibrary.samples.first(where: { $0.id == "Amina3_L" }) ?? I3SSampleLibrary.samples.first {
+                    Button {
+                        loadSample(defaultSample, includeAnnotations: false, forSecondary: editingSecondary)
+                    } label: {
+                        Label("Try Sample Photo (Unannotated)", systemImage: "photo")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AdaColors.ink)
+                            .padding(.horizontal, 16)
+                            .frame(height: 36)
+                            .background(AdaColors.canvas, in: Capsule())
+                            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // Quick thumbnail strip of bundled raw sea turtle head photos
+            VStack(spacing: 8) {
+                Text("Or pick a sea turtle head photo to annotate:")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AdaColors.tertiaryInk)
+
+                HStack(spacing: 10) {
+                    ForEach(I3SSampleLibrary.samples.prefix(5)) { sample in
+                        Button {
+                            loadSample(sample, includeAnnotations: false, forSecondary: editingSecondary)
+                        } label: {
+                            VStack(spacing: 5) {
+                                if let img = I3SSampleLibrary.loadImage(for: sample) {
+                                    Image(nsImage: img)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 68, height: 68)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                Text(sample.id)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(AdaColors.secondaryInk)
+                            }
+                            .padding(6)
+                            .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(AdaColors.card)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(
+                    isDropTargeted ? AdaColors.accent : AdaColors.line,
+                    style: StrokeStyle(lineWidth: isDropTargeted ? 2.5 : 1.5, dash: [8, 6])
+                )
+        )
+    }
+
+    // MARK: - Interactive Canvas Card
+
+    private var interactiveCanvasCard: some View {
+        VStack(spacing: 0) {
             I3SInteractiveCanvas(
                 image: activeImage,
                 fingerprint: editingSecondary ? $secondaryFingerprint : $fingerprint,
-                editMode: editMode,
+                activeStep: $activeStep,
                 zoom: canvasZoom,
+                panOffset: $canvasPan,
                 showKeypointLabels: showKeypointLabels,
-                showReferenceTriangle: showReferenceTriangle,
                 onWillMutate: { pushUndoState() },
-                onRoiClosed: { extractKeypointsForActiveImage() },
+                onRoiClosed: {
+                    extractKeypointsForActiveImage()
+                    activeStep = .keypoints
+                },
                 onStatusMessage: { msg in statusBannerMessage = msg }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(red: 0.11, green: 0.13, blue: 0.16), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(AdaColors.border, lineWidth: 1))
+            .background(Color(red: 0.11, green: 0.13, blue: 0.16))
 
-            // Reference point coordinate readout footer
+            // Subtle canvas footer bar
             HStack(spacing: 14) {
-                refPointBadge(kind: .beakEdge, pt: activeFingerprint.ref1)
-                refPointBadge(kind: .innerEyeArea, pt: activeFingerprint.ref2)
-                refPointBadge(kind: .outerScaleEdge, pt: activeFingerprint.ref3)
-                Spacer()
-                Text("ROI Vertices: \(activeFingerprint.roi.vertices.count) (\(activeFingerprint.roi.isFinal ? "Closed" : "Open"))")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(AdaColors.textSecondary)
-            }
-            .padding(.horizontal, 4)
-        }
-        .padding(12)
-        .background(AdaColors.surface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(AdaColors.border, lineWidth: 1))
-    }
+                Text(editingSecondary ? secondaryTitle : queryTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
 
-    private func refPointBadge(kind: I3SReferencePointKind, pt: I3SPoint2D) -> some View {
-        HStack(spacing: 5) {
-            Text("\(kind.indexLabel).")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.blue)
-            Text(kind.title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(AdaColors.textPrimary)
-            if pt.isInitialized {
-                Text("(\(Int(pt.x.rounded())), \(Int(pt.y.rounded())))")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(AdaColors.textSecondary)
-            } else {
-                Text("unset")
-                    .font(.system(size: 10))
-                    .foregroundStyle(AdaColors.orange)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(AdaColors.surfaceMuted, in: RoundedRectangle(cornerRadius: 6))
-    }
-
-    // MARK: - Right Pane: Ranked Candidates (`ShowResults`) + 4-Tab Visual Comparison (`CompareResults`)
-
-    private var comparisonAndResultsPane: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Ranked candidate list header
-            HStack {
-                Text("Ranked Gallery Candidates")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(AdaColors.textPrimary)
-
-                if let outcome = searchOutcome {
-                    Text("\(outcome.candidates.count) shown • Gallery: \(outcome.gallerySize) photos • State: \(outcome.matchState.uppercased())")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(AdaColors.accent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(AdaColors.accentSoft, in: Capsule())
+                if let companion = companionFgp, !activeFingerprint.readyForProcessing {
+                    Button("Load Saved .fgp (\(companion.keypoints.count) pts)") {
+                        pushUndoState()
+                        if editingSecondary {
+                            secondaryFingerprint = companion
+                        } else {
+                            fingerprint = companion
+                        }
+                        syncActiveStepToFingerprint()
+                        statusBannerMessage = "Loaded saved I3S fingerprint annotations."
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AdaColors.accent)
+                    .buttonStyle(.plain)
                 }
 
                 Spacer()
+
+                Toggle("Show Keypoint Numbers", isOn: $showKeypointLabels)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 11))
+                    .foregroundStyle(AdaColors.secondaryInk)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(AdaColors.card)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AdaColors.line, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Right Inspector Sidebar (`width: 348`, matching `MapFilterPanel`)
+
+    private var rightInspectorPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // 1. Annotation Checklist & Re-pick Controls
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("I3S Annotation Steps")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AdaColors.ink)
+                    Spacer()
+                    Toggle("Dual L/R", isOn: $isDualMode)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .font(.system(size: 11))
+                        .onChange(of: isDualMode) { _, newValue in
+                            if !newValue { editingSecondary = false }
+                        }
+                }
+
+                stepCheckRow(
+                    step: .ref1,
+                    title: "1. Beak edge",
+                    detail: coordinateString(activeFingerprint.ref1),
+                    isComplete: activeFingerprint.ref1.isInitialized,
+                    dotColor: .blue
+                )
+                stepCheckRow(
+                    step: .ref2,
+                    title: "2. Inner eye area",
+                    detail: coordinateString(activeFingerprint.ref2),
+                    isComplete: activeFingerprint.ref2.isInitialized,
+                    dotColor: .blue
+                )
+                stepCheckRow(
+                    step: .ref3,
+                    title: "3. Outer scale edge",
+                    detail: coordinateString(activeFingerprint.ref3),
+                    isComplete: activeFingerprint.ref3.isInitialized,
+                    dotColor: .blue
+                )
+                stepCheckRow(
+                    step: .roi,
+                    title: "4. Facial scale ROI",
+                    detail: activeFingerprint.roi.isFinal
+                        ? "Closed (\(activeFingerprint.roi.vertices.count - 1) pts)"
+                        : "\(activeFingerprint.roi.vertices.count) vertices",
+                    isComplete: activeFingerprint.roi.isFinal,
+                    dotColor: .green
+                )
+                stepCheckRow(
+                    step: .keypoints,
+                    title: "5. Blob keypoints",
+                    detail: "\(activeFingerprint.keypoints.count) / \(expertParams.nrElements) blobs",
+                    isComplete: !activeFingerprint.keypoints.isEmpty,
+                    dotColor: .red
+                )
+            }
+
+            // Primary Search Button
+            Button {
+                Task { await runDatabaseSearch() }
+            } label: {
+                HStack(spacing: 8) {
+                    if isSearching {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    Text(isSearching ? "Matching Gallery…" : "Search in Database")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+                .background(queryImageData != nil ? AdaColors.navy : AdaColors.tertiaryInk, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(queryImageData == nil || isSearching)
+
+            Divider().overlay(AdaColors.line)
+
+            // 2. Ranked Gallery Candidates (`ShowResults.java`)
+            HStack {
+                Text("Gallery Matches")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
+                Spacer()
+                if let outcome = searchOutcome {
+                    Text("\(outcome.candidates.count) results")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AdaColors.tertiaryInk)
+                }
             }
 
             if candidates.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "sparkle.magnifyingglass")
-                        .font(.system(size: 26))
-                        .foregroundStyle(AdaColors.textMuted)
-                    Text("Annotate the sea turtle head photo on the left and click 'Search in Database' to rank gallery individuals.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(AdaColors.textSecondary)
+                    Image(systemName: "tortoise")
+                        .font(.system(size: 24))
+                        .foregroundStyle(AdaColors.tertiaryInk)
+                    Text("No search results yet")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                    Text("Import a photo, mark the head or click 'Search in Database' to rank gallery individuals.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AdaColors.tertiaryInk)
                         .multilineTextAlignment(.center)
-                        .frame(maxWidth: 360)
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 115)
-                .background(AdaColors.surfaceMuted, in: RoundedRectangle(cornerRadius: 10))
+                .padding(.vertical, 28)
+                .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
+                ScrollView {
+                    VStack(spacing: 8) {
                         ForEach(candidates) { cand in
-                            candidateCard(cand)
+                            candidateRow(cand)
                         }
                     }
-                    .padding(.vertical, 2)
                 }
-                .frame(height: 96)
+                .scrollIndicators(.hidden)
             }
 
-            Divider()
+            Spacer(minLength: 0)
 
-            // CompareResults 4-Tab Visual Inspector
-            HStack {
+            // Quick Enroll New Individual button at bottom of sidebar
+            if queryImageData != nil {
+                Button {
+                    enrollName = "Turtle #\(String(format: "%03d", store.turtles.count + 1))"
+                    enrollSpecies = selectedCandidate?.species ?? .green
+                    enrollCondition = .healthy
+                    enrollNotes = "Enrolled via I3S Pattern v4.02 workspace"
+                    isEnrollSheetPresented = true
+                } label: {
+                    Label("Enroll as New Individual…", systemImage: "plus.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AdaColors.ink)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 32)
+                        .background(AdaColors.canvas, in: Capsule())
+                        .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(18)
+    }
+
+    private func stepCheckRow(
+        step: I3SAnnotationStep,
+        title: String,
+        detail: String,
+        isComplete: Bool,
+        dotColor: Color
+    ) -> some View {
+        let isSelected = activeStep == step
+        return Button {
+            activeStep = step
+        } label: {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(isComplete ? AdaColors.green : dotColor.opacity(0.6))
+                    .frame(width: 8, height: 8)
+                Text(title)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(AdaColors.ink)
+                Spacer()
+                Text(detail)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(isComplete ? AdaColors.secondaryInk : AdaColors.tertiaryInk)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(isSelected ? AdaColors.canvas : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func candidateRow(_ item: MatchCandidateItem) -> some View {
+        let isSelected = selectedCandidate?.individualID == item.individualID
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text("#\(item.rank)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(item.rank == 1 ? AdaColors.green : AdaColors.navy, in: Circle())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AdaColors.ink)
+                    Text("\(item.species.rawValue) · \(item.matchedPhotoSide.title)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(AdaColors.tertiaryInk)
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(item.confidencePercent)%")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(item.confidencePercent >= 50 ? AdaColors.green : AdaColors.ink)
+                    Text(String(format: "Fused %.2f", item.fusedScore))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(AdaColors.tertiaryInk)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Text("XFeat \(item.localMatch)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(AdaColors.accent)
+                if let i3sScore = item.i3sDistanceScore, i3sScore < 999_999 {
+                    Text(String(format: "I3S Score %.2f", i3sScore))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                }
+                Spacer()
+                Button {
+                    Task {
+                        await selectCandidate(item)
+                        isComparisonModalPresented = true
+                    }
+                } label: {
+                    Text("Compare Visually")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AdaColors.navy)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(AdaColors.card, in: Capsule())
+                        .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(11)
+        .background(isSelected ? AdaColors.accentSoft : AdaColors.canvas, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isSelected ? AdaColors.accent : Color.clear, lineWidth: 1.5)
+        )
+        .onTapGesture {
+            Task {
+                await selectCandidate(item)
+                isComparisonModalPresented = true
+            }
+        }
+    }
+
+    // MARK: - Spacious Visual Comparison Modal (`CompareResults.java`)
+
+    private func visualComparisonModal(for selected: MatchCandidateItem) -> some View {
+        VStack(spacing: 0) {
+            // Modal Header
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("Visual Match Comparison — \(selected.name)")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AdaColors.ink)
+                        Text("Rank #\(selected.rank) · \(selected.confidencePercent)% Confidence")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(AdaColors.green)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(AdaColors.green.opacity(0.12), in: Capsule())
+                    }
+                    Text("Inspect side-by-side scale patterns, XFeat LighterGlue threads, magnifying loupe, and aligned I3S point cloud.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AdaColors.tertiaryInk)
+                }
+
+                Spacer()
+
                 Picker("", selection: $comparisonTab) {
                     ForEach(I3SComparisonTab.allCases) { tab in
                         Text(tab.rawValue).tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
+                .frame(width: 420)
 
-                Spacer()
-
-                if comparisonTab == .bothImages {
-                    Toggle("AutoZoom ROI", isOn: $autoZoomOn)
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 11, weight: .medium))
-
-                    Toggle("XFeat Threads (\(overlayAnnotations.count))", isOn: $showMatchThreads)
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 11, weight: .medium))
+                Button {
+                    isComparisonModalPresented = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                        .frame(width: 30, height: 30)
+                        .background(Color.black.opacity(0.045), in: Circle())
                 }
+                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 22)
+            .frame(height: 64)
+            .background(AdaColors.card)
+
+            Divider().overlay(AdaColors.line)
+
+            // Modal Body
+            HStack(spacing: 12) {
+                Button("Load Gallery .fgp…") { importCandidateFgpFile() }
+                    .disabled(candidateImage == nil)
+                Text(i3sComparison == nil
+                     ? "I3S needs query annotations and the fingerprint belonging to this gallery photo."
+                     : "I3S compares the annotated photos. Lower distance scores are better.")
+                    .font(.caption)
+                    .foregroundStyle(AdaColors.secondaryInk)
+                Spacer()
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 8)
 
             Group {
                 switch comparisonTab {
                 case .bothImages:
-                    bothSharksView
-                case .unknownIndividual:
-                    singleInspectView(image: queryImage, fp: fingerprint, title: "Unknown Query Individual (\(queryTitle))", tint: .red)
-                case .foundIndividual:
-                    singleInspectView(
-                        image: candidateImage,
-                        fp: candidateFingerprint,
-                        title: selectedCandidate.map { "Found Individual: \($0.name) (\($0.matchedPhotoSide.title))" } ?? "No candidate selected",
-                        tint: .blue
-                    )
+                    modalBothSharksBody
                 case .pointCloud:
                     I3SPointCloudView(
                         comparison: i3sComparison,
                         overlayAnnotations: overlayAnnotations,
-                        candidate: selectedCandidate
+                        candidate: selected
+                    )
+                case .unknownIndividual:
+                    singleInspectView(image: comparisonImage, fp: comparisonFingerprint, title: "Query Individual (\(comparisonUsesSecondary ? secondaryTitle : queryTitle))", tint: .red)
+                case .foundIndividual:
+                    singleInspectView(
+                        image: candidateImage,
+                        fp: candidateFingerprint,
+                        title: "Gallery Individual: \(selected.name) (\(selected.matchedPhotoSide.title))",
+                        tint: .cyan
                     )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(red: 0.10, green: 0.12, blue: 0.15), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(AdaColors.border, lineWidth: 1))
+            .background(Color(red: 0.10, green: 0.12, blue: 0.15))
 
-            // Bottom CompareResults Decision Bar (`Include in database`, `New individual`, `Open profile`)
-            decisionActionBar
-        }
-        .padding(12)
-        .background(AdaColors.surface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(AdaColors.border, lineWidth: 1))
-    }
+            Divider().overlay(AdaColors.line)
 
-    private func candidateCard(_ item: MatchCandidateItem) -> some View {
-        let isSelected = selectedCandidate?.individualID == item.individualID
-        return Button {
-            Task { await selectCandidate(item) }
-        } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Text("#\(item.rank)")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(item.rank == 1 ? AdaColors.green : AdaColors.accent, in: Capsule())
+            // Modal Footer (`CompareResults` actions)
+            HStack(spacing: 12) {
+                Toggle("AutoZoom ROI (20%)", isOn: $autoZoomOn)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 12, weight: .medium))
 
-                    Text(item.name)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(AdaColors.textPrimary)
-                        .lineLimit(1)
+                Toggle("XFeat Match Threads (\(overlayAnnotations.count))", isOn: $showMatchThreads)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 12, weight: .medium))
 
-                    Spacer()
+                Spacer()
 
-                    Text("\(item.confidencePercent)%")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(item.confidencePercent >= 50 ? AdaColors.green : AdaColors.textSecondary)
-                }
-
-                Text(item.species.rawValue)
-                    .font(.system(size: 11))
-                    .foregroundStyle(AdaColors.textSecondary)
-
-                HStack(spacing: 8) {
-                    Text(String(format: "Fused %.3f", item.fusedScore))
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(AdaColors.textPrimary)
-                    Text("XFeat \(item.localMatch)")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(AdaColors.accent)
-                    if let i3sScore = item.i3sDistanceScore, i3sScore < 999_999 {
-                        Text(String(format: "I3S %.2f", i3sScore))
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(AdaColors.orange)
+                Button {
+                    if let matchingTurtle = store.turtles.first(where: { $0.backendID == selected.individualID || $0.id == selected.name }) {
+                        isComparisonModalPresented = false
+                        store.select(matchingTurtle)
                     }
+                } label: {
+                    Text("Open Profile")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AdaColors.ink)
+                        .padding(.horizontal, 14)
+                        .frame(height: 32)
+                        .background(AdaColors.canvas, in: Capsule())
                 }
+                .buttonStyle(.plain)
+
+                Button {
+                    isComparisonModalPresented = false
+                    enrollName = "Turtle #\(String(format: "%03d", store.turtles.count + 1))"
+                    enrollSpecies = selected.species
+                    enrollCondition = .healthy
+                    enrollNotes = "Enrolled via I3S Pattern v4.02 workspace"
+                    isEnrollSheetPresented = true
+                } label: {
+                    Text("New Individual…")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AdaColors.ink)
+                        .padding(.horizontal, 14)
+                        .frame(height: 32)
+                        .background(AdaColors.canvas, in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    Task {
+                        await confirmMatchAndIncludeInDatabase(selected)
+                        isComparisonModalPresented = false
+                    }
+                } label: {
+                    Label("Include in Database (\(selected.name))", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .frame(height: 32)
+                        .background(AdaColors.green, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(queryImageData == nil || isSubmittingDecision)
             }
-            .padding(10)
-            .frame(width: 225, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(isSelected ? Color(red: 1.0, green: 0.95, blue: 0.72) : AdaColors.surfaceMuted)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(isSelected ? AdaColors.orange : AdaColors.border, lineWidth: isSelected ? 2 : 1)
-            )
+            .padding(.horizontal, 22)
+            .frame(height: 56)
+            .background(AdaColors.card)
         }
-        .buttonStyle(.plain)
+        .background(AdaColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(0.75), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.24), radius: 30, y: 12)
     }
 
-    // MARK: - Tab 1: BothSharks Side-by-Side + AutoZoom + Magnifying Glass + XFeat Threads
-
-    private var bothSharksView: some View {
-        VStack(spacing: 8) {
+    private var modalBothSharksBody: some View {
+        VStack(spacing: 0) {
             if useBackendOverlayPNG, let pngImg = backendOverlayImage {
-                VStack(spacing: 6) {
+                VStack(spacing: 8) {
                     HStack {
-                        Text("Backend XFeat LighterGlue Match Canvas (/api/v1/match/overlay)")
-                            .font(.system(size: 11, weight: .semibold))
+                        Text("Server-Rendered XFeat LighterGlue Canvas (/api/v1/match/overlay)")
+                            .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white)
                         Spacer()
-                        Button("Switch to Interactive Loupe View") {
+                        Button("Back to Interactive Loupe Comparison") {
                             useBackendOverlayPNG = false
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.top, 6)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
 
                     Image(nsImage: pngImg)
                         .resizable()
                         .scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(6)
+                        .padding(12)
                 }
             } else {
                 I3SBothSharksComparisonCanvas(
-                    unknownImage: queryImage,
-                    unknownFingerprint: fingerprint,
+                    unknownImage: comparisonImage,
+                    unknownFingerprint: comparisonFingerprint,
                     foundImage: candidateImage,
                     foundFingerprint: candidateFingerprint,
                     candidate: selectedCandidate,
@@ -701,8 +1124,8 @@ struct I3SWorkspaceView: View {
                         .foregroundStyle(.white.opacity(0.8))
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
 
             if let image {
                 GeometryReader { geo in
@@ -727,70 +1150,12 @@ struct I3SWorkspaceView: View {
                         }
                     }
                 }
-                .padding(8)
-            } else {
-                VStack {
-                    Spacer()
-                    Text("No image available")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.6))
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
+                .padding(12)
             }
         }
     }
 
-    // MARK: - Bottom Decision Bar (`CompareResults.java` buttons)
-
-    private var decisionActionBar: some View {
-        HStack(spacing: 10) {
-            if let selected = selectedCandidate {
-                Button {
-                    Task { await confirmMatchAndIncludeInDatabase(selected) }
-                } label: {
-                    Label("Include in Database (\(selected.name))", systemImage: "checkmark.seal.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(AdaColors.green)
-                .disabled(queryImageData == nil || isSubmittingDecision)
-
-                Button {
-                    if let matchingTurtle = store.turtles.first(where: { $0.backendID == selected.individualID || $0.id == selected.name }) {
-                        store.select(matchingTurtle)
-                    }
-                } label: {
-                    Label("Open Profile", systemImage: "person.text.rectangle")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Button {
-                enrollName = "Turtle #\(String(format: "%03d", store.turtles.count + 1))"
-                enrollSpecies = selectedCandidate?.species ?? .green
-                enrollCondition = .healthy
-                enrollNotes = "Enrolled via I3S Pattern v4.02 workspace"
-                isEnrollSheetPresented = true
-            } label: {
-                Label("New Individual…", systemImage: "plus.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .buttonStyle(.bordered)
-            .disabled(queryImageData == nil || isSubmittingDecision)
-
-            Spacer()
-
-            if let comp = i3sComparison, comp.score < I3SComparisonResult.noMatchScore {
-                Text(String(format: "I3S Score: %.2f (%d pairs)", comp.score, comp.pairCount))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(AdaColors.textSecondary)
-            }
-        }
-    }
-
-    // MARK: - Expert Parameters Popover (`metadata.xml`)
+    // MARK: - Expert Settings Popover & Enrollment Sheet
 
     private var expertParametersPopover: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -819,19 +1184,6 @@ struct I3SWorkspaceView: View {
             Slider(value: $expertParams.relKeypointDist, in: 0.02...0.12, step: 0.01)
 
             HStack {
-                Text("Max Allowed Affine Match Distance:")
-                    .font(.system(size: 12))
-                Spacer()
-                Text(String(format: "%.3f", expertParams.maxAllowedDistance))
-                    .font(.system(size: 12, design: .monospaced))
-            }
-            Slider(value: $expertParams.maxAllowedDistance, in: 0.005...0.03, step: 0.005)
-
-            Text(String(format: "Grayscale Weights: R=%.1f G=%.1f B=%.1f", expertParams.grayRed, expertParams.grayGreen, expertParams.grayBlue))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            HStack {
                 Button("Reset Defaults") {
                     expertParams = .default
                 }
@@ -845,17 +1197,15 @@ struct I3SWorkspaceView: View {
             }
         }
         .padding(16)
-        .frame(width: 340)
+        .frame(width: 320)
     }
-
-    // MARK: - Enroll New Individual Sheet
 
     private var enrollNewIndividualSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Enroll New Sea Turtle Individual")
                 .font(.system(size: 18, weight: .bold))
 
-            Text("Creates a new individual in the backend database and indexes the current annotated head photo into the MiewID + XFeat gallery.")
+            Text("Creates a new individual in the backend database and indexes the current head photo into the MiewID + XFeat gallery.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
@@ -897,11 +1247,42 @@ struct I3SWorkspaceView: View {
         .frame(width: 420)
     }
 
-    // MARK: - Actions & Workflows
+    // MARK: - Helpers & State Transitions
+
+    private func isStepCompleted(_ step: I3SAnnotationStep) -> Bool {
+        let fp = activeFingerprint
+        switch step {
+        case .ref1: return fp.ref1.isInitialized
+        case .ref2: return fp.ref2.isInitialized
+        case .ref3: return fp.ref3.isInitialized
+        case .roi: return fp.roi.isFinal
+        case .keypoints: return !fp.keypoints.isEmpty
+        }
+    }
+
+    private func syncActiveStepToFingerprint() {
+        let fp = activeFingerprint
+        if !fp.ref1.isInitialized {
+            activeStep = .ref1
+        } else if !fp.ref2.isInitialized {
+            activeStep = .ref2
+        } else if !fp.ref3.isInitialized {
+            activeStep = .ref3
+        } else if !fp.roi.isFinal {
+            activeStep = .roi
+        } else {
+            activeStep = .keypoints
+        }
+    }
+
+    private func coordinateString(_ pt: I3SPoint2D) -> String {
+        guard pt.isInitialized else { return "Click to set" }
+        return "(\(Int(pt.x.rounded())), \(Int(pt.y.rounded())))"
+    }
 
     private func pushUndoState() {
         undoStack.append(activeFingerprint)
-        if undoStack.count > 25 { undoStack.removeFirst() }
+        if undoStack.count > 30 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
@@ -913,19 +1294,8 @@ struct I3SWorkspaceView: View {
         } else {
             fingerprint = prev
         }
+        syncActiveStepToFingerprint()
         statusBannerMessage = nil
-    }
-
-    private func deleteROI() {
-        pushUndoState()
-        if editingSecondary {
-            secondaryFingerprint.roi.clear()
-            secondaryFingerprint.keypoints.removeAll()
-        } else {
-            fingerprint.roi.clear()
-            fingerprint.keypoints.removeAll()
-        }
-        statusBannerMessage = "Deleted ROI and cleared extracted keypoints."
     }
 
     private func resetCurrentFingerprint() {
@@ -935,7 +1305,8 @@ struct I3SWorkspaceView: View {
         } else {
             fingerprint = I3SFingerprint()
         }
-        statusBannerMessage = nil
+        activeStep = .ref1
+        statusBannerMessage = "Cleared annotations — Click Reference Point 1 (Beak edge) to start."
     }
 
     private func closeRoiAndExtract() {
@@ -946,6 +1317,7 @@ struct I3SWorkspaceView: View {
             _ = fingerprint.roi.closePolygonIfPossible()
         }
         extractKeypointsForActiveImage()
+        activeStep = .keypoints
     }
 
     private func extractKeypointsForActiveImage() {
@@ -957,7 +1329,7 @@ struct I3SWorkspaceView: View {
                 roi: secondaryFingerprint.roi,
                 params: expertParams
             )
-            statusBannerMessage = "Extracted \(secondaryFingerprint.keypoints.count) SURF keypoints inside ROI."
+            statusBannerMessage = "Extracted \(secondaryFingerprint.keypoints.count) approximate blob keypoints inside ROI."
         } else {
             guard fingerprint.roi.isFinal else { return }
             fingerprint.keypoints = I3SSurfExtractor.extractKeypoints(
@@ -965,7 +1337,7 @@ struct I3SWorkspaceView: View {
                 roi: fingerprint.roi,
                 params: expertParams
             )
-            statusBannerMessage = "Extracted \(fingerprint.keypoints.count) SURF keypoints inside ROI."
+            statusBannerMessage = "Extracted \(fingerprint.keypoints.count) approximate blob keypoints inside ROI."
         }
     }
 
@@ -979,65 +1351,110 @@ struct I3SWorkspaceView: View {
         } else {
             fingerprint = generated
         }
-        statusBannerMessage = "Auto-annotated 3 anatomical reference points, facial ROI, and \(generated.keypoints.count) SURF keypoints."
+        activeStep = .keypoints
+        statusBannerMessage = "Placed a fixed head template with \(generated.keypoints.count) approximate blob keypoints. Adjust the reference points and ROI to fit this photo."
     }
 
-    private func loadSample(_ sample: I3SSampleEntry, forSecondary: Bool) {
+    private func loadSample(_ sample: I3SSampleEntry, includeAnnotations: Bool, forSecondary: Bool) {
         guard let data = I3SSampleLibrary.loadImageData(for: sample),
               let image = NSImage(data: data) else {
             return
         }
+        canvasZoom = 1.0
+        canvasPan = .zero
+        companionFgp = sample.fingerprint
+        let initialFp = includeAnnotations ? sample.fingerprint : I3SFingerprint()
+
         if forSecondary {
             secondaryImage = image
             secondaryImageData = data
             secondaryTitle = sample.title
-            secondaryFingerprint = sample.fingerprint
+            secondaryFingerprint = initialFp
         } else {
             querySide = sample.photoSide
             queryImage = image
             queryImageData = data
             queryTitle = sample.title
-            fingerprint = sample.fingerprint
+            fingerprint = initialFp
             undoStack.removeAll()
             redoStack.removeAll()
-            statusBannerMessage = "Loaded sample '\(sample.title)' with I3S Pattern v4.02 fingerprint (\(sample.fingerprint.keypoints.count) keypoints)."
         }
+        syncActiveStepToFingerprint()
+        statusBannerMessage = includeAnnotations
+            ? "Loaded '\(sample.title)' with saved .fgp annotations (\(sample.fingerprint.keypoints.count) keypoints)."
+            : "Loaded '\(sample.title)' unannotated — Click Reference Point 1 (Beak edge) on the photo!"
     }
 
     private func openImageFromDisk(forSecondary: Bool) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.jpeg, .png, .heic, .tiff]
+        panel.allowedContentTypes = [.image, .jpeg, .png, .heic, .tiff]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = try? Data(contentsOf: url),
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        loadImageFile(from: url, forSecondary: forSecondary)
+    }
+
+    private func loadImageFile(from url: URL, forSecondary: Bool) {
+        guard let data = try? Data(contentsOf: url),
               let image = NSImage(data: data) else {
+            statusBannerMessage = "Could not decode image file \(url.lastPathComponent)."
             return
         }
-        // Check if a companion .fgp file exists next to the image (`ImageFilePair.getFgpFilePath`)
-        let fgpURL = url.deletingPathExtension().appendingPathExtension("fgp")
-        let loadedFgp: I3SFingerprint? = {
-            guard let fgpData = try? Data(contentsOf: fgpURL) else { return nil }
-            return try? I3SFingerprintFile.read(from: fgpData, filename: fgpURL.lastPathComponent)
-        }()
+        canvasZoom = 1.0
+        canvasPan = .zero
 
-        let side: TurtlePhotoSide = forSecondary ? .right : querySide
-        let initialFp = loadedFgp ?? I3SSurfExtractor.autoAnnotateHead(image: image, side: side, params: expertParams)
+        // Check if a companion .fgp file exists next to the image, but do NOT auto-apply it so the user can annotate freely
+        let fgpURL = url.deletingPathExtension().appendingPathExtension("fgp")
+        if let fgpData = try? Data(contentsOf: fgpURL),
+           let parsedFgp = try? I3SFingerprintFile.read(from: fgpData, filename: fgpURL.lastPathComponent) {
+            companionFgp = parsedFgp
+        } else {
+            companionFgp = nil
+        }
 
         if forSecondary {
             secondaryImage = image
             secondaryImageData = jpegData(from: image) ?? data
             secondaryTitle = url.lastPathComponent
-            secondaryFingerprint = initialFp
+            secondaryFingerprint = I3SFingerprint()
         } else {
             queryImage = image
             queryImageData = jpegData(from: image) ?? data
             queryTitle = url.lastPathComponent
-            fingerprint = initialFp
-            statusBannerMessage = loadedFgp != nil
-                ? "Loaded \(url.lastPathComponent) and companion \(fgpURL.lastPathComponent)!"
-                : "Loaded \(url.lastPathComponent) and initialized facial ROI (\(initialFp.keypoints.count) keypoints)."
+            fingerprint = I3SFingerprint()
+            undoStack.removeAll()
+            redoStack.removeAll()
         }
+        activeStep = .ref1
+        statusBannerMessage = "Imported '\(url.lastPathComponent)' — Click Reference Point 1 (Beak edge) on the photo to begin."
+    }
+
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    guard let data = item as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                        return
+                    }
+                    Task { @MainActor in
+                        if url.pathExtension.lowercased() == "fgp" {
+                            if let fgpBytes = try? Data(contentsOf: url),
+                               let parsed = try? I3SFingerprintFile.read(from: fgpBytes, filename: url.lastPathComponent) {
+                                pushUndoState()
+                                if editingSecondary { secondaryFingerprint = parsed } else { fingerprint = parsed }
+                                syncActiveStepToFingerprint()
+                                statusBannerMessage = "Loaded dropped .fgp file '\(url.lastPathComponent)'."
+                            }
+                        } else {
+                            loadImageFile(from: url, forSecondary: editingSecondary)
+                        }
+                    }
+                }
+                return true
+            }
+        }
+        return false
     }
 
     private func importFgpFile() {
@@ -1056,7 +1473,8 @@ struct I3SWorkspaceView: View {
             } else {
                 fingerprint = parsed
             }
-            statusBannerMessage = "Imported I3S Pattern v4.0 fingerprint '\(url.lastPathComponent)' (\(parsed.keypoints.count) keypoints)."
+            syncActiveStepToFingerprint()
+            statusBannerMessage = "Imported .fgp fingerprint '\(url.lastPathComponent)' (\(parsed.keypoints.count) keypoints)."
         } catch {
             statusBannerMessage = error.localizedDescription
         }
@@ -1074,8 +1492,9 @@ struct I3SWorkspaceView: View {
 
     private func runDatabaseSearch() async {
         guard let qData = queryImageData else { return }
+        let revision = queryRevision
         isSearching = true
-        statusBannerMessage = "Searching gallery via MiewID + XFeat LighterGlue + I3S Pattern affine matcher…"
+        statusBannerMessage = "Searching gallery via MiewID + XFeat LighterGlue…"
         defer { isSearching = false }
 
         do {
@@ -1085,88 +1504,126 @@ struct I3SWorkspaceView: View {
             } else {
                 outcome = try await store.matchPhoto(imageData: qData, side: querySide, limit: 10)
             }
+            guard queryRevision == revision else { return }
             searchOutcome = outcome
 
-            // Compute I3S affine comparison against bundled/gallery fingerprints to enrich candidate cards
-            let sampleFPs = I3SSampleLibrary.samples.filter { $0.photoSide == outcome.querySide }
-            var enriched: [MatchCandidateItem] = []
-            for (idx, var cand) in outcome.candidates.enumerated() {
-                if !sampleFPs.isEmpty {
-                    let refSample = sampleFPs[idx % sampleFPs.count]
-                    let cmp = I3SCompareEngine.compareTwo(unknown: fingerprint, candidate: refSample.fingerprint, params: expertParams)
-                    cand.i3sDistanceScore = cmp.score
-                    cand.i3sPairedCount = cmp.pairCount
-                }
-                enriched.append(cand)
-            }
-            candidates = enriched
-            if let top = enriched.first {
+            candidates = outcome.candidates
+            if let top = candidates.first {
                 await selectCandidate(top)
-                statusBannerMessage = "Match complete — Top candidate: \(top.name) (\(top.confidencePercent)% confidence, XFeat \(top.localMatch) matches)."
+                guard queryRevision == revision else { return }
+                statusBannerMessage = "Found \(candidates.count) candidates — Top match: \(top.name) (\(top.confidencePercent)% confidence). Click 'Compare Visually' to inspect."
             } else {
-                statusBannerMessage = "Search finished — No candidates above threshold."
+                statusBannerMessage = "Search complete — No candidates above threshold."
             }
         } catch {
+            guard queryRevision == revision else { return }
             statusBannerMessage = "Search error: \(error.localizedDescription)"
         }
     }
 
     private func selectCandidate(_ candidate: MatchCandidateItem) async {
+        candidateRevision += 1
+        let selectionRevision = candidateRevision
+        let inputRevision = queryRevision
         selectedCandidate = candidate
+        candidateImage = nil
+        candidateFingerprint = nil
+        i3sComparison = nil
+        overlayAnnotations = []
+        isOverlayLoading = false
         useBackendOverlayPNG = false
         backendOverlayImage = nil
         unknownLoupeLocked = false
         foundLoupeLocked = false
 
-        // 1. Load candidate photo from backend (`/api/v1/individuals/{id}/photos/{side}`) or sample fallback
+        let comparisonData = comparisonImageData
+        let comparisonSide: TurtlePhotoSide = comparisonUsesSecondary ? .right : querySide
         let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.individualID.uuidString)/photos/\(candidate.matchedPhotoSide.rawValue)"
-        if let fetchedImg = await store.loadPhoto(for: path) {
-            candidateImage = fetchedImg
-            let autoFp = I3SSurfExtractor.autoAnnotateHead(image: fetchedImg, side: candidate.matchedPhotoSide, params: expertParams)
-            candidateFingerprint = autoFp
-            let cmp = I3SCompareEngine.compareTwo(unknown: fingerprint, candidate: autoFp, params: expertParams)
-            i3sComparison = cmp
-            if let idx = candidates.firstIndex(where: { $0.individualID == candidate.individualID }) {
-                candidates[idx].i3sDistanceScore = cmp.score
-                candidates[idx].i3sPairedCount = cmp.pairCount
-                selectedCandidate = candidates[idx]
-            }
-        } else if let fallbackSample = I3SSampleLibrary.samples.first(where: { $0.photoSide == candidate.matchedPhotoSide }) ?? I3SSampleLibrary.samples.first,
-                  let sampleImg = I3SSampleLibrary.loadImage(for: fallbackSample) {
-            candidateImage = sampleImg
-            candidateFingerprint = fallbackSample.fingerprint
-            i3sComparison = I3SCompareEngine.compareTwo(unknown: fingerprint, candidate: fallbackSample.fingerprint, params: expertParams)
-        }
+        let fetchedImage = await store.loadPhoto(for: path)
+        guard candidateRevision == selectionRevision, queryRevision == inputRevision else { return }
+        candidateImage = fetchedImage
 
-        // 2. Fetch live XFeat LighterGlue keypoint overlay annotations (`POST /api/v1/match/overlay/annotations`)
-        if let qData = queryImageData {
+        if let qData = comparisonData {
             isOverlayLoading = true
-            if let anns = try? await store.fetchOverlayAnnotations(
+            let annotations = try? await store.fetchOverlayAnnotations(
                 imageData: qData,
-                side: querySide,
+                side: comparisonSide,
                 candidateID: candidate.individualID,
                 candidateSide: candidate.matchedPhotoSide,
                 maxThreads: expertParams.nrElements
-            ) {
-                overlayAnnotations = anns
-            } else {
-                overlayAnnotations = []
-            }
+            )
+            guard candidateRevision == selectionRevision, queryRevision == inputRevision else { return }
+            overlayAnnotations = annotations ?? []
             isOverlayLoading = false
         }
     }
 
+    private func importCandidateFgpFile() {
+        guard candidateImage != nil, let selected = selectedCandidate else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "fgp") ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the .fgp belonging to the displayed gallery photo of \(selected.name)."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let parsed = try I3SFingerprintFile.read(from: Data(contentsOf: url), filename: url.lastPathComponent)
+            guard parsed.readyForProcessing, comparisonFingerprint.readyForProcessing else {
+                statusBannerMessage = "Complete the query annotations and load a gallery .fgp with references, ROI, and keypoints."
+                return
+            }
+            guard isDualMode || selected.matchedPhotoSide == querySide else {
+                statusBannerMessage = "I3S requires both photos to show the same side."
+                return
+            }
+            candidateFingerprint = parsed
+            let comparison = I3SCompareEngine.compareTwo(unknown: comparisonFingerprint, candidate: parsed, params: expertParams)
+            i3sComparison = comparison
+            if let index = candidates.firstIndex(where: { $0.individualID == selected.individualID }) {
+                candidates[index].i3sDistanceScore = comparison.score
+                candidates[index].i3sPairedCount = comparison.pairCount
+                selectedCandidate = candidates[index]
+            }
+        } catch {
+            statusBannerMessage = error.localizedDescription
+        }
+    }
+
+    private func invalidateI3SScores() {
+        queryRevision += 1
+        candidateRevision += 1
+        i3sComparison = nil
+        overlayAnnotations = []
+        backendOverlayImage = nil
+        useBackendOverlayPNG = false
+        isOverlayLoading = false
+        for index in candidates.indices {
+            candidates[index].i3sDistanceScore = nil
+            candidates[index].i3sPairedCount = nil
+        }
+        if var selected = selectedCandidate {
+            selected.i3sDistanceScore = nil
+            selected.i3sPairedCount = nil
+            selectedCandidate = selected
+        }
+    }
+
     private func loadBackendOverlayPNG() async {
-        guard let qData = queryImageData, let selected = selectedCandidate else { return }
+        guard let qData = comparisonImageData, let selected = selectedCandidate else { return }
+        let selectionRevision = candidateRevision
+        let inputRevision = queryRevision
+        let side: TurtlePhotoSide = comparisonUsesSecondary ? .right : querySide
         isOverlayLoading = true
-        defer { isOverlayLoading = false }
+        defer {
+            if candidateRevision == selectionRevision { isOverlayLoading = false }
+        }
         if let pngData = try? await store.fetchOverlayPNG(
             imageData: qData,
-            side: querySide,
+            side: side,
             candidateID: selected.individualID,
             candidateSide: selected.matchedPhotoSide,
             maxThreads: expertParams.nrElements
-        ), let img = NSImage(data: pngData) {
+        ), let img = NSImage(data: pngData),
+           candidateRevision == selectionRevision, queryRevision == inputRevision {
             backendOverlayImage = img
             useBackendOverlayPNG = true
         }
@@ -1216,18 +1673,28 @@ struct I3SWorkspaceView: View {
     }
 }
 
-// MARK: - Interactive Annotation Canvas (`SharkPanel.java` + `Roi.java` + `Keypoint.java`)
+// MARK: - Interactive Annotation Canvas with Click, Drag-to-Adjust & Right-Click Support
+
+private enum DraggedHandle: Equatable {
+    case ref1
+    case ref2
+    case ref3
+    case roiVertex(Int)
+}
 
 private struct I3SInteractiveCanvas: View {
     let image: NSImage?
     @Binding var fingerprint: I3SFingerprint
-    let editMode: Bool
+    @Binding var activeStep: I3SAnnotationStep
     let zoom: Double
+    @Binding var panOffset: CGSize
     let showKeypointLabels: Bool
-    let showReferenceTriangle: Bool
     let onWillMutate: () -> Void
     let onRoiClosed: () -> Void
     let onStatusMessage: (String?) -> Void
+
+    @State private var activeDragHandle: DraggedHandle?
+    @State private var didPushUndoForDrag = false
 
     var body: some View {
         GeometryReader { geo in
@@ -1236,8 +1703,8 @@ private struct I3SInteractiveCanvas: View {
                 let zoomedW = baseFit.width * zoom
                 let zoomedH = baseFit.height * zoom
                 let fitRect = CGRect(
-                    x: (geo.size.width - zoomedW) * 0.5,
-                    y: (geo.size.height - zoomedH) * 0.5,
+                    x: (geo.size.width - zoomedW) * 0.5 + panOffset.width,
+                    y: (geo.size.height - zoomedH) * 0.5 + panOffset.height,
                     width: zoomedW,
                     height: zoomedH
                 )
@@ -1255,72 +1722,157 @@ private struct I3SInteractiveCanvas: View {
                             imageSize: image.size,
                             fitRect: fitRect,
                             showLabels: showKeypointLabels,
-                            showTriangle: showReferenceTriangle
+                            showTriangle: true
                         )
                     }
-                    .contentShape(Rectangle())
-                    .gesture(
-                        SpatialTapGesture()
-                            .onEnded { event in
-                                handleCanvasClick(at: event.location, imageSize: image.size, fitRect: fitRect)
-                            }
-                    )
-                    .contextMenu {
-                        Button("Undo Last ROI Point / Remove Nearest Keypoint") {
-                            removeLastOrNearest(imageSize: image.size)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            handlePointerChanged(value: value, imageSize: image.size, fitRect: fitRect)
                         }
-                        if !fingerprint.roi.isFinal && fingerprint.roi.vertices.count >= 3 {
-                            Button("Close ROI & Extract SURF Keypoints") {
-                                onWillMutate()
-                                _ = fingerprint.roi.closePolygonIfPossible()
-                                onRoiClosed()
-                            }
+                        .onEnded { value in
+                            handlePointerEnded(value: value, imageSize: image.size, fitRect: fitRect)
                         }
-                        Divider()
-                        Button("Reset Reference Points & ROI", role: .destructive) {
+                )
+                .contextMenu {
+                    if !fingerprint.roi.isFinal && !fingerprint.roi.vertices.isEmpty {
+                        Button("Undo Last ROI Point") {
                             onWillMutate()
-                            fingerprint = I3SFingerprint()
+                            fingerprint.roi.removeLast()
                         }
+                    }
+                    if !fingerprint.roi.isFinal && fingerprint.roi.vertices.count >= 3 {
+                        Button("Finish ROI & Extract Blob Keypoints") {
+                            onWillMutate()
+                            _ = fingerprint.roi.closePolygonIfPossible()
+                            onRoiClosed()
+                        }
+                    }
+                    Divider()
+                    Button("Re-pick 1. Beak Edge") { activeStep = .ref1 }
+                    Button("Re-pick 2. Eye Area") { activeStep = .ref2 }
+                    Button("Re-pick 3. Outer Scale") { activeStep = .ref3 }
+                    Divider()
+                    Button("Clear ROI Only") {
+                        onWillMutate()
+                        fingerprint.roi.clear()
+                        fingerprint.keypoints.removeAll()
+                        activeStep = .roi
+                    }
+                    Button("Clear All Annotations", role: .destructive) {
+                        onWillMutate()
+                        fingerprint = I3SFingerprint()
+                        activeStep = .ref1
                     }
                 }
                 .clipped()
-            } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "photo.badge.plus")
-                        .font(.system(size: 30))
-                        .foregroundStyle(.white.opacity(0.5))
-                    Text("Open a sea turtle head image or choose from the I3S Sample Library")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.7))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
 
-    private func handleCanvasClick(at viewPoint: CGPoint, imageSize: NSSize, fitRect: CGRect) {
-        guard editMode else {
-            onStatusMessage("Enable 'Annotate ON' in the toolbar to place reference points or edit ROI.")
+    private func toImagePoint(_ viewPoint: CGPoint, imageSize: NSSize, fitRect: CGRect) -> I3SPoint2D? {
+        guard fitRect.width > 1, fitRect.height > 1 else { return nil }
+        let clampedX = min(max(viewPoint.x, fitRect.minX), fitRect.maxX)
+        let clampedY = min(max(viewPoint.y, fitRect.minY), fitRect.maxY)
+        let imgX = Double((clampedX - fitRect.minX) / fitRect.width * imageSize.width)
+        let imgY = Double((clampedY - fitRect.minY) / fitRect.height * imageSize.height)
+        return I3SPoint2D(x: imgX, y: imgY)
+    }
+
+    private func toViewPoint(_ pt: I3SPoint2D, imageSize: NSSize, fitRect: CGRect) -> CGPoint {
+        CGPoint(
+            x: fitRect.minX + CGFloat(pt.x) / imageSize.width * fitRect.width,
+            y: fitRect.minY + CGFloat(pt.y) / imageSize.height * fitRect.height
+        )
+    }
+
+    private func hitTestHandle(at viewPoint: CGPoint, imageSize: NSSize, fitRect: CGRect) -> DraggedHandle? {
+        let hitRadius: CGFloat = 14.0
+        if fingerprint.ref1.isInitialized, hypot(toViewPoint(fingerprint.ref1, imageSize: imageSize, fitRect: fitRect).x - viewPoint.x, toViewPoint(fingerprint.ref1, imageSize: imageSize, fitRect: fitRect).y - viewPoint.y) <= hitRadius {
+            return .ref1
+        }
+        if fingerprint.ref2.isInitialized, hypot(toViewPoint(fingerprint.ref2, imageSize: imageSize, fitRect: fitRect).x - viewPoint.x, toViewPoint(fingerprint.ref2, imageSize: imageSize, fitRect: fitRect).y - viewPoint.y) <= hitRadius {
+            return .ref2
+        }
+        if fingerprint.ref3.isInitialized, hypot(toViewPoint(fingerprint.ref3, imageSize: imageSize, fitRect: fitRect).x - viewPoint.x, toViewPoint(fingerprint.ref3, imageSize: imageSize, fitRect: fitRect).y - viewPoint.y) <= hitRadius {
+            return .ref3
+        }
+        for (idx, v) in fingerprint.roi.vertices.enumerated() {
+            let vp = toViewPoint(v, imageSize: imageSize, fitRect: fitRect)
+            if hypot(vp.x - viewPoint.x, vp.y - viewPoint.y) <= hitRadius {
+                return .roiVertex(idx)
+            }
+        }
+        return nil
+    }
+
+    private func handlePointerChanged(value: DragGesture.Value, imageSize: NSSize, fitRect: CGRect) {
+        let dragDist = hypot(value.translation.width, value.translation.height)
+        guard dragDist > 3.0 else { return }
+
+        if activeDragHandle == nil {
+            activeDragHandle = hitTestHandle(at: value.startLocation, imageSize: imageSize, fitRect: fitRect)
+        }
+
+        guard let handle = activeDragHandle,
+              let pt = toImagePoint(value.location, imageSize: imageSize, fitRect: fitRect) else {
             return
         }
-        guard fitRect.contains(viewPoint), fitRect.width > 1, fitRect.height > 1 else { return }
 
-        let imgX = Double((viewPoint.x - fitRect.minX) / fitRect.width * imageSize.width)
-        let imgY = Double((viewPoint.y - fitRect.minY) / fitRect.height * imageSize.height)
-        let pt = I3SPoint2D(x: imgX, y: imgY)
+        if !didPushUndoForDrag {
+            onWillMutate()
+            didPushUndoForDrag = true
+        }
 
-        // Option-click removes nearest point (`BUTTON3` in `SharkPanel.mouseClicked`)
+        switch handle {
+        case .ref1:
+            fingerprint.ref1 = pt
+        case .ref2:
+            fingerprint.ref2 = pt
+        case .ref3:
+            fingerprint.ref3 = pt
+        case let .roiVertex(idx):
+            guard idx < fingerprint.roi.vertices.count else { break }
+            let wasFinal = fingerprint.roi.isFinal
+            fingerprint.roi.vertices[idx] = pt
+            if wasFinal {
+                if idx == 0 {
+                    fingerprint.roi.vertices[fingerprint.roi.vertices.count - 1] = pt
+                } else if idx == fingerprint.roi.vertices.count - 1 {
+                    fingerprint.roi.vertices[0] = pt
+                }
+            }
+        }
+    }
+
+    private func handlePointerEnded(value: DragGesture.Value, imageSize: NSSize, fitRect: CGRect) {
+        defer {
+            activeDragHandle = nil
+            didPushUndoForDrag = false
+        }
+
+        let dragDist = hypot(value.translation.width, value.translation.height)
+        if dragDist > 3.0 {
+            if case .roiVertex = activeDragHandle, fingerprint.roi.isFinal {
+                onRoiClosed()
+            }
+            return
+        }
+
+        // Single click!
+        guard fitRect.contains(value.location),
+              let pt = toImagePoint(value.location, imageSize: imageSize, fitRect: fitRect) else {
+            return
+        }
+
+        // Option-click or Control-click removes last ROI vertex or nearest keypoint
         if NSEvent.modifierFlags.contains(.option) || NSEvent.modifierFlags.contains(.control) {
             onWillMutate()
             if !fingerprint.roi.isFinal && !fingerprint.roi.vertices.isEmpty {
                 fingerprint.roi.removeLast()
                 onStatusMessage("Removed last ROI vertex.")
-            } else if fingerprint.ref1.dist(to: pt) < 16 {
-                fingerprint.ref1 = .uninitialized
-            } else if fingerprint.ref2.dist(to: pt) < 16 {
-                fingerprint.ref2 = .uninitialized
-            } else if fingerprint.ref3.dist(to: pt) < 16 {
-                fingerprint.ref3 = .uninitialized
             } else {
                 fingerprint.removeNearestKeypoint(to: pt)
                 onStatusMessage("Removed nearest keypoint (\(fingerprint.keypoints.count) remaining).")
@@ -1328,20 +1880,48 @@ private struct I3SInteractiveCanvas: View {
             return
         }
 
-        // Standard left-click progression (`SharkPanel.java` lines 586-604)
         onWillMutate()
-        if !fingerprint.ref1.isInitialized {
+        switch activeStep {
+        case .ref1:
             fingerprint.ref1 = pt
+            if !fingerprint.ref2.isInitialized {
+                activeStep = .ref2
+            } else if !fingerprint.ref3.isInitialized {
+                activeStep = .ref3
+            } else if !fingerprint.roi.isFinal {
+                activeStep = .roi
+            } else {
+                activeStep = .keypoints
+            }
             onStatusMessage(nil)
-        } else if !fingerprint.ref2.isInitialized {
+
+        case .ref2:
             fingerprint.ref2 = pt
+            if !fingerprint.ref3.isInitialized {
+                activeStep = .ref3
+            } else if !fingerprint.roi.isFinal {
+                activeStep = .roi
+            } else {
+                activeStep = .keypoints
+            }
             onStatusMessage(nil)
-        } else if !fingerprint.ref3.isInitialized {
+
+        case .ref3:
             fingerprint.ref3 = pt
+            if !fingerprint.roi.isFinal {
+                activeStep = .roi
+            } else {
+                activeStep = .keypoints
+            }
             onStatusMessage(nil)
-        } else if !fingerprint.roi.isFinal {
-            // Snap distance scaled to image resolution
-            let snapDist = max(18.0, Double(max(imageSize.width, imageSize.height)) * 0.03)
+
+        case .roi:
+            if fingerprint.roi.isFinal {
+                // Allow starting a fresh ROI if the user explicitly selected Step 4: Draw ROI
+                fingerprint.roi.clear()
+                fingerprint.keypoints.removeAll()
+            }
+            let snapDist = max(20.0, Double(max(imageSize.width, imageSize.height)) * 0.035)
             do {
                 let closed = try fingerprint.roi.add(pt, closeThresholdSquared: snapDist * snapDist)
                 if closed {
@@ -1352,23 +1932,17 @@ private struct I3SInteractiveCanvas: View {
             } catch {
                 onStatusMessage(error.localizedDescription)
             }
-        } else {
-            // When ROI is already finalized, clicking near a keypoint with Shift/Option removes it,
-            // or clicking allows removing specular reflection keypoints if within radius.
+
+        case .keypoints:
+            // If clicking on an existing keypoint, remove it; otherwise if inside ROI, add a keypoint
             if let nearest = fingerprint.keypoints.min(by: { $0.center.sqrDist(to: pt) < $1.center.sqrDist(to: pt) }),
                nearest.center.dist(to: pt) <= max(14.0, nearest.radius) {
                 fingerprint.removeNearestKeypoint(to: pt)
-                onStatusMessage("Removed keypoint artifact (\(fingerprint.keypoints.count) keypoints remaining).")
+                onStatusMessage("Removed keypoint artifact (\(fingerprint.keypoints.count) remaining).")
+            } else if fingerprint.roi.contains(pt) {
+                fingerprint.keypoints.append(I3SKeypoint(center: pt, size: 18.0))
+                onStatusMessage("Added manual keypoint (\(fingerprint.keypoints.count) total).")
             }
-        }
-    }
-
-    private func removeLastOrNearest(imageSize: NSSize) {
-        onWillMutate()
-        if !fingerprint.roi.isFinal && !fingerprint.roi.vertices.isEmpty {
-            fingerprint.roi.removeLast()
-        } else if !fingerprint.keypoints.isEmpty {
-            fingerprint.keypoints.removeLast()
         }
     }
 }
@@ -1394,15 +1968,14 @@ private struct I3SBothSharksComparisonCanvas: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // Header bar with Loupe zoom slider & Backend PNG button
-            HStack(spacing: 10) {
-                Text("Hover over either photo for magnifying glass • Click photo to lock/unlock loupe")
+            HStack(spacing: 12) {
+                Text("Hover over either photo to inspect scales with the magnifying glass • Click photo to lock/unlock loupe")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.75))
 
                 Spacer()
 
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Text(String(format: "Loupe %.1fx", loupeZoom))
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white)
@@ -1411,26 +1984,25 @@ private struct I3SBothSharksComparisonCanvas: View {
                 }
 
                 if candidate != nil {
-                    Button("Render Server PNG") {
+                    Button("Server XFeat PNG") {
                         onRequestBackendPNG()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
 
             GeometryReader { geo in
-                let paneW = max(120, (geo.size.width - 28) * 0.5)
-                let paneH = max(140, geo.size.height - 16)
-                let leftFrame = CGRect(x: 10, y: 8, width: paneW, height: paneH)
-                let rightFrame = CGRect(x: 18 + paneW, y: 8, width: paneW, height: paneH)
+                let paneW = max(140, (geo.size.width - 36) * 0.5)
+                let paneH = max(160, geo.size.height - 20)
+                let leftFrame = CGRect(x: 12, y: 8, width: paneW, height: paneH)
+                let rightFrame = CGRect(x: 24 + paneW, y: 8, width: paneW, height: paneH)
 
                 ZStack(alignment: .topLeading) {
-                    // Left: Unknown query image
                     comparisonImageTile(
-                        title: "Unknown Individual",
+                        title: "Unknown Individual (Query)",
                         subtitle: i3sComparison.map { $0.score < 999_999 ? String(format: "I3S Score: %.2f", $0.score) : "Query" } ?? "Query",
                         titleColor: .red,
                         image: croppedIfAutoZoom(image: unknownImage, fp: unknownFingerprint),
@@ -1440,10 +2012,9 @@ private struct I3SBothSharksComparisonCanvas: View {
                         isLocked: $unknownLocked
                     )
 
-                    // Right: Found gallery candidate image
                     comparisonImageTile(
                         title: candidate.map { "Found: \($0.name)" } ?? "Found Individual",
-                        subtitle: candidate.map { "Conf \($0.confidencePercent)% • XFeat \($0.localMatch)" } ?? "Select a candidate",
+                        subtitle: candidate.map { "Conf \($0.confidencePercent)% · XFeat \($0.localMatch)" } ?? "",
                         titleColor: .cyan,
                         image: croppedIfAutoZoom(image: foundImage, fp: foundFingerprint),
                         fingerprint: autoZoomOn ? nil : foundFingerprint,
@@ -1452,7 +2023,6 @@ private struct I3SBothSharksComparisonCanvas: View {
                         isLocked: $foundLocked
                     )
 
-                    // XFeat LighterGlue match threads across Left & Right tiles
                     if showMatchThreads,
                        let uImg = unknownImage,
                        let fImg = foundImage,
@@ -1477,7 +2047,7 @@ private struct I3SBothSharksComparisonCanvas: View {
                                 line.addLine(to: p2)
                                 let hue = Double(idx % 12) / 12.0
                                 let threadColor = Color(hue: hue, saturation: 0.85, brightness: 0.98)
-                                ctx.stroke(line, with: .color(threadColor.opacity(0.68)), lineWidth: 1.3)
+                                ctx.stroke(line, with: .color(threadColor.opacity(0.68)), lineWidth: 1.4)
 
                                 let dot1 = CGRect(x: p1.x - 3, y: p1.y - 3, width: 6, height: 6)
                                 let dot2 = CGRect(x: p2.x - 3, y: p2.y - 3, width: 6, height: 6)
@@ -1542,10 +2112,9 @@ private struct I3SBothSharksComparisonCanvas: View {
                             .allowsHitTesting(false)
                         }
 
-                        // Magnifying glass loupe (`BothSharks.MAG_DISP_SIZE`)
                         if let norm = hoverNormalized.wrappedValue,
                            let croppedLoupe = cropLoupeImage(image: image, normalizedCenter: norm, zoom: loupeZoom) {
-                            let loupeSize: CGFloat = 136
+                            let loupeSize: CGFloat = 150
                             let viewX = min(max(fit.minX + loupeSize * 0.5, fit.minX + norm.x * fit.width), fit.maxX - loupeSize * 0.5)
                             let viewY = min(max(fit.minY + loupeSize * 0.5, fit.minY + norm.y * fit.height), fit.maxY - loupeSize * 0.5)
 
@@ -1588,15 +2157,6 @@ private struct I3SBothSharksComparisonCanvas: View {
                             }
                         }
                     }
-                } else {
-                    VStack {
-                        Spacer()
-                        Text("No image")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.5))
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -1604,7 +2164,6 @@ private struct I3SBothSharksComparisonCanvas: View {
         .position(x: frame.midX, y: frame.midY)
     }
 
-    /// Implements `BothSharks.autoZoomIcon`: crops 20% padded bounding box around reference points & keypoints.
     private func croppedIfAutoZoom(image: NSImage?, fp: I3SFingerprint?) -> NSImage? {
         guard autoZoomOn, let image, let fp, let bbox = fp.boundingBox(marginPercent: 20.0),
               let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
@@ -1635,7 +2194,7 @@ private struct I3SBothSharksComparisonCanvas: View {
     }
 }
 
-// MARK: - Tab 4: PointCloud Normalized Recognition Space (`PointCloud.java`)
+// MARK: - PointCloud Normalized Recognition Space (`PointCloud.java`)
 
 private struct I3SPointCloudView: View {
     let comparison: I3SComparisonResult?
@@ -1645,7 +2204,7 @@ private struct I3SPointCloudView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 16) {
-                Text("I3S Normalized Metric Point Cloud")
+                Text("I3S Aligned Point Cloud")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.white)
 
@@ -1662,7 +2221,7 @@ private struct I3SPointCloudView: View {
                 }
 
                 if let candidate {
-                    Text("XFeat Pairs: \(candidate.localMatch) • Fused: \(String(format: "%.3f", candidate.fusedScore))")
+                    Text("XFeat Pairs: \(candidate.localMatch) · Fused: \(String(format: "%.3f", candidate.fusedScore))")
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(.cyan)
                 }
@@ -1690,8 +2249,8 @@ private struct I3SPointCloudView: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
 
             GeometryReader { geo in
                 Canvas { ctx, size in
@@ -1711,7 +2270,7 @@ private struct I3SPointCloudView: View {
                     let spanX = max(10.0, maxX - minX)
                     let spanY = max(10.0, maxY - minY)
 
-                    let pad = 36.0
+                    let pad = 40.0
                     let availW = max(50.0, Double(size.width) - 2 * pad)
                     let availH = max(50.0, Double(size.height) - 2 * pad)
                     let factor = min(availW / spanX, availH / spanY)
@@ -1722,50 +2281,45 @@ private struct I3SPointCloudView: View {
                         CGPoint(x: x * factor + offsetX, y: y * factor + offsetY)
                     }
 
-                    // 1. Draw candidate elements in Blue (`PointCloud.drawSources` f)
                     for ke in comp.candidateElements {
                         let c = mapPt(ke.cx, ke.cy)
                         let rx = max(3.0, ke.r1 * factor)
                         let ry = max(3.0, ke.r2 * factor)
                         let rect = CGRect(x: c.x - rx, y: c.y - ry, width: 2 * rx, height: 2 * ry)
-                        ctx.stroke(Path(ellipseIn: rect), with: .color(.cyan.opacity(0.85)), lineWidth: 1.3)
+                        ctx.stroke(Path(ellipseIn: rect), with: .color(.cyan.opacity(0.85)), lineWidth: 1.4)
                         ctx.fill(Path(ellipseIn: CGRect(x: c.x - 2, y: c.y - 2, width: 4, height: 4)), with: .color(.cyan))
                     }
-                    // Candidate reference points (blue circles)
                     for r in comp.candidateRefs {
                         let c = mapPt(r.x, r.y)
                         let rect = CGRect(x: c.x - 5, y: c.y - 5, width: 10, height: 10)
                         ctx.stroke(Path(ellipseIn: rect), with: .color(.cyan), lineWidth: 2.0)
                     }
 
-                    // 2. Draw unknown elements in Red (`PointCloud.drawSources` u)
                     for ue in comp.unknownElements {
                         let c = mapPt(ue.cx, ue.cy)
                         let rx = max(3.0, ue.r1 * factor)
                         let ry = max(3.0, ue.r2 * factor)
                         let rect = CGRect(x: c.x - rx, y: c.y - ry, width: 2 * rx, height: 2 * ry)
-                        ctx.stroke(Path(ellipseIn: rect), with: .color(.red.opacity(0.9)), lineWidth: 1.3)
+                        ctx.stroke(Path(ellipseIn: rect), with: .color(.red.opacity(0.9)), lineWidth: 1.4)
                         ctx.fill(Path(ellipseIn: CGRect(x: c.x - 2, y: c.y - 2, width: 4, height: 4)), with: .color(.red))
                     }
-                    // Unknown reference points (red squares)
                     for r in comp.unknownRefs {
                         let c = mapPt(r.x, r.y)
                         let rect = CGRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8)
                         ctx.stroke(Path(rect), with: .color(.red), lineWidth: 2.0)
                     }
 
-                    // 3. Draw green matched pair lines (`PointCloud.paintComponent` lines 97-105)
                     for pair in comp.matchedPairs {
                         let pU = mapPt(pair.unknownPoint.x, pair.unknownPoint.y)
                         let pK = mapPt(pair.candidatePoint.x, pair.candidatePoint.y)
                         var line = Path()
                         line.move(to: pU)
                         line.addLine(to: pK)
-                        ctx.stroke(line, with: .color(.green), lineWidth: 2.0)
+                        ctx.stroke(line, with: .color(.green), lineWidth: 2.2)
                     }
                 }
             }
-            .padding(8)
+            .padding(12)
         }
     }
 }
@@ -1818,13 +2372,15 @@ private func drawFingerprintOverlay(
         if fp.roi.isFinal {
             context.fill(roiPath, with: .color(.green.opacity(0.08)))
         }
-        context.stroke(roiPath, with: .color(.green), lineWidth: 2.0)
+        context.stroke(roiPath, with: .color(.green), lineWidth: 2.2)
 
         for (idx, v) in fp.roi.vertices.enumerated() {
             let pt = mapPoint(v)
-            let r: CGFloat = idx == 0 ? 5.0 : 3.5
+            let isFirst = idx == 0
+            let r: CGFloat = isFirst ? 6.5 : 4.5
             let oval = CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2)
-            context.stroke(Path(ellipseIn: oval), with: .color(.green), lineWidth: 1.8)
+            context.fill(Path(ellipseIn: oval), with: .color(isFirst && !fp.roi.isFinal ? .yellow : .green))
+            context.stroke(Path(ellipseIn: oval), with: .color(.white), lineWidth: 1.5)
         }
     }
 
@@ -1833,9 +2389,8 @@ private func drawFingerprintOverlay(
         let c = mapPoint(kp.center)
         let radius = max(3.5, CGFloat(kp.size * 0.5) * scale)
         let circleRect = CGRect(x: c.x - radius, y: c.y - radius, width: radius * 2, height: radius * 2)
-        context.stroke(Path(ellipseIn: circleRect), with: .color(.red), lineWidth: 1.4)
+        context.stroke(Path(ellipseIn: circleRect), with: .color(.red), lineWidth: 1.5)
 
-        // Yellow center-to-left radius line (`g2d.drawLine(center.x, center.y, center.x - size/2, center.y)`)
         var radLine = Path()
         radLine.move(to: c)
         radLine.addLine(to: CGPoint(x: c.x - radius, y: c.y))
@@ -1860,19 +2415,23 @@ private func drawFingerprintOverlay(
         tri.addLine(to: validRefPoints[1])
         tri.addLine(to: validRefPoints[2])
         tri.closeSubpath()
-        context.stroke(tri, with: .color(.cyan.opacity(0.65)), style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
+        context.stroke(tri, with: .color(.cyan.opacity(0.7)), style: StrokeStyle(lineWidth: 1.3, dash: [5, 4]))
     }
 
     for (kind, pt) in refs where pt.isInitialized {
         let p = mapPoint(pt)
-        let outer = CGRect(x: p.x - 6, y: p.y - 6, width: 12, height: 12)
+        let outer = CGRect(x: p.x - 7, y: p.y - 7, width: 14, height: 14)
         context.fill(Path(ellipseIn: outer), with: .color(.blue))
-        context.stroke(Path(ellipseIn: outer), with: .color(.white), lineWidth: 1.6)
-        if showLabels {
-            let label = Text("\(kind.indexLabel). \(kind.title)")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.cyan)
-            context.draw(label, at: CGPoint(x: p.x, y: p.y - 13))
-        }
+        context.stroke(Path(ellipseIn: outer), with: .color(.white), lineWidth: 2.0)
+
+        let numText = Text("\(kind.indexLabel)")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundColor(.white)
+        context.draw(numText, at: p)
+
+        let label = Text("\(kind.indexLabel). \(kind.title)")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(.cyan)
+        context.draw(label, at: CGPoint(x: p.x, y: p.y - 15))
     }
 }

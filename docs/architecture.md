@@ -1,6 +1,8 @@
 # Ada Penyu Desktop architecture
 
-The desktop app is a native SwiftUI client with one state owner and a replaceable data boundary. The default repository is deterministic demo data; the live repository calls the FastAPI backend without coupling screens to HTTP or database details.
+The desktop app is a native SwiftUI client with one state owner and a replaceable data boundary. It starts with the live repository, which calls the FastAPI backend without coupling screens to HTTP or database details. A deterministic demo repository is available for offline presentation and automatic fallback.
+
+The I3S workspace has two matching paths. Database search goes through `AppStore` and the remote repository to MiewID/XFeat endpoints. Saved-fingerprint comparison runs locally in `I3SCompareEngine` after the user supplies annotations for both displayed photos. Local distances do not alter the backend ranking. See [I3S reference verification](i3s-reference.md) for compatibility evidence and extraction limits.
 
 ## Runtime architecture
 

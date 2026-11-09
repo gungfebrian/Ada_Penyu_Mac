@@ -119,4 +119,39 @@ final class AppFlowTests: XCTestCase {
         XCTAssertFalse(extracted.isEmpty)
         XCTAssertLessThanOrEqual(extracted.count, I3SExpertParameters.default.nrElements)
     }
+
+    func testI3SMatchesOriginalCppReferenceScoresAndPairs() throws {
+        struct Reference: Decodable {
+            let query: String
+            let candidate: String
+            let score: Double
+            let pairs: Int
+        }
+        let url = try XCTUnwrap(Bundle(for: AppFlowTests.self)
+            .url(forResource: "i3s-v402-reference", withExtension: "json"))
+        let references = try JSONDecoder().decode([Reference].self, from: Data(contentsOf: url))
+        let samples = Dictionary(uniqueKeysWithValues: I3SSampleLibrary.samples.map { ($0.id, $0) })
+        XCTAssertEqual(references.count, 97)
+        for reference in references {
+            let unknown = try XCTUnwrap(samples[reference.query]).fingerprint
+            let candidate = try XCTUnwrap(samples[reference.candidate]).fingerprint
+            let result = I3SCompareEngine.compareTwo(unknown: unknown, candidate: candidate)
+            let label = "\(reference.query) -> \(reference.candidate)"
+            XCTAssertEqual(result.score, reference.score, accuracy: 0.000001, label)
+            XCTAssertEqual(result.pairCount, reference.pairs, label)
+            XCTAssertEqual(result.matchedPairs.count, reference.pairs, label)
+        }
+    }
+
+    func testI3SRecognizesOtherEncountersInBundledGallery() throws {
+        for query in I3SSampleLibrary.samples {
+            let gallery = I3SSampleLibrary.samples.filter { $0.id != query.id && $0.photoSide == query.photoSide }
+            let best = try XCTUnwrap(gallery.min {
+                I3SCompareEngine.compareTwo(unknown: query.fingerprint, candidate: $0.fingerprint).score
+                    < I3SCompareEngine.compareTwo(unknown: query.fingerprint, candidate: $1.fingerprint).score
+            })
+            // Sample IDs name the individual before the encounter number.
+            XCTAssertEqual(best.id.prefix(while: { !$0.isNumber }), query.id.prefix(while: { !$0.isNumber }), query.id)
+        }
+    }
 }
