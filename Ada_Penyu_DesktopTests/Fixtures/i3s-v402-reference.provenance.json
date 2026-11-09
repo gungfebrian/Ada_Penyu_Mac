@@ -1,0 +1,23 @@
+{
+  "source_url": "https://reijns.com/wp-content/uploads/2020/01/I3SPv4.02-small_Setup.exe",
+  "installer_sha256": "af30a24ffd040b874a12f8d965098e24cf35dcf37ce2422cb7ac4c363d21d49d",
+  "source_sha256": {
+    "src/compare.cpp": "7f5c6d62dd98cec6a0b3f7a11d68ded172a75d806baee754a5db54810b9681cc",
+    "src/fingerprint.cpp": "7d8b3c781119068e039e4fcfe3ec9b5baa7b587e9d160b61255bbe4f69a371b5",
+    "src/element.cpp": "10d33060618cad1eeb626d0dbc0645d939fe5ca07c03549978476ab682f39b78",
+    "src/affine.cpp": "2b5e16aa88bfd5c358de7232621306698cfce8ca25efbe3eb68f3abc7ae70493",
+    "incl/compare.hpp": "e24b9aba72d5fd9355ac2ed428dfc67ec499c66f60fbaf41c738243f00dcf674",
+    "incl/fingerprint.hpp": "1c5e51e1b8f0fc757500a5a97543efd6685f55a71a5eb35527855b0c06f37fb6",
+    "incl/element.hpp": "55845549ea7c72aedb3f9d46126938a90e466cc147a9da4a818cacab68501da4",
+    "incl/point2D.hpp": "e3930a4b8c78c75355273efe2902c3cbb1e7aceadfdc12290096bbc3b32df6b5",
+    "incl/affine.h": "a4c792a51fc70b2be7f83b8daa9ca8e9cacbc90e088050061fdcbe9106f097df"
+  },
+  "samples_sha256": "f957b90bd7bd83d1036174b2f37737ad6ab4340b13c88e65f7aa2cac75eda3f7",
+  "parameters": {
+    "maxAllowedDistance": 0.01,
+    "minRelativeDistance": 1,
+    "minRatioArea": 0.5
+  },
+  "fixture_sha256": "42a4392cde5b1a88cbb0b198b59060d19ee148fd250270951cca70eecfcc0e20",
+  "oracle_scope": "Original source compiled for macOS; not execution of the shipped Windows DLL"
+}
