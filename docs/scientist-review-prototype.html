@@ -1,0 +1,1757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ADA Penyu · Mac Scientist Review Workspace Prototype</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+    .allow-select {
+      user-select: text;
+    }
+    .canvas-viewport {
+      position: relative;
+      overflow: hidden;
+      cursor: grab;
+      background: #081c29;
+    }
+    .canvas-viewport:active {
+      cursor: grabbing;
+    }
+    .transform-layer {
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+    @keyframes pulse-ring {
+      0% { r: 13px; opacity: 0.9; }
+      70% { r: 22px; opacity: 0; }
+      100% { r: 22px; opacity: 0; }
+    }
+    .junction-pulse {
+      animation: pulse-ring 1.8s infinite ease-out;
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3">
+  <!-- Outer 1440 x 900 Mac Desktop Frame -->
+  <div id="mac-window" class="mx-auto w-full max-w-[1440px] min-h-[880px] bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-2xl shadow-xl flex flex-col overflow-hidden">
+
+    <!-- 1. macOS Window Titlebar & Scenario Switcher -->
+    <header class="bg-[var(--sidebar)] border-b border-[var(--border)] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <!-- macOS Traffic Lights -->
+        <div class="flex items-center gap-2 mr-1" aria-hidden="true">
+          <span class="w-3 h-3 rounded-full bg-red-500/85 inline-block border border-black/10"></span>
+          <span class="w-3 h-3 rounded-full bg-amber-400/85 inline-block border border-black/10"></span>
+          <span class="w-3 h-3 rounded-full bg-emerald-500/85 inline-block border border-black/10"></span>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-semibold text-sm text-[var(--foreground)]">ADA Penyu Mac · Scientist Review Workspace</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-[var(--card)] border border-[var(--border)] text-[var(--muted-foreground)] font-medium">
+              1440 × 900 Prototype
+            </span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-medium">
+              Simulated Imagery &amp; Overlays · Local State
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Clickable Scenario Switcher + Reset Demo -->
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-xs text-[var(--muted-foreground)] font-medium mr-1">Scenario:</span>
+        <button id="btn-scenario-1" onclick="selectScenario('scenario1')" class="text-xs px-3 py-1.5 rounded-lg font-semibold transition border">
+          1. Rank-1 Junction Mismatch → Confirm #2
+        </button>
+        <button id="btn-scenario-2" onclick="selectScenario('scenario2')" class="text-xs px-3 py-1.5 rounded-lg font-semibold transition border">
+          2. Glare Hides Scales → Save Unsure
+        </button>
+        <div class="h-4 w-px bg-[var(--border)] mx-1"></div>
+        <button onclick="resetDemo()" class="text-xs px-3 py-1.5 rounded-lg font-semibold bg-[var(--card)] hover:bg-[var(--background)] text-[var(--foreground)] border border-[var(--border)] flex items-center gap-1.5 transition" title="Reset both scenarios, rejected candidates, overlays, and zoom state">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+          Reset demo
+        </button>
+      </div>
+    </header>
+
+    <!-- Status / Walkthrough Banner -->
+    <div id="status-banner" class="bg-[var(--background)] border-b border-[var(--border)] px-4 py-2 flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2.5">
+        <span id="scenario-badge" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30">
+          Scenario 1 of 2
+        </span>
+        <p id="walkthrough-text" class="text-xs text-[var(--foreground)] font-medium allow-select"></p>
+      </div>
+      <div id="decision-status-pill" class="text-xs font-semibold px-3 py-1 rounded-full"></div>
+    </div>
+
+    <!-- 2. Main Workspace Body: Left/Center Comparison Studio + Right Slim Candidate Inspector -->
+    <div class="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
+
+      <!-- Left & Center Area: Toolbar + Side-by-Side Large Photos + Evidence Drawer + Decision Bar -->
+      <div class="flex-1 flex flex-col min-w-0 border-b lg:border-b-0 lg:border-r border-[var(--border)]">
+
+        <!-- Comparison Aids & Synchronized Zoom Toolbar -->
+        <div class="bg-[var(--card)] border-b border-[var(--border)] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+          <!-- Comparison Aids (Starting view = Original photos with all overlays off) -->
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs font-semibold text-[var(--muted-foreground)] uppercase tracking-wider mr-1">Comparison Aids:</span>
+
+            <button id="toggle-original" onclick="setOriginalPhotosOnly()" class="text-xs px-3 py-1.5 rounded-lg font-medium border transition flex items-center gap-1.5">
+              <span>Original photos</span>
+            </button>
+
+            <button id="toggle-scales" onclick="toggleLayer('scaleOutlines')" class="text-xs px-3 py-1.5 rounded-lg font-medium border transition flex items-center gap-1.5" title="Trace visible postocular scale boundaries behind the eye and number corresponding junctions (J1–J6)">
+              <span class="w-2 h-2 rounded-full bg-teal-400 inline-block"></span>
+              <span>Scale outlines &amp; junctions</span>
+              <span class="text-xs px-1.5 py-0.2 rounded bg-teal-500/20 text-teal-600 dark:text-teal-300 font-semibold">Recommended</span>
+            </button>
+
+            <button id="toggle-crop" onclick="toggleLayer('headCrop')" class="text-xs px-3 py-1.5 rounded-lg font-medium border transition flex items-center gap-1.5" title="Show the detected head bounding box used for MiewID and XFeat cropping">
+              <span class="w-2 h-2 rounded-full bg-sky-400 inline-block"></span>
+              <span>Head region outline</span>
+            </button>
+
+            <button id="toggle-xfeat" onclick="toggleLayer('xfeatPoints')" class="text-xs px-3 py-1.5 rounded-lg font-medium border transition flex items-center gap-1.5" title="Show where XFeat/LighterGlue found local feature correspondences">
+              <span class="w-2 h-2 rounded-full bg-violet-400 inline-block"></span>
+              <span>XFeat points</span>
+            </button>
+          </div>
+
+          <!-- Synchronized Zoom & Pan + View Mode Controls -->
+          <div class="flex flex-wrap items-center gap-1.5">
+            <!-- View Mode Switcher: 1:1 vs Compare Multiple vs Superimpose -->
+            <div class="flex items-center bg-[var(--background)] p-0.5 rounded-lg border border-[var(--border)] mr-2">
+              <button id="mode-1to1" onclick="setViewMode('1to1')" class="text-xs px-2.5 py-1 rounded-md font-semibold transition">
+                1:1 Side-by-Side
+              </button>
+              <button id="mode-multi" onclick="setViewMode('multi')" class="text-xs px-2.5 py-1 rounded-md font-semibold transition" title="Compare the Sighting Photo against all Gallery Candidates simultaneously">
+                Compare Multiple (All)
+              </button>
+              <button id="mode-blend" onclick="setViewMode('blend')" class="text-xs px-2.5 py-1 rounded-md font-semibold transition" title="Superimpose candidate over sighting photo with opacity slider">
+                Superimpose Blend
+              </button>
+            </div>
+
+            <label class="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] font-medium mr-2 cursor-pointer">
+              <input id="chk-sync-pan" type="checkbox" checked onchange="toggleSyncLock(this.checked)" class="rounded" />
+              <span>Sync zoom &amp; pan</span>
+            </label>
+
+            <button onclick="adjustZoom(-0.25)" class="text-xs px-2.5 py-1 rounded-md bg-[var(--background)] hover:opacity-80 border border-[var(--border)] font-semibold" title="Zoom out">−</button>
+            <button onclick="resetViewport()" id="zoom-readout" class="text-xs px-2.5 py-1 rounded-md bg-[var(--background)] hover:opacity-80 border border-[var(--border)] font-mono font-semibold" title="Click to reset to 100%">100%</button>
+            <button onclick="adjustZoom(0.25)" class="text-xs px-2.5 py-1 rounded-md bg-[var(--background)] hover:opacity-80 border border-[var(--border)] font-semibold" title="Zoom in">+</button>
+            <button onclick="focusDiagnosticRegion()" id="btn-focus-region" class="text-xs px-2.5 py-1 rounded-md bg-[var(--background)] hover:opacity-80 border border-[var(--border)] font-medium text-[var(--foreground)] ml-1">
+              Focus postocular scales (185%)
+            </button>
+          </div>
+        </div>
+
+        <!-- Superimpose Blend Slider Bar (Shown when viewMode === 'blend') -->
+        <div id="blend-toolbar" class="hidden bg-slate-900 text-white px-4 py-2 border-b border-white/15 flex flex-wrap items-center gap-3 text-xs">
+          <span class="font-bold uppercase tracking-wider text-sky-300">Superimpose / Blink Compare:</span>
+          <span>0% Sighting</span>
+          <input id="blend-slider" type="range" min="0" max="100" value="50" oninput="updateBlendOpacity(this.value)" class="w-44 accent-teal-400 cursor-pointer" />
+          <span>100% Candidate</span>
+          <button onclick="updateBlendOpacity(0)" class="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">0% Sighting</button>
+          <button onclick="updateBlendOpacity(50)" class="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">50/50 Blend</button>
+          <button onclick="updateBlendOpacity(100)" class="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">100% Candidate</button>
+        </div>
+
+        <!-- Side-by-Side / Multi-Candidate Large Photo Viewports -->
+        <div class="flex-1 grid grid-cols-1 md:grid-cols-12 gap-0 min-h-[420px] bg-[#071824] relative">
+
+          <!-- LEFT: Sighting Photo (Stays in place when candidate changes) -->
+          <div id="left-pane-col" class="md:col-span-6 relative flex flex-col border-b md:border-b-0 md:border-r border-white/15">
+            <!-- Top Overlay Metadata Bar -->
+            <div class="absolute top-3 left-3 right-3 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+              <div class="flex flex-wrap items-center gap-1.5 bg-slate-950/85 backdrop-blur-md text-white px-3 py-1.5 rounded-lg border border-white/15 shadow">
+                <span class="text-xs font-bold uppercase tracking-wider text-sky-300">Sighting Photo</span>
+                <span class="text-white/40">·</span>
+                <span id="sighting-id-label" class="text-xs font-semibold"></span>
+                <span id="sighting-side-badge" class="text-xs font-bold px-2 py-0.5 rounded bg-sky-500/30 text-sky-200 border border-sky-400/40"></span>
+              </div>
+              <div class="bg-slate-950/85 backdrop-blur-md text-slate-200 px-2.5 py-1 rounded-lg border border-white/15 text-xs font-medium shadow">
+                <span id="sighting-date-label"></span>
+              </div>
+            </div>
+
+            <!-- Interactive SVG Viewport Left -->
+            <div id="viewport-left" class="canvas-viewport flex-1 min-h-[390px] relative">
+              <div id="transform-left" class="transform-layer w-full h-full relative">
+                <svg id="svg-left" viewBox="0 0 800 560" class="w-full h-full block"></svg>
+                <svg id="svg-blend-overlay" viewBox="0 0 800 560" class="hidden absolute inset-0 w-full h-full block pointer-events-none" style="opacity: 0.5;"></svg>
+              </div>
+            </div>
+
+            <!-- Bottom Caption Bar Left -->
+            <div class="bg-slate-950/90 text-slate-200 px-3.5 py-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span id="sighting-caption-left" class="font-medium"></span>
+              <span class="text-slate-400">Drag to pan · Scroll or buttons to zoom</span>
+            </div>
+          </div>
+
+          <!-- RIGHT (1:1 Mode): Single Gallery Reference Photo -->
+          <div id="right-single-col" class="md:col-span-6 relative flex flex-col">
+            <!-- Top Overlay Metadata Bar -->
+            <div class="absolute top-3 left-3 right-3 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+              <div class="flex flex-wrap items-center gap-1.5 bg-slate-950/85 backdrop-blur-md text-white px-3 py-1.5 rounded-lg border border-white/15 shadow">
+                <span id="gallery-rank-label" class="text-xs font-bold uppercase tracking-wider text-emerald-300"></span>
+                <span class="text-white/40">·</span>
+                <span id="gallery-id-label" class="text-xs font-semibold"></span>
+                <span id="gallery-side-badge" class="text-xs font-bold px-2 py-0.5 rounded"></span>
+              </div>
+              <div class="bg-slate-950/85 backdrop-blur-md text-slate-200 px-2.5 py-1 rounded-lg border border-white/15 text-xs font-medium shadow">
+                <span id="gallery-date-label"></span>
+              </div>
+            </div>
+
+            <!-- Interactive SVG Viewport Right -->
+            <div id="viewport-right" class="canvas-viewport flex-1 min-h-[390px]">
+              <div id="transform-right" class="transform-layer w-full h-full">
+                <svg id="svg-right" viewBox="0 0 800 560" class="w-full h-full block"></svg>
+              </div>
+            </div>
+
+            <!-- Bottom Caption Bar Right -->
+            <div class="bg-slate-950/90 text-slate-200 px-3.5 py-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span id="gallery-caption-right" class="font-medium"></span>
+              <span id="junction-callout-pill" class="px-2 py-0.5 rounded font-semibold"></span>
+            </div>
+          </div>
+
+          <!-- RIGHT (Multi-Photo Mode): Simultaneous Multi-Candidate Comparison Grid -->
+          <div id="right-multi-col" class="hidden md:col-span-7 p-2.5 bg-slate-950/90 overflow-y-auto">
+            <div class="flex items-center justify-between mb-2 px-1">
+              <span class="text-xs font-bold uppercase tracking-wider text-teal-300">Simultaneous Multi-Candidate Comparison (Synchronized Zoom &amp; Overlays)</span>
+              <span id="multi-grid-count" class="text-xs text-slate-300 font-mono"></span>
+            </div>
+            <div id="multi-candidate-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5"></div>
+          </div>
+        </div>
+
+        <!-- 3. Evidence Drawer (Relative match score + Collapsible More evidence with I3S Pattern) -->
+        <div class="bg-[var(--sidebar)] border-t border-[var(--border)] px-4 py-2.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <button onclick="toggleEvidenceDrawer()" class="flex items-center gap-2 text-xs font-semibold text-[var(--foreground)] hover:opacity-80">
+              <svg id="evidence-chevron" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+              </svg>
+              <span>Evidence Drawer</span>
+              <span id="evidence-summary-inline" class="text-xs font-normal text-[var(--muted-foreground)] ml-1"></span>
+            </button>
+
+            <button onclick="toggleMoreEvidence()" id="btn-more-evidence" class="text-xs font-medium px-2.5 py-1 rounded-md bg-[var(--card)] border border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition flex items-center gap-1">
+              <span>More evidence (I3S Pattern)</span>
+              <svg id="more-evidence-chevron" class="w-3.5 h-3.5 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Primary Evidence Drawer Content -->
+          <div id="evidence-drawer-body" class="mt-2.5 grid grid-cols-1 md:grid-cols-3 gap-2.5">
+            <!-- Backend Relative Match Score -->
+            <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-[var(--muted-foreground)]">Relative match score (Backend)</span>
+                <span id="ev-relative-score" class="text-sm font-bold text-[var(--foreground)]"></span>
+              </div>
+              <p id="ev-relative-explain" class="text-xs text-[var(--muted-foreground)] mt-1"></p>
+            </div>
+
+            <!-- Anatomical Scale Junction Verification -->
+            <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-[var(--muted-foreground)]">Postocular scale junctions</span>
+                <span id="ev-junction-status" class="text-xs font-bold px-2 py-0.5 rounded"></span>
+              </div>
+              <p id="ev-junction-explain" class="text-xs text-[var(--muted-foreground)] mt-1"></p>
+            </div>
+
+            <!-- XFeat Local Correspondences & Crop -->
+            <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-[var(--muted-foreground)]">XFeat correspondences &amp; crop</span>
+                <span id="ev-xfeat-count" class="text-xs font-bold text-[var(--foreground)]"></span>
+              </div>
+              <p id="ev-xfeat-explain" class="text-xs text-[var(--muted-foreground)] mt-1"></p>
+            </div>
+          </div>
+
+          <!-- Secondary Drawer: More Evidence (I3S Pattern) -->
+          <div id="more-evidence-body" class="hidden mt-2.5 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-xs font-bold text-[var(--foreground)]">I3S Pattern (v4.02 Local Fingerprint)</span>
+                <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-semibold">
+                  Lower means closer patterns
+                </span>
+                <span id="ev-i3s-score" class="text-xs font-mono font-bold text-[var(--foreground)] ml-1"></span>
+              </div>
+              <button id="btn-toggle-i3s-blobs" onclick="toggleLayer('i3sBlobs')" class="text-xs px-2.5 py-1 rounded-md border border-[var(--border)] bg-[var(--background)] font-medium">
+                Show I3S 3-landmark &amp; blob centers
+              </button>
+            </div>
+            <p id="ev-i3s-note" class="text-xs text-[var(--muted-foreground)] mt-1.5"></p>
+          </div>
+        </div>
+
+        <!-- 4. Always-Visible Scientist Decision Bar (Same turtle · Different turtle · Unsure) -->
+        <div class="bg-[var(--card)] border-t border-[var(--border)] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-semibold text-[var(--muted-foreground)]">Scientist Decision for</span>
+            <span id="decision-target-label" class="text-xs font-bold px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]"></span>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2.5">
+            <!-- Same turtle -->
+            <button id="btn-same-turtle" onclick="openSameTurtleModal()" class="text-xs px-4 py-2 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+              </svg>
+              <span>Same turtle…</span>
+            </button>
+
+            <!-- Different turtle -->
+            <button id="btn-different-turtle" onclick="rejectSelectedCandidate()" class="text-xs px-4 py-2 rounded-xl font-semibold bg-rose-600/90 hover:bg-rose-500 text-white shadow-sm transition flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+              <span>Different turtle (Reject &amp; Next)</span>
+            </button>
+
+            <!-- Unsure -->
+            <button id="btn-unsure" onclick="openUnsureModal()" class="text-xs px-4 py-2 rounded-xl font-semibold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-sm transition flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              <span>Unsure…</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Slim Right Inspector: Sighting Info + Ranked Candidate Shortlist + Audit Log -->
+      <aside class="w-full lg:w-[320px] bg-[var(--sidebar)] flex flex-col justify-between shrink-0">
+        <div class="p-3.5 space-y-3 overflow-y-auto">
+          <!-- Sighting Summary Card -->
+          <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Sighting Under Review</span>
+              <span id="inspector-sighting-side" class="text-xs font-semibold px-2 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-sky-300"></span>
+            </div>
+            <div id="inspector-sighting-title" class="text-sm font-bold text-[var(--foreground)] mt-1"></div>
+            <div id="inspector-sighting-meta" class="text-xs text-[var(--muted-foreground)] mt-0.5"></div>
+            <div id="inspector-quality-alert" class="mt-2 text-xs px-2.5 py-1.5 rounded-lg border"></div>
+          </div>
+
+          <!-- Ranked Candidate List Header -->
+          <div class="flex items-center justify-between pt-1">
+            <div>
+              <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--foreground)]">Ranked Candidate Shortlist</h3>
+              <p class="text-xs text-[var(--muted-foreground)]">Click a candidate to update right pane</p>
+            </div>
+            <span id="candidate-counter" class="text-xs font-mono font-semibold px-2 py-0.5 rounded bg-[var(--card)] border border-[var(--border)]"></span>
+          </div>
+
+          <!-- Candidate Cards Container -->
+          <div id="candidate-list" class="space-y-2"></div>
+
+          <!-- Quick Wider Search / Side Filter Action -->
+          <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-semibold text-[var(--foreground)]">Retrieval &amp; Search Scope</span>
+              <span id="retrieval-scope-badge" class="text-xs text-[var(--muted-foreground)]">Top-3 shown</span>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)]">
+              If the true turtle missed the shortlist due to oblique angle or loose crop, expand search with crop-locked local RANSAC reranking.
+            </p>
+            <button onclick="triggerWiderSearch()" id="btn-wider-search" class="w-full text-xs py-1.5 px-3 rounded-lg font-semibold bg-[var(--background)] hover:opacity-85 border border-[var(--border)] text-[var(--foreground)] transition">
+              Run wider search (Crop + Local Rerank)
+            </button>
+          </div>
+        </div>
+
+        <!-- Session Audit Log Footer -->
+        <div class="p-3.5 border-t border-[var(--border)] bg-[var(--card)]">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Review Audit Trail</span>
+            <span id="audit-count" class="text-xs text-[var(--muted-foreground)] font-mono">0 events</span>
+          </div>
+          <div id="audit-log" class="text-xs text-[var(--muted-foreground)] space-y-1 max-h-[96px] overflow-y-auto allow-select"></div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- MODAL 1: Confirm "Same Turtle" Identity Link -->
+    <div id="modal-same-turtle" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <span class="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Confirm Identity Link</span>
+            <h3 class="text-base font-bold mt-0.5" id="confirm-modal-title">Link Sighting to Candidate?</h3>
+          </div>
+          <button onclick="closeModals()" class="text-xs px-2 py-1 rounded bg-[var(--background)] border border-[var(--border)]">✕</button>
+        </div>
+
+        <div id="confirm-modal-warning" class="hidden text-xs p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-300 font-medium"></div>
+
+        <div class="bg-[var(--background)] border border-[var(--border)] rounded-xl p-3.5 space-y-1.5 text-xs">
+          <div class="flex justify-between"><span class="text-[var(--muted-foreground)]">Sighting:</span><span id="confirm-sighting-id" class="font-semibold"></span></div>
+          <div class="flex justify-between"><span class="text-[var(--muted-foreground)]">Selected Individual:</span><span id="confirm-candidate-name" class="font-bold text-emerald-600 dark:text-emerald-400"></span></div>
+          <div class="flex justify-between"><span class="text-[var(--muted-foreground)]">Profile Side Match:</span><span id="confirm-side-match" class="font-semibold"></span></div>
+          <div class="flex justify-between"><span class="text-[var(--muted-foreground)]">Scale Junction Evidence:</span><span id="confirm-junction-summary" class="font-semibold"></span></div>
+        </div>
+
+        <!-- Separate Gallery Enrollment Decision -->
+        <label class="flex items-start gap-2.5 p-3 rounded-xl bg-[var(--background)] border border-[var(--border)] cursor-pointer text-xs">
+          <input id="chk-enroll-gallery" type="checkbox" class="mt-0.5 rounded" />
+          <div>
+            <div class="font-semibold text-[var(--foreground)]">Nominate sighting photo as a new Gallery Reference (Separate Decision)</div>
+            <div class="text-[var(--muted-foreground)] mt-0.5">Linking this sighting logs the encounter. Gallery reference enrollment is kept separate so oblique or low-contrast photos do not degrade retrieval.</div>
+          </div>
+        </label>
+
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Scientist Verification Note</label>
+          <input id="confirm-note-input" type="text" class="w-full text-xs px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--border)] text-[var(--foreground)] allow-select" />
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-1">
+          <button onclick="closeModals()" class="text-xs px-3.5 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium">Cancel</button>
+          <button onclick="confirmSameTurtleLink()" class="text-xs px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow">
+            Confirm Identity &amp; Link Sighting
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL 2: Save "Unsure" (Identity Empty + Request Better Photo or Second Review) -->
+    <div id="modal-unsure" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <span class="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Leave Sighting Unresolved</span>
+            <h3 class="text-base font-bold mt-0.5">Save as Unsure (Identity Empty)</h3>
+          </div>
+          <button onclick="closeModals()" class="text-xs px-2 py-1 rounded bg-[var(--background)] border border-[var(--border)]">✕</button>
+        </div>
+
+        <div class="bg-[var(--background)] border border-[var(--border)] rounded-xl p-3 text-xs space-y-1">
+          <div class="flex justify-between">
+            <span class="text-[var(--muted-foreground)]">Assigned Identity:</span>
+            <span class="font-mono font-bold text-amber-600 dark:text-amber-400">EMPTY (Unresolved)</span>
+          </div>
+          <p class="text-[var(--muted-foreground)]">
+            Preserves sighting photo, GPS/timestamp, and scientist notes without forcing a false link or creating a duplicate gallery profile.
+          </p>
+        </div>
+
+        <!-- Follow-up Actions -->
+        <div class="space-y-2">
+          <span class="block text-xs font-semibold text-[var(--muted-foreground)]">Follow-up Action</span>
+          <label class="flex items-start gap-2.5 p-2.5 rounded-xl bg-[var(--background)] border border-[var(--border)] cursor-pointer text-xs">
+            <input id="chk-request-photo" type="checkbox" checked class="mt-0.5 rounded" />
+            <div>
+              <div class="font-semibold text-[var(--foreground)]">Request a better photo from ranger</div>
+              <div class="text-[var(--muted-foreground)]">Ask ranger for an alternate burst frame or a perpendicular recapture without surface glare.</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-2.5 p-2.5 rounded-xl bg-[var(--background)] border border-[var(--border)] cursor-pointer text-xs">
+            <input id="chk-second-review" type="checkbox" checked class="mt-0.5 rounded" />
+            <div>
+              <div class="font-semibold text-[var(--foreground)]">Request a second scientist review</div>
+              <div class="text-[var(--muted-foreground)]">Flag encounter for senior coordinator review with pinned scale-junction notes.</div>
+            </div>
+          </label>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Review Notes (Saved with Sighting)</label>
+          <textarea id="unsure-note-input" rows="3" class="w-full text-xs p-2.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-[var(--foreground)] allow-select"></textarea>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-1">
+          <button onclick="closeModals()" class="text-xs px-3.5 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium">Cancel</button>
+          <button onclick="confirmUnsureSave()" class="text-xs px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold shadow">
+            Save Unsure &amp; Keep Identity Empty
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // =========================================================================
+    // DATA MODEL FOR BOTH CLICKABLE SCENARIOS
+    // =========================================================================
+    const INITIAL_SCENARIOS = {
+      scenario1: {
+        id: 'scenario1',
+        badge: 'Scenario 1 · Lookalike vs. True Match',
+        walkthrough: 'Start with clean Original photos. Toggle "Scale outlines & junctions" to see why Rank #1 (Surya, 84%) has a different central junction (J3 splits into 3-way Y vertices), then click "Different turtle" to advance to Rank #2 (Amina, 79%) where all 6 junctions match, and confirm "Same turtle".',
+        sighting: {
+          id: 'Sighting #S-2026-114',
+          species: 'Green turtle (Chelonia mydas)',
+          side: 'LEFT PROFILE',
+          date: '11 Nov 2026 · 08:42 WITA',
+          location: 'Crystal Bay, Nusa Penida',
+          ranger: 'Ranger Bli Wayan (iPhone 15 Pro)',
+          caption: 'Sighting #S-2026-114 · Left Profile · 11 Nov 2026 · Slight upward pitch (+14°)',
+          qualityAlert: 'Clear postocular scales visible behind left eye; 6 scale junctions traceable.',
+          qualityTone: 'emerald',
+          variant: 'amina_query'
+        },
+        candidates: [
+          {
+            rank: 1,
+            id: 'PEN-CM-019',
+            name: 'Turtle #019 · Surya',
+            side: 'LEFT PROFILE',
+            sideMatches: true,
+            date: '14 Aug 2026 · Toyapakeh',
+            caption: 'Gallery Ref · Turtle #019 Surya · Left Profile · 14 Aug 2026',
+            relativeScore: 84,
+            miewCosine: 0.86,
+            xfeatCount: 21,
+            i3sDistance: 11.77,
+            i3sPairs: 27,
+            status: 'pending', // pending | rejected | confirmed
+            junctionSummary: '5/6 match · Junction J3 MISMATCH',
+            junctionDetail: 'Lookalike trap: J3 in sighting is a 4-way X-junction (pentagonal C1 scale), whereas Rank #1 Surya has a vertical seam splitting J3 into two 3-way Y-junctions (hexagonal C1 scale).',
+            junctionMatchState: 'mismatch',
+            xfeatDetail: '21 XFeat matches cluster on high-contrast beak contour, eye rim, and outer neck folds—ignoring the topological difference at central seam J3.',
+            i3sDetail: 'I3S distance is 11.77 (27/35 blob pairs)—lower than the true turtle (12.11)! Demonstrates how 2D blob centroids overlap between lookalikes.',
+            variant: 'surya_lookalike'
+          },
+          {
+            rank: 2,
+            id: 'PEN-CM-007',
+            name: 'Turtle #007 · Amina',
+            side: 'LEFT PROFILE',
+            sideMatches: true,
+            date: '03 May 2026 · Crystal Bay',
+            caption: 'Gallery Ref · Turtle #007 Amina · Left Profile · 03 May 2026',
+            relativeScore: 79,
+            miewCosine: 0.82,
+            xfeatCount: 19,
+            i3sDistance: 12.11,
+            i3sPairs: 22,
+            status: 'pending',
+            junctionSummary: '6/6 junctions match (J1–J6 isomorphic)',
+            junctionDetail: 'Exact topological match: All 6 postocular & temporal junctions (including the diagnostic 4-way X-junction at J3 and 5-sided C1 scale) match the sighting.',
+            junctionMatchState: 'match',
+            xfeatDetail: '19 geometrically consistent XFeat correspondences across the postocular scute mosaic despite a 16° camera pitch difference.',
+            i3sDetail: 'I3S distance is 12.11 (22/35 blob pairs; modeled on Amina1_L → Amina2_L = 12.11 vs rival Hoku2_L = 11.77 in the ADA Penyu fixture).',
+            variant: 'amina_gallery'
+          },
+          {
+            rank: 3,
+            id: 'PEN-CM-012',
+            name: 'Turtle #012 · Aikane',
+            side: 'LEFT PROFILE',
+            sideMatches: true,
+            date: '19 Jan 2026 · Manta Point',
+            caption: 'Gallery Ref · Turtle #012 Aikane · Left Profile · 19 Jan 2026',
+            relativeScore: 68,
+            miewCosine: 0.74,
+            xfeatCount: 14,
+            i3sDistance: 13.45,
+            i3sPairs: 27,
+            status: 'pending',
+            junctionSummary: '2/6 junctions match · J2, J3, J4, J5 differ',
+            junctionDetail: 'Distinct individual: Postocular row has 3 large rectangular scutes instead of 4; junctions J2–J5 have different polygon valence.',
+            junctionMatchState: 'mismatch',
+            xfeatDetail: '14 weak correspondences mostly on peripheral neck skin.',
+            i3sDetail: 'I3S distance is 13.45 (modeled on Amina1_L → Aikane2_L = 13.45 in the ADA Penyu fixture).',
+            variant: 'aikane_rival'
+          }
+        ]
+      },
+      scenario2: {
+        id: 'scenario2',
+        badge: 'Scenario 2 · Specular Glare Occlusion',
+        walkthrough: 'Surface sun-glare washes out the central postocular scales (J2–J4) behind the right eye. Toggle "Scale outlines & junctions" to inspect the occluded zone, then click "Unsure…" to save the photo and notes with Identity Empty and request a better photo or second review.',
+        sighting: {
+          id: 'Sighting #S-2026-118',
+          species: 'Green turtle (Chelonia mydas)',
+          side: 'RIGHT PROFILE',
+          date: '11 Nov 2026 · 11:15 WITA',
+          location: 'Mangrove Point, Nusa Lembongan',
+          ranger: 'Ranger Kadek Adi (iPhone 14)',
+          caption: 'Sighting #S-2026-118 · Right Profile · 11 Nov 2026 · Surface glare over cheek',
+          qualityAlert: 'Specular water glare obscures central postocular scales (only 2 of 5 junctions visible).',
+          qualityTone: 'amber',
+          variant: 'glare_query_right'
+        },
+        candidates: [
+          {
+            rank: 1,
+            id: 'PEN-CM-023',
+            name: 'Turtle #023 · Zizo',
+            side: 'RIGHT PROFILE',
+            sideMatches: true,
+            date: '22 Jul 2026 · Mangrove Point',
+            caption: 'Gallery Ref · Turtle #023 Zizo · Right Profile · 22 Jul 2026',
+            relativeScore: 76,
+            miewCosine: 0.78,
+            xfeatCount: 15,
+            i3sDistance: 13.20,
+            i3sPairs: 22,
+            status: 'pending',
+            junctionSummary: '2/5 visible match · J2–J4 occluded by glare',
+            junctionDetail: 'Dorsal J1 and ventral J5 align, but central postocular junctions J2, J3, and J4 are completely washed out by specular reflection. Cannot verify identity.',
+            junctionMatchState: 'occluded',
+            xfeatDetail: '15 XFeat points—5 points latch onto the high-contrast edge of the water glare patch rather than true anatomical scale seams.',
+            i3sDetail: 'I3S distance is 13.20 (22/35 pairs), but 9 query blobs inside the glare patch are reflection artifacts.',
+            variant: 'zizo_right_1'
+          },
+          {
+            rank: 2,
+            id: 'PEN-CM-031',
+            name: 'Turtle #031 · Tirta',
+            side: 'RIGHT PROFILE',
+            sideMatches: true,
+            date: '09 Sep 2026 · SD Point',
+            caption: 'Gallery Ref · Turtle #031 Tirta · Right Profile · 09 Sep 2026',
+            relativeScore: 72,
+            miewCosine: 0.75,
+            xfeatCount: 13,
+            i3sDistance: 14.10,
+            i3sPairs: 20,
+            status: 'pending',
+            junctionSummary: '2/5 visible match · J2–J4 occluded by glare',
+            junctionDetail: 'Dorsal J1 and ventral J5 also compatible with Tirta! Because J2–J4 are hidden under glare on the sighting, Zizo (#023) and Tirta (#031) cannot be distinguished.',
+            junctionMatchState: 'occluded',
+            xfeatDetail: '13 correspondences along upper orbit and beak.',
+            i3sDetail: 'I3S distance is 14.10—within the rival overlap band (11.16–15.55).',
+            variant: 'tirta_right_2'
+          },
+          {
+            rank: 3,
+            id: 'PEN-CM-007',
+            name: 'Turtle #007 · Amina (Left Only)',
+            side: 'LEFT PROFILE (MISMATCH)',
+            sideMatches: false,
+            date: '03 May 2026 · Crystal Bay',
+            caption: 'Gallery Ref · Turtle #007 Amina · LEFT PROFILE (Opposite side warning)',
+            relativeScore: 54,
+            miewCosine: 0.61,
+            xfeatCount: 8,
+            i3sDistance: null,
+            i3sPairs: 0,
+            status: 'pending',
+            junctionSummary: 'Invalid comparison · Head-side mismatch (R vs L)',
+            junctionDetail: 'Left and right sea turtle facial scale patterns are biologically asymmetrical. A Right-profile sighting cannot be verified against a Left-only gallery photo.',
+            junctionMatchState: 'sidemismatch',
+            xfeatDetail: 'Cross-side comparison blocked by side guard; request Right profile reference photo.',
+            i3sDetail: 'I3S requires identical profile sides (Right vs. Right).',
+            variant: 'amina_gallery'
+          }
+        ]
+      }
+    };
+
+    // Mutable runtime state
+    let state = {
+      activeScenarioKey: 'scenario1',
+      scenarios: JSON.parse(JSON.stringify(INITIAL_SCENARIOS)),
+      selectedCandidateIndex: 0,
+      viewMode: '1to1', // '1to1' | 'multi' | 'blend'
+      blendOpacity: 50,
+      layers: {
+        scaleOutlines: false,
+        headCrop: false,
+        xfeatPoints: false,
+        i3sBlobs: false
+      },
+      evidenceDrawerOpen: true,
+      moreEvidenceOpen: false,
+      syncZoomPan: true,
+      zoom: 1.0,
+      panX: 0,
+      panY: 0,
+      leftZoom: 1.0,
+      leftPanX: 0,
+      leftPanY: 0,
+      rightZoom: 1.0,
+      rightPanX: 0,
+      rightPanY: 0,
+      decisions: {
+        scenario1: null, // { outcome: 'linked' | 'unsure', text: '...' }
+        scenario2: null
+      },
+      widerSearchRun: {
+        scenario1: false,
+        scenario2: false
+      },
+      auditEvents: []
+    };
+
+    function setViewMode(mode) {
+      state.viewMode = mode;
+      logAudit(
+        mode === 'multi'
+          ? 'Switched to Compare Multiple mode: viewing Sighting Photo alongside all Gallery Candidates simultaneously.'
+          : mode === 'blend'
+          ? 'Switched to Superimpose / Blink Blend mode.'
+          : 'Switched to 1:1 Side-by-Side mode.'
+      );
+      renderAll();
+    }
+
+    function updateBlendOpacity(val) {
+      state.blendOpacity = Number(val);
+      const slider = document.getElementById('blend-slider');
+      if (slider) slider.value = String(state.blendOpacity);
+      const overlay = document.getElementById('svg-blend-overlay');
+      if (overlay) overlay.style.opacity = String(state.blendOpacity / 100);
+    }
+
+    function focusCandidate1to1(idx) {
+      state.selectedCandidateIndex = idx;
+      state.viewMode = '1to1';
+      const cand = getCurrentCandidate();
+      logAudit(`Focused 1:1 Side-by-Side on Rank #${cand.rank} (${cand.name}).`);
+      renderAll();
+    }
+
+    function logAudit(message) {
+      const now = new Date();
+      const ts = now.toTimeString().slice(0, 8);
+      state.auditEvents.unshift(`[${ts}] ${message}`);
+      renderAuditLog();
+    }
+
+    function renderAuditLog() {
+      const container = document.getElementById('audit-log');
+      const countEl = document.getElementById('audit-count');
+      countEl.textContent = `${state.auditEvents.length} events`;
+      container.innerHTML = state.auditEvents
+        .map(ev => `<div class="truncate" title="${ev}">${ev}</div>`)
+        .join('');
+    }
+
+    // =========================================================================
+    // SCENARIO & LAYER ACTIONS
+    // =========================================================================
+    function selectScenario(key) {
+      state.activeScenarioKey = key;
+      state.selectedCandidateIndex = 0;
+      // Start with clean original photos per specification
+      state.layers.scaleOutlines = false;
+      state.layers.headCrop = false;
+      state.layers.xfeatPoints = false;
+      state.layers.i3sBlobs = false;
+      resetViewport(true);
+      logAudit(`Switched to ${key === 'scenario1' ? 'Scenario 1 (Rank-1 Lookalike)' : 'Scenario 2 (Specular Glare)'} — starting with Original photos.`);
+      renderAll();
+    }
+
+    function resetDemo() {
+      state.scenarios = JSON.parse(JSON.stringify(INITIAL_SCENARIOS));
+      state.selectedCandidateIndex = 0;
+      state.layers = { scaleOutlines: false, headCrop: false, xfeatPoints: false, i3sBlobs: false };
+      state.decisions = { scenario1: null, scenario2: null };
+      state.widerSearchRun = { scenario1: false, scenario2: false };
+      state.moreEvidenceOpen = false;
+      state.auditEvents = [];
+      resetViewport(true);
+      logAudit('Demo reset: restored original photos, candidate shortlists, and local review state.');
+      renderAll();
+    }
+
+    function setOriginalPhotosOnly() {
+      state.layers.scaleOutlines = false;
+      state.layers.headCrop = false;
+      state.layers.xfeatPoints = false;
+      state.layers.i3sBlobs = false;
+      logAudit('Switched view to clean Original photos (all overlays hidden).');
+      renderAll();
+    }
+
+    function toggleLayer(layerKey) {
+      state.layers[layerKey] = !state.layers[layerKey];
+      const names = {
+        scaleOutlines: 'Scale outlines & numbered junctions',
+        headCrop: 'Head region outline (crop)',
+        xfeatPoints: 'XFeat correspondence points',
+        i3sBlobs: 'I3S 3-landmark & blob centers'
+      };
+      logAudit(`${state.layers[layerKey] ? 'Enabled' : 'Hid'} ${names[layerKey]}.`);
+      renderAll();
+    }
+
+    function selectCandidate(index) {
+      state.selectedCandidateIndex = index;
+      const sc = getCurrentScenario();
+      const cand = sc.candidates[index];
+      logAudit(`Selected Rank #${cand.rank} (${cand.name}) for comparison against ${sc.sighting.id}.`);
+      renderAll();
+    }
+
+    function getCurrentScenario() {
+      return state.scenarios[state.activeScenarioKey];
+    }
+
+    function getCurrentCandidate() {
+      const sc = getCurrentScenario();
+      return sc.candidates[state.selectedCandidateIndex] || sc.candidates[0];
+    }
+
+    // =========================================================================
+    // SCIENTIST DECISIONS: SAME TURTLE, DIFFERENT TURTLE, UNSURE
+    // =========================================================================
+    function rejectSelectedCandidate() {
+      const sc = getCurrentScenario();
+      const cand = getCurrentCandidate();
+      cand.status = 'rejected';
+      logAudit(`Marked Rank #${cand.rank} (${cand.name}) as Different turtle (Rejected).`);
+
+      // Advance to the next pending candidate automatically
+      const nextIdx = sc.candidates.findIndex((c, idx) => idx > state.selectedCandidateIndex && c.status === 'pending');
+      const fallbackIdx = sc.candidates.findIndex(c => c.status === 'pending');
+      if (nextIdx !== -1) {
+        state.selectedCandidateIndex = nextIdx;
+        logAudit(`Auto-advanced right pane to Rank #${sc.candidates[nextIdx].rank} (${sc.candidates[nextIdx].name}).`);
+      } else if (fallbackIdx !== -1) {
+        state.selectedCandidateIndex = fallbackIdx;
+        logAudit(`Advanced to remaining candidate Rank #${sc.candidates[fallbackIdx].rank}.`);
+      } else {
+        logAudit(`All shortlisted candidates rejected. Ready to save Unsure or run wider search.`);
+      }
+      renderAll();
+    }
+
+    function openSameTurtleModal() {
+      const sc = getCurrentScenario();
+      const cand = getCurrentCandidate();
+      document.getElementById('confirm-sighting-id').textContent = `${sc.sighting.id} (${sc.sighting.side})`;
+      document.getElementById('confirm-candidate-name').textContent = `${cand.name} (${cand.id})`;
+      document.getElementById('confirm-side-match').textContent = cand.sideMatches ? `${sc.sighting.side} ↔ ${cand.side} (Matched)` : `MISMATCH (${sc.sighting.side} vs ${cand.side})`;
+      document.getElementById('confirm-junction-summary').textContent = cand.junctionSummary;
+      document.getElementById('chk-enroll-gallery').checked = false;
+
+      const warnEl = document.getElementById('confirm-modal-warning');
+      if (cand.junctionMatchState === 'mismatch') {
+        warnEl.classList.remove('hidden');
+        warnEl.textContent = 'Caution: Junction J3 shows a topological mismatch (4-way X-junction on sighting vs. split 3-way Y-junctions on this candidate). Toggle "Scale outlines & junctions" before linking.';
+      } else if (cand.junctionMatchState === 'occluded') {
+        warnEl.classList.remove('hidden');
+        warnEl.textContent = 'Caution: Specular glare hides central postocular junctions J2–J4 (only 2/5 junctions visible). Saving as Unsure is recommended to prevent a false link.';
+      } else if (!cand.sideMatches) {
+        warnEl.classList.remove('hidden');
+        warnEl.textContent = 'Blocked warning: Profile sides do not match (Right sighting vs Left gallery reference). Sea turtle facial scutes are asymmetrical.';
+      } else {
+        warnEl.classList.add('hidden');
+      }
+
+      document.getElementById('confirm-note-input').value =
+        cand.junctionMatchState === 'match'
+          ? `Confirmed match to ${cand.name}: postocular scale outlines and junctions J1–J6 (including 4-way J3 vertex) match across dates.`
+          : `Manual confirmation note for ${cand.name}.`;
+
+      document.getElementById('modal-same-turtle').classList.remove('hidden');
+    }
+
+    function confirmSameTurtleLink() {
+      const sc = getCurrentScenario();
+      const cand = getCurrentCandidate();
+      const enroll = document.getElementById('chk-enroll-gallery').checked;
+      const note = document.getElementById('confirm-note-input').value.trim();
+
+      sc.candidates.forEach(c => {
+        if (c.id === cand.id) c.status = 'confirmed';
+      });
+
+      state.decisions[state.activeScenarioKey] = {
+        outcome: 'linked',
+        text: `Linked to ${cand.name} (${cand.id}) · Gallery Enrollment: ${enroll ? 'Nominated' : 'Kept Separate'}`,
+        note
+      };
+
+      logAudit(`CONFIRMED SAME TURTLE: Linked ${sc.sighting.id} → ${cand.name} (${cand.id}). Gallery enrollment: ${enroll ? 'Nominated' : 'Separate (Not enrolled)'}.`);
+      closeModals();
+      renderAll();
+    }
+
+    function openUnsureModal() {
+      const sc = getCurrentScenario();
+      const defaultNote =
+        state.activeScenarioKey === 'scenario2'
+          ? 'Specular water glare washes out postocular junctions J2–J4 behind right eye (only J1 and J5 visible). Both #023 Zizo and #031 Tirta remain plausible; leaving identity empty and requesting glare-free photo.'
+          : 'Ambiguous postocular scale correspondence across shortlisted candidates; leaving identity empty for follow-up review.';
+      document.getElementById('unsure-note-input').value = defaultNote;
+      document.getElementById('chk-request-photo').checked = true;
+      document.getElementById('chk-second-review').checked = true;
+      document.getElementById('modal-unsure').classList.remove('hidden');
+    }
+
+    function confirmUnsureSave() {
+      const sc = getCurrentScenario();
+      const reqPhoto = document.getElementById('chk-request-photo').checked;
+      const reqReview = document.getElementById('chk-second-review').checked;
+      const note = document.getElementById('unsure-note-input').value.trim();
+
+      const actions = [];
+      if (reqPhoto) actions.push('Requested better photo');
+      if (reqReview) actions.push('Requested 2nd review');
+
+      state.decisions[state.activeScenarioKey] = {
+        outcome: 'unsure',
+        text: `Saved Unsure (Identity: Empty) · ${actions.join(' + ') || 'Notes saved'}`,
+        note
+      };
+
+      logAudit(`SAVED UNSURE: ${sc.sighting.id} saved with Identity = EMPTY. Follow-up: ${actions.join(', ') || 'None'}. Note: "${note.slice(0, 60)}..."`);
+      closeModals();
+      renderAll();
+    }
+
+    function closeModals() {
+      document.getElementById('modal-same-turtle').classList.add('hidden');
+      document.getElementById('modal-unsure').classList.add('hidden');
+    }
+
+    function triggerWiderSearch() {
+      const sc = getCurrentScenario();
+      if (state.widerSearchRun[state.activeScenarioKey]) {
+        logAudit('Wider crop-locked search already executed for this sighting.');
+        return;
+      }
+      state.widerSearchRun[state.activeScenarioKey] = true;
+      if (state.activeScenarioKey === 'scenario1') {
+        sc.candidates.push({
+          rank: 4,
+          id: 'PEN-CM-004',
+          name: 'Turtle #004 · Ghost',
+          side: 'LEFT PROFILE',
+          sideMatches: true,
+          date: '28 Oct 2026 · Crystal Bay',
+          caption: 'Gallery Ref · Turtle #004 Ghost · Left Profile · 28 Oct 2026',
+          relativeScore: 61,
+          miewCosine: 0.69,
+          xfeatCount: 12,
+          i3sDistance: 15.88,
+          i3sPairs: 25,
+          status: 'pending',
+          junctionSummary: '3/6 junctions match · J3, J4, J6 differ',
+          junctionDetail: 'Added via Wider Search: elongated postocular P2 scute does not match sighting.',
+          junctionMatchState: 'mismatch',
+          xfeatDetail: '12 correspondences after head-crop re-indexing.',
+          i3sDetail: 'I3S distance 15.88 (modeled on Amina1_L → Ghost1_L = 15.88).',
+          variant: 'aikane_rival'
+        });
+      } else {
+        sc.candidates.push({
+          rank: 4,
+          id: 'PEN-CM-041',
+          name: 'Turtle #041 · Banyu',
+          side: 'RIGHT PROFILE',
+          sideMatches: true,
+          date: '12 Oct 2026 · Blue Corner',
+          caption: 'Gallery Ref · Turtle #041 Banyu · Right Profile · 12 Oct 2026',
+          relativeScore: 64,
+          miewCosine: 0.70,
+          xfeatCount: 11,
+          i3sDistance: 16.40,
+          i3sPairs: 19,
+          status: 'pending',
+          junctionSummary: '1/5 visible match · Glare still blocks J2–J4',
+          junctionDetail: 'Wider search cannot recover pixels destroyed by specular sun glare on the query photo; another photo is required.',
+          junctionMatchState: 'occluded',
+          xfeatDetail: '11 correspondences on outer head contour.',
+          i3sDetail: 'I3S distance 16.40.',
+          variant: 'tirta_right_2'
+        });
+      }
+      logAudit(`Executed wider search (tight head ROI crop + local RANSAC rerank): appended Rank #4 candidate.`);
+      renderAll();
+    }
+
+    // =========================================================================
+    // EVIDENCE DRAWERS
+    // =========================================================================
+    function toggleEvidenceDrawer() {
+      state.evidenceDrawerOpen = !state.evidenceDrawerOpen;
+      document.getElementById('evidence-drawer-body').classList.toggle('hidden', !state.evidenceDrawerOpen);
+      document.getElementById('evidence-chevron').style.transform = state.evidenceDrawerOpen ? 'rotate(0deg)' : 'rotate(-90deg)';
+    }
+
+    function toggleMoreEvidence() {
+      state.moreEvidenceOpen = !state.moreEvidenceOpen;
+      document.getElementById('more-evidence-body').classList.toggle('hidden', !state.moreEvidenceOpen);
+      document.getElementById('more-evidence-chevron').style.transform = state.moreEvidenceOpen ? 'rotate(90deg)' : 'rotate(0deg)';
+      if (state.moreEvidenceOpen) {
+        logAudit('Opened More evidence drawer (I3S Pattern distance: Lower means closer patterns).');
+      }
+    }
+
+    // =========================================================================
+    // SYNCHRONIZED ZOOM & PAN ENGINE
+    // =========================================================================
+    function toggleSyncLock(checked) {
+      state.syncZoomPan = checked;
+      if (checked) {
+        state.leftZoom = state.zoom;
+        state.rightZoom = state.zoom;
+        state.leftPanX = state.panX;
+        state.rightPanX = state.panX;
+        state.leftPanY = state.panY;
+        state.rightPanY = state.panY;
+        applyViewportTransforms();
+      }
+    }
+
+    function adjustZoom(delta) {
+      const next = Math.min(3.2, Math.max(1.0, +(state.zoom + delta).toFixed(2)));
+      state.zoom = next;
+      if (next === 1.0) {
+        state.panX = 0;
+        state.panY = 0;
+      }
+      state.leftZoom = next;
+      state.rightZoom = next;
+      state.leftPanX = state.panX;
+      state.rightPanX = state.panX;
+      state.leftPanY = state.panY;
+      state.rightPanY = state.panY;
+      applyViewportTransforms();
+    }
+
+    function resetViewport(silent) {
+      state.zoom = 1.0;
+      state.panX = 0;
+      state.panY = 0;
+      state.leftZoom = 1.0;
+      state.rightZoom = 1.0;
+      state.leftPanX = 0;
+      state.rightPanX = 0;
+      state.leftPanY = 0;
+      state.rightPanY = 0;
+      applyViewportTransforms();
+      if (!silent) logAudit('Reset synchronized zoom & pan to 100%.');
+    }
+
+    function focusDiagnosticRegion() {
+      state.zoom = 1.85;
+      if (state.activeScenarioKey === 'scenario1') {
+        state.panX = -245;
+        state.panY = -140;
+      } else {
+        state.panX = -195;
+        state.panY = -135;
+      }
+      state.leftZoom = state.zoom;
+      state.rightZoom = state.zoom;
+      state.leftPanX = state.panX;
+      state.rightPanX = state.panX;
+      state.leftPanY = state.panY;
+      state.rightPanY = state.panY;
+      applyViewportTransforms();
+      logAudit('Focused synchronized view (185%) on postocular scale junctions behind the eye.');
+    }
+
+    function applyViewportTransforms() {
+      const tl = document.getElementById('transform-left');
+      const tr = document.getElementById('transform-right');
+      const zReadout = document.getElementById('zoom-readout');
+      if (tl) tl.style.transform = `translate(${state.leftPanX}px, ${state.leftPanY}px) scale(${state.leftZoom})`;
+      if (tr) tr.style.transform = `translate(${state.rightPanX}px, ${state.rightPanY}px) scale(${state.rightZoom})`;
+      document.querySelectorAll('.multi-transform-layer').forEach(el => {
+        el.style.transform = `translate(${state.rightPanX * 0.55}px, ${state.rightPanY * 0.55}px) scale(${state.rightZoom})`;
+      });
+      if (zReadout) zReadout.textContent = `${Math.round(state.zoom * 100)}%`;
+    }
+
+    function setupInteractiveViewports() {
+      const vLeft = document.getElementById('viewport-left');
+      const vRight = document.getElementById('viewport-right');
+      let dragging = null;
+      let startX = 0;
+      let startY = 0;
+
+      function onDown(side, e) {
+        dragging = side;
+        startX = e.clientX;
+        startY = e.clientY;
+      }
+
+      window.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        startX = e.clientX;
+        startY = e.clientY;
+
+        if (state.syncZoomPan) {
+          state.panX = Math.min(220, Math.max(-520, state.panX + dx));
+          state.panY = Math.min(180, Math.max(-380, state.panY + dy));
+          state.leftPanX = state.panX;
+          state.rightPanX = state.panX;
+          state.leftPanY = state.panY;
+          state.rightPanY = state.panY;
+        } else if (dragging === 'left') {
+          state.leftPanX += dx;
+          state.leftPanY += dy;
+        } else {
+          state.rightPanX += dx;
+          state.rightPanY += dy;
+        }
+        applyViewportTransforms();
+      });
+
+      window.addEventListener('mouseup', () => {
+        dragging = null;
+      });
+
+      [
+        [vLeft, 'left'],
+        [vRight, 'right']
+      ].forEach(([el, side]) => {
+        el.addEventListener('mousedown', e => onDown(side, e));
+        el.addEventListener(
+          'wheel',
+          e => {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? 0.15 : -0.15;
+            adjustZoom(delta);
+          },
+          { passive: false }
+        );
+      });
+    }
+
+    // =========================================================================
+    // ANATOMICAL SEA TURTLE HEAD & OVERLAY SVG GENERATOR
+    // =========================================================================
+    function buildTurtleSvg(variant, isQuery, layers) {
+      const isRightProfile = variant === 'glare_query_right' || variant === 'zizo_right_1' || variant === 'tirta_right_2';
+      const hasGlare = variant === 'glare_query_right';
+      const isLookalike = variant === 'surya_lookalike';
+      const isRival3 = variant === 'aikane_rival' || variant === 'tirta_right_2';
+
+      // Ocean background palette varía slightly per encounter photo for realistic comparison
+      const bgPalettes = {
+        amina_query: ['#0b3b49', '#07222c', '#134e5e'],
+        surya_lookalike: ['#0a3648', '#061d28', '#145266'],
+        amina_gallery: ['#0d4240', '#072627', '#195c53'],
+        aikane_rival: ['#0e3347', '#081b26', '#164b68'],
+        glare_query_right: ['#0f4759', '#082530', '#1c6b82'],
+        zizo_right_1: ['#0b3948', '#061f29', '#134e63'],
+        tirta_right_2: ['#0d3f3d', '#062221', '#155450']
+      };
+      const [bgTop, bgBot, causticCol] = bgPalettes[variant] || bgPalettes.amina_query;
+
+      // Slight natural posture transform for gallery vs query
+      const pitchTransform =
+        variant === 'amina_gallery'
+          ? 'rotate(-4 400 280) translate(6, -4)'
+          : variant === 'surya_lookalike'
+          ? 'rotate(1.5 400 280)'
+          : '';
+
+      // Mirror horizontally if Right Profile so beak points right
+      const sideFlip = isRightProfile ? 'translate(800, 0) scale(-1, 1)' : '';
+
+      // Define postocular (P1-P4) and central temporal (C1-C3) scale polygons in canonical Left-Profile space
+      // Notice:
+      // - In Amina (Sighting & Rank #2): P2, P3, C1, C2 meet at a single 4-way X-junction J3 = (412, 272), and C1 is a 5-sided pentagon!
+      // - In Surya (Rank #1 Lookalike): P2 and C2 meet along a vertical segment from J3a(406, 261) to J3b(418, 283), splitting J3 into TWO 3-way Y-junctions and making C1 a 6-sided hexagon!
+      let scales = [];
+      let junctions = [];
+
+      if (isLookalike) {
+        // Rank #1 Lookalike (Surya): J3 is split into two 3-way Y-junctions!
+        scales = [
+          { id: 'P1', name: 'Postocular 1', pts: '330,185 405,178 408,224 336,228', fill: '#1c2b24' },
+          { id: 'P2', name: 'Postocular 2', pts: '336,228 408,224 406,261 418,283 340,280', fill: '#182620' },
+          { id: 'P3', name: 'Postocular 3', pts: '340,280 418,283 414,328 345,322', fill: '#1b2922' },
+          { id: 'P4', name: 'Postocular 4', pts: '345,322 414,328 402,366 352,356', fill: '#202f28' },
+          { id: 'C1', name: 'Central 1 (6-sided)', pts: '408,224 484,212 498,256 482,292 418,283 406,261', fill: '#1a2721', highlightMismatch: true },
+          { id: 'C2', name: 'Central 2', pts: '418,283 482,292 476,342 414,328', fill: '#1d2b24', highlightMismatch: true },
+          { id: 'C3', name: 'Temporal 1', pts: '405,178 492,166 484,212 408,224', fill: '#22312a' },
+          { id: 'T1', name: 'Subtemporal 1', pts: '414,328 476,342 460,382 402,366', fill: '#24332b' }
+        ];
+        junctions = [
+          { id: 'J1', x: 405, y: 178, match: true, label: 'J1 (3-way)' },
+          { id: 'J2', x: 408, y: 224, match: true, label: 'J2 (4-way)' },
+          { id: 'J3', x: 412, y: 272, match: false, splitA: { x: 406, y: 261 }, splitB: { x: 418, y: 283 }, label: 'J3 MISMATCH (Split 3-way Y)' },
+          { id: 'J4', x: 414, y: 328, match: true, label: 'J4 (4-way)' },
+          { id: 'J5', x: 484, y: 212, match: true, label: 'J5 (3-way)' },
+          { id: 'J6', x: 482, y: 292, match: true, label: 'J6 (3-way)' }
+        ];
+      } else if (isRival3) {
+        // Rank #3 (Aikane / Tirta): Different postocular row layout
+        scales = [
+          { id: 'P1', name: 'Postocular 1', pts: '330,185 405,178 412,240 338,242', fill: '#1b2a24' },
+          { id: 'P2', name: 'Postocular 2', pts: '338,242 412,240 416,304 342,300', fill: '#17241e' },
+          { id: 'P3', name: 'Postocular 3', pts: '342,300 416,304 404,362 350,354', fill: '#1f2e27' },
+          { id: 'C1', name: 'Central 1', pts: '412,240 490,225 488,298 416,304', fill: '#192822', highlightMismatch: !isRightProfile },
+          { id: 'C2', name: 'Central 2', pts: '416,304 488,298 474,358 404,362', fill: '#213029' },
+          { id: 'C3', name: 'Temporal 1', pts: '405,178 492,166 490,225 412,240', fill: '#24342d' }
+        ];
+        junctions = [
+          { id: 'J1', x: 405, y: 178, match: true, label: 'J1' },
+          { id: 'J2', x: 412, y: 240, match: false, label: 'J2 differs' },
+          { id: 'J3', x: 416, y: 304, match: false, label: 'J3 differs' },
+          { id: 'J4', x: 404, y: 362, match: false, label: 'J4 differs' },
+          { id: 'J5', x: 490, y: 225, match: true, label: 'J5' }
+        ];
+      } else {
+        // True Individual (Amina in Scenario 1 Query & Rank #2; Zizo in Scenario 2)
+        scales = [
+          { id: 'P1', name: 'Postocular 1', pts: '330,185 405,178 408,224 336,228', fill: '#1c2b23' },
+          { id: 'P2', name: 'Postocular 2', pts: '336,228 408,224 412,272 340,275', fill: '#16241d' },
+          { id: 'P3', name: 'Postocular 3', pts: '340,275 412,272 414,328 345,322', fill: '#192821' },
+          { id: 'P4', name: 'Postocular 4', pts: '345,322 414,328 402,366 352,356', fill: '#203028' },
+          { id: 'C1', name: 'Central 1 (5-sided)', pts: '408,224 484,212 496,262 482,292 412,272', fill: '#1a2922' },
+          { id: 'C2', name: 'Central 2', pts: '412,272 482,292 476,342 414,328', fill: '#1d2d25' },
+          { id: 'C3', name: 'Temporal 1', pts: '405,178 492,166 484,212 408,224', fill: '#22332b' },
+          { id: 'T1', name: 'Subtemporal 1', pts: '414,328 476,342 460,382 402,366', fill: '#25352d' }
+        ];
+        junctions = [
+          { id: 'J1', x: 405, y: 178, match: true, label: 'J1 (3-way)' },
+          { id: 'J2', x: 408, y: 224, match: true, label: 'J2 (4-way)', occluded: hasGlare },
+          { id: 'J3', x: 412, y: 272, match: true, label: 'J3 (4-way X-vertex)', diagnostic: !isRightProfile, occluded: hasGlare },
+          { id: 'J4', x: 414, y: 328, match: true, label: 'J4 (4-way)', occluded: hasGlare },
+          { id: 'J5', x: 484, y: 212, match: true, label: 'J5 (3-way)' },
+          { id: 'J6', x: 482, y: 292, match: true, label: 'J6 (3-way)', occluded: hasGlare }
+        ];
+      }
+
+      // Helper to transform canonical coordinates if Right Profile is active so text labels don't mirror backwards!
+      const mapX = x => (isRightProfile ? 800 - x : x);
+
+      // Build Scale Outlines & Numbered Junctions Layer (drawn in screen space so text is always upright)
+      let scaleOverlayHtml = '';
+      if (layers.scaleOutlines) {
+        const mappedPolys = scales
+          .map(s => {
+            const pts = s.pts
+              .split(' ')
+              .map(pair => {
+                const [px, py] = pair.split(',').map(Number);
+                return `${mapX(px)},${py}`;
+              })
+              .join(' ');
+            const isMismatchPoly = s.highlightMismatch && !hasGlare;
+            const strokeCol = hasGlare ? '#fbbf24' : isMismatchPoly ? '#f43f5e' : '#2dd4bf';
+            const fillCol = hasGlare
+              ? 'rgba(251, 191, 36, 0.06)'
+              : isMismatchPoly
+              ? 'rgba(244, 63, 94, 0.22)'
+              : 'rgba(45, 212, 191, 0.12)';
+            return `<polygon points="${pts}" fill="${fillCol}" stroke="${strokeCol}" stroke-width="2.6" stroke-dasharray="${hasGlare ? '5,4' : 'none'}" />`;
+          })
+          .join('');
+
+        const junctionMarkers = junctions
+          .map((j, idx) => {
+            const jx = mapX(j.x);
+            const jy = j.y;
+            if (j.occluded) {
+              return `
+                <g>
+                  <circle cx="${jx}" cy="${jy}" r="10" fill="rgba(245, 158, 11, 0.25)" stroke="#fbbf24" stroke-width="2" stroke-dasharray="3,2"/>
+                  <text x="${jx}" y="${jy + 4}" text-anchor="middle" fill="#fde68a" font-size="12" font-weight="bold">?</text>
+                </g>
+              `;
+            }
+            if (!j.match && j.splitA && j.splitB) {
+              const ax = mapX(j.splitA.x);
+              const bx = mapX(j.splitB.x);
+              return `
+                <g>
+                  <circle cx="${jx}" cy="${jy}" r="15" class="junction-pulse" fill="none" stroke="#f43f5e" stroke-width="2.5"/>
+                  <line x1="${ax}" y1="${j.splitA.y}" x2="${bx}" y2="${j.splitB.y}" stroke="#f43f5e" stroke-width="4"/>
+                  <circle cx="${ax}" cy="${j.splitA.y}" r="6" fill="#f43f5e" stroke="#ffffff" stroke-width="1.5"/>
+                  <circle cx="${bx}" cy="${j.splitB.y}" r="6" fill="#f43f5e" stroke="#ffffff" stroke-width="1.5"/>
+                  <rect x="${jx - 72}" y="${jy - 38}" width="144" height="22" rx="6" fill="#be123c" stroke="#fda4af" stroke-width="1.2"/>
+                  <text x="${jx}" y="${jy - 23}" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="bold">J3 Split (2× 3-way Y)</text>
+                </g>
+              `;
+            }
+            const isDiag = j.diagnostic && !hasGlare;
+            const col = !j.match ? '#f43f5e' : isDiag ? '#10b981' : '#14b8a6';
+            return `
+              <g>
+                ${isDiag ? `<circle cx="${jx}" cy="${jy}" r="14" class="junction-pulse" fill="none" stroke="#34d399" stroke-width="2.2"/>` : ''}
+                <circle cx="${jx}" cy="${jy}" r="10" fill="${col}" stroke="#042f2e" stroke-width="2"/>
+                <text x="${jx}" y="${jy + 4}" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="bold">${idx + 1}</text>
+                ${
+                  isDiag
+                    ? `<rect x="${jx - 64}" y="${jy - 36}" width="128" height="21" rx="6" fill="#065f46" stroke="#6ee7b7" stroke-width="1.2"/>
+                       <text x="${jx}" y="${jy - 22}" text-anchor="middle" fill="#ecfdf5" font-size="12" font-weight="bold">J3 (4-way X-vertex)</text>`
+                    : ''
+                }
+              </g>
+            `;
+          })
+          .join('');
+
+        const glareWarningBox = hasGlare
+          ? `
+            <g>
+              <ellipse cx="${mapX(422)}" cy="282" rx="95" ry="74" fill="rgba(245, 158, 11, 0.14)" stroke="#fbbf24" stroke-width="2.5" stroke-dasharray="8,5"/>
+              <rect x="${mapX(422) - 135}" y="176" width="270" height="26" rx="7" fill="rgba(120, 53, 15, 0.92)" stroke="#fbbf24" stroke-width="1.5"/>
+              <text x="${mapX(422)}" y="193" text-anchor="middle" fill="#fef3c7" font-size="12" font-weight="bold">Glare Occlusion: J2–J4 Untraceable</text>
+            </g>
+          `
+          : '';
+
+        scaleOverlayHtml = `<g>${mappedPolys}${glareWarningBox}${junctionMarkers}</g>`;
+      }
+
+      // Head Region Outline (Crop Bounding Box)
+      let cropOverlayHtml = '';
+      if (layers.headCrop) {
+        const cx = isRightProfile ? 135 : 155;
+        cropOverlayHtml = `
+          <g>
+            <rect x="${cx}" y="96" width="510" height="356" rx="14" fill="rgba(56, 189, 248, 0.05)" stroke="#38bdf8" stroke-width="2.4" stroke-dasharray="10,6"/>
+            <rect x="${cx + 12}" y="108" width="248" height="24" rx="6" fill="rgba(12, 74, 110, 0.9)" stroke="#7dd3fc" stroke-width="1"/>
+            <text x="${cx + 22}" y="124" fill="#e0f2fe" font-size="12" font-weight="bold">Head region crop (MiewID / XFeat ROI)</text>
+          </g>
+        `;
+      }
+
+      // XFeat Correspondences Layer
+      let xfeatOverlayHtml = '';
+      if (layers.xfeatPoints) {
+        const rawPts = hasGlare
+          ? [
+              { x: 225, y: 295, label: 'X1 (Beak)', ok: true },
+              { x: 286, y: 215, label: 'X2 (Orbit)', ok: true },
+              { x: 365, y: 245, label: 'X3 (Glare artifact)', ok: false },
+              { x: 418, y: 278, label: 'X4 (Glare artifact)', ok: false },
+              { x: 455, y: 310, label: 'X5 (Glare edge)', ok: false },
+              { x: 488, y: 192, label: 'X6 (Supraocular)', ok: true }
+            ]
+          : [
+              { x: 215, y: 292, label: 'X1', ok: true },
+              { x: 282, y: 212, label: 'X2', ok: true },
+              { x: 356, y: 198, label: 'X3', ok: true },
+              { x: 372, y: 256, label: 'X4', ok: !isLookalike },
+              { x: 446, y: 242, label: 'X5', ok: true },
+              { x: 448, y: 316, label: 'X6', ok: true },
+              { x: 525, y: 278, label: 'X7', ok: true }
+            ];
+
+        xfeatOverlayHtml = rawPts
+          .map((pt, i) => {
+            const px = mapX(pt.x);
+            const col = pt.ok ? '#a78bfa' : '#fb7185';
+            return `
+              <g>
+                <circle cx="${px}" cy="${pt.y}" r="8" fill="rgba(139, 92, 246, 0.28)" stroke="${col}" stroke-width="2.2"/>
+                <circle cx="${px}" cy="${pt.y}" r="2.5" fill="#ffffff"/>
+                <rect x="${px + 10}" y="${pt.y - 10}" width="${pt.label.length * 7 + 12}" height="20" rx="5" fill="rgba(30, 27, 75, 0.88)" stroke="${col}" stroke-width="1"/>
+                <text x="${px + 16}" y="${pt.y + 4}" fill="#ede9fe" font-size="12" font-weight="bold">${pt.label}</text>
+              </g>
+            `;
+          })
+          .join('');
+      }
+
+      // I3S 3-Landmark & Blob Centers Layer (under More evidence)
+      let i3sOverlayHtml = '';
+      if (layers.i3sBlobs) {
+        const refs = [
+          { x: mapX(182), y: 315, name: 'Ref 1 (Beak tip)' },
+          { x: mapX(250), y: 236, name: 'Ref 2 (Eye corner)' },
+          { x: mapX(492), y: 168, name: 'Ref 3 (Outer scale)' }
+        ];
+        const blobs = [
+          [368, 204, 18],
+          [374, 252, 21],
+          [378, 302, 19],
+          [376, 344, 16],
+          [448, 248, 24],
+          [446, 312, 20],
+          [448, 194, 18]
+        ];
+        i3sOverlayHtml = `
+          <g>
+            ${blobs
+              .map(([bx, by, br]) => `<circle cx="${mapX(bx)}" cy="${by}" r="${br}" fill="rgba(239, 68, 68, 0.14)" stroke="#f87171" stroke-width="1.8"/>`)
+              .join('')}
+            ${refs
+              .map(
+                r => `
+              <circle cx="${r.x}" cy="${r.y}" r="7" fill="#3b82f6" stroke="#ffffff" stroke-width="2"/>
+              <text x="${r.x + 10}" y="${r.y + 4}" fill="#93c5fd" font-size="12" font-weight="bold">${r.name}</text>
+            `
+              )
+              .join('')}
+          </g>
+        `;
+      }
+
+      // Specular water glare effect for Scenario 2 sighting photo
+      const glarePatchHtml = hasGlare
+        ? `
+          <g>
+            <ellipse cx="418" cy="278" rx="96" ry="72" transform="rotate(-18 418 278)" fill="url(#glareGrad)" />
+            <ellipse cx="408" cy="268" rx="64" ry="44" transform="rotate(-18 408 268)" fill="#ffffff" opacity="0.92" />
+            <path d="M 330 220 Q 415 265 510 330" stroke="#ffffff" stroke-width="18" stroke-linecap="round" opacity="0.75" filter="url(#blurFilter)" />
+          </g>
+        `
+        : '';
+
+      return `
+        <defs>
+          <linearGradient id="oceanBg_${variant}_${isQuery}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${bgTop}"/>
+            <stop offset="100%" stop-color="${bgBot}"/>
+          </linearGradient>
+          <radialGradient id="headSkinGrad" cx="45%" cy="40%" r="60%">
+            <stop offset="0%" stop-color="#6b7f6e"/>
+            <stop offset="65%" stop-color="#3f5244"/>
+            <stop offset="100%" stop-color="#253329"/>
+          </radialGradient>
+          <radialGradient id="glareGrad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.98"/>
+            <stop offset="55%" stop-color="#fef9c3" stop-opacity="0.82"/>
+            <stop offset="100%" stop-color="#bae6fd" stop-opacity="0"/>
+          </radialGradient>
+          <filter id="blurFilter">
+            <feGaussianBlur stdDeviation="6"/>
+          </filter>
+        </defs>
+
+        <!-- Underwater Ambient Background -->
+        <rect width="800" height="560" fill="url(#oceanBg_${variant}_${isQuery})"/>
+        <path d="M 0 90 Q 220 40 460 100 T 800 70 L 800 0 L 0 0 Z" fill="${causticCol}" opacity="0.28"/>
+        <path d="M 0 480 Q 260 430 540 490 T 800 460 L 800 560 L 0 560 Z" fill="#04131a" opacity="0.55"/>
+
+        <!-- Anatomical Sea Turtle Head Profile -->
+        <g transform="${sideFlip}">
+          <g transform="${pitchTransform}">
+            <!-- Neck & Shoulder Contour -->
+            <path d="M 460 142 Q 610 155 750 230 L 750 475 Q 580 445 410 418 Z" fill="#3b4c3f" stroke="#243027" stroke-width="3"/>
+
+            <!-- Main Cranium & Beak (Rhamphotheca) -->
+            <path d="M 176 306
+                     Q 162 242 214 184
+                     Q 278 122 396 124
+                     Q 504 126 575 168
+                     L 568 418
+                     Q 425 426 296 392
+                     Q 206 368 176 306 Z"
+                  fill="url(#headSkinGrad)" stroke="#adc2b0" stroke-width="3"/>
+
+            <!-- Beak Jaw Line -->
+            <path d="M 177 308 Q 238 318 312 356" fill="none" stroke="#1b261f" stroke-width="5" stroke-linecap="round"/>
+
+            <!-- Supraocular & Frontal Large Scutes -->
+            <polygon points="244,174 332,140 398,170 326,184" fill="#23362c" stroke="#bfd4c2" stroke-width="4.5" stroke-linejoin="round"/>
+            <polygon points="336,138 448,134 488,162 402,172" fill="#26382e" stroke="#bfd4c2" stroke-width="4.5" stroke-linejoin="round"/>
+
+            <!-- Postocular & Central Temporal Facial Scale Mosaic (The Diagnostic Biometric Region) -->
+            ${scales
+              .map(
+                s => `
+              <polygon points="${s.pts}" fill="${s.fill}" stroke="#cbe0ce" stroke-width="5.5" stroke-linejoin="round"/>
+            `
+              )
+              .join('')}
+
+            <!-- Peripheral Posterior Neck Scales -->
+            <polygon points="494,168 556,182 552,232 486,212" fill="#2a3c32" stroke="#b8CEbc" stroke-width="4" stroke-linejoin="round"/>
+            <polygon points="486,214 552,234 548,294 496,262" fill="#25372d" stroke="#b8CEbc" stroke-width="4" stroke-linejoin="round"/>
+            <polygon points="484,292 546,296 538,354 478,342" fill="#293b31" stroke="#b8CEbc" stroke-width="4" stroke-linejoin="round"/>
+
+            <!-- Eye Orbit & Iris -->
+            <ellipse cx="284" cy="236" rx="38" ry="30" transform="rotate(-12 284 236)" fill="#2c3e34" stroke="#d1e3d4" stroke-width="4"/>
+            <ellipse cx="284" cy="236" rx="25" ry="20" transform="rotate(-12 284 236)" fill="#0c1310"/>
+            <circle cx="276" cy="229" r="5" fill="#e2e8f0" opacity="0.75"/>
+
+            <!-- Specular Glare Overlay (Scenario 2 Query Only) -->
+            ${glarePatchHtml}
+          </g>
+        </g>
+
+        <!-- Scientific Comparison Aid Overlays (Screen-space upright labels) -->
+        ${cropOverlayHtml}
+        ${scaleOverlayHtml}
+        ${xfeatOverlayHtml}
+        ${i3sOverlayHtml}
+      `;
+    }
+
+    // =========================================================================
+    // MASTER RENDER FUNCTION
+    // =========================================================================
+    function renderAll() {
+      const sc = getCurrentScenario();
+      const cand = getCurrentCandidate();
+      const decision = state.decisions[state.activeScenarioKey];
+
+      // 1. Scenario Buttons
+      const b1 = document.getElementById('btn-scenario-1');
+      const b2 = document.getElementById('btn-scenario-2');
+      const activeCls = 'bg-[var(--primary)] text-[var(--primary-foreground)] border-transparent shadow-sm';
+      const inactiveCls = 'bg-[var(--card)] text-[var(--foreground)] border-[var(--border)] hover:bg-[var(--background)]';
+      b1.className = `text-xs px-3 py-1.5 rounded-lg font-semibold transition border ${state.activeScenarioKey === 'scenario1' ? activeCls : inactiveCls}`;
+      b2.className = `text-xs px-3 py-1.5 rounded-lg font-semibold transition border ${state.activeScenarioKey === 'scenario2' ? activeCls : inactiveCls}`;
+
+      // 2. Walkthrough & Status Banner
+      document.getElementById('scenario-badge').textContent = sc.badge;
+      document.getElementById('walkthrough-text').textContent = sc.walkthrough;
+
+      const statusPill = document.getElementById('decision-status-pill');
+      if (!decision) {
+        statusPill.className = 'text-xs font-semibold px-3 py-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30';
+        statusPill.textContent = 'Status: Sighting Marked Not Sure · Awaiting Scientist Decision';
+      } else if (decision.outcome === 'linked') {
+        statusPill.className = 'text-xs font-semibold px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/40';
+        statusPill.textContent = `✓ Confirmed: ${decision.text}`;
+      } else {
+        statusPill.className = 'text-xs font-semibold px-3 py-1 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/40';
+        statusPill.textContent = `⏸ Unresolved: ${decision.text}`;
+      }
+
+      // 3. Comparison Aid Toggle Buttons
+      const anyOverlayOn = state.layers.scaleOutlines || state.layers.headCrop || state.layers.xfeatPoints || state.layers.i3sBlobs;
+      const setBtnStyle = (id, active) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.className = `text-xs px-3 py-1.5 rounded-lg font-medium border transition flex items-center gap-1.5 ${
+          active
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)] border-transparent shadow-sm'
+            : 'bg-[var(--background)] text-[var(--foreground)] border-[var(--border)] hover:opacity-85'
+        }`;
+      };
+      setBtnStyle('toggle-original', !anyOverlayOn);
+      setBtnStyle('toggle-scales', state.layers.scaleOutlines);
+      setBtnStyle('toggle-crop', state.layers.headCrop);
+      setBtnStyle('toggle-xfeat', state.layers.xfeatPoints);
+
+      const i3sBtn = document.getElementById('btn-toggle-i3s-blobs');
+      if (i3sBtn) {
+        i3sBtn.textContent = state.layers.i3sBlobs ? 'Hide I3S 3-landmark & blob centers' : 'Show I3S 3-landmark & blob centers';
+      }
+
+      // 4. Left & Right Photo Metadata Labels
+      document.getElementById('sighting-id-label').textContent = sc.sighting.id;
+      document.getElementById('sighting-side-badge').textContent = sc.sighting.side;
+      document.getElementById('sighting-date-label').textContent = `${sc.sighting.date} · ${sc.sighting.location}`;
+      document.getElementById('sighting-caption-left').textContent = sc.sighting.caption;
+
+      document.getElementById('gallery-rank-label').textContent = `Gallery Rank #${cand.rank}`;
+      document.getElementById('gallery-id-label').textContent = cand.name;
+      const gSideBadge = document.getElementById('gallery-side-badge');
+      gSideBadge.textContent = cand.side;
+      gSideBadge.className = cand.sideMatches
+        ? 'text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/30 text-emerald-200 border border-emerald-400/40'
+        : 'text-xs font-bold px-2 py-0.5 rounded bg-rose-500/40 text-rose-100 border border-rose-400/60';
+      document.getElementById('gallery-date-label').textContent = cand.date;
+      document.getElementById('gallery-caption-right').textContent = cand.caption;
+
+      const jPill = document.getElementById('junction-callout-pill');
+      jPill.textContent = cand.junctionSummary;
+      if (cand.junctionMatchState === 'match') {
+        jPill.className = 'px-2 py-0.5 rounded font-semibold bg-emerald-500/25 text-emerald-300 border border-emerald-400/40';
+      } else if (cand.junctionMatchState === 'mismatch' || cand.junctionMatchState === 'sidemismatch') {
+        jPill.className = 'px-2 py-0.5 rounded font-semibold bg-rose-500/25 text-rose-300 border border-rose-400/40';
+      } else {
+        jPill.className = 'px-2 py-0.5 rounded font-semibold bg-amber-500/25 text-amber-300 border border-amber-400/40';
+      }
+
+      // 5. View Mode Layout & Render SVG Canvases (1:1 vs Multi-Candidate Grid vs Superimpose Blend)
+      const modeBtnCls = m =>
+        `text-xs px-2.5 py-1 rounded-md font-semibold transition ${
+          state.viewMode === m
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm'
+            : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+        }`;
+      document.getElementById('mode-1to1').className = modeBtnCls('1to1');
+      document.getElementById('mode-multi').className = modeBtnCls('multi');
+      document.getElementById('mode-blend').className = modeBtnCls('blend');
+
+      const leftCol = document.getElementById('left-pane-col');
+      const rightSingle = document.getElementById('right-single-col');
+      const rightMulti = document.getElementById('right-multi-col');
+      const blendToolbar = document.getElementById('blend-toolbar');
+      const blendSvg = document.getElementById('svg-blend-overlay');
+
+      document.getElementById('svg-left').innerHTML = buildTurtleSvg(sc.sighting.variant, true, state.layers);
+      document.getElementById('svg-right').innerHTML = buildTurtleSvg(cand.variant, false, state.layers);
+
+      if (state.viewMode === 'multi') {
+        leftCol.className = 'md:col-span-5 relative flex flex-col border-b md:border-b-0 md:border-r border-white/15';
+        rightSingle.classList.add('hidden');
+        rightMulti.classList.remove('hidden');
+        blendToolbar.classList.add('hidden');
+        blendSvg.classList.add('hidden');
+
+        document.getElementById('multi-grid-count').textContent = `Showing all ${sc.candidates.length} candidates simultaneously`;
+        document.getElementById('multi-candidate-grid').innerHTML = sc.candidates
+          .map((c, idx) => {
+            const isSel = idx === state.selectedCandidateIndex;
+            const svgMarkup = buildTurtleSvg(c.variant, false, state.layers);
+            const jTone =
+              c.junctionMatchState === 'match'
+                ? 'text-emerald-300 bg-emerald-500/20 border-emerald-400/40'
+                : c.junctionMatchState === 'occluded'
+                ? 'text-amber-300 bg-amber-500/20 border-amber-400/40'
+                : 'text-rose-300 bg-rose-500/20 border-rose-400/40';
+            return `
+              <div class="rounded-xl border ${
+                isSel ? 'border-emerald-400 ring-2 ring-emerald-400/30' : 'border-white/15'
+              } bg-slate-900 overflow-hidden flex flex-col">
+                <div class="px-2.5 py-1.5 bg-slate-950 flex items-center justify-between gap-2 text-xs border-b border-white/10">
+                  <div class="flex items-center gap-1.5 truncate">
+                    <span class="font-bold px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300">#${c.rank}</span>
+                    <span class="font-bold text-white truncate">${c.name}</span>
+                  </div>
+                  <span class="font-mono text-sky-300 font-semibold shrink-0">${c.relativeScore}% · ${c.xfeatCount}pts</span>
+                </div>
+                <div class="canvas-viewport h-[185px] relative bg-[#071824]">
+                  <div class="multi-transform-layer transform-layer w-full h-full">
+                    <svg viewBox="0 0 800 560" class="w-full h-full block">${svgMarkup}</svg>
+                  </div>
+                </div>
+                <div class="px-2.5 py-1.5 bg-slate-950 border-t border-white/10 flex items-center justify-between gap-1.5 text-xs">
+                  <span class="px-1.5 py-0.5 rounded border text-[11px] font-semibold truncate ${jTone}">${c.junctionSummary}</span>
+                  <div class="flex items-center gap-1 shrink-0">
+                    <button onclick="focusCandidate1to1(${idx})" class="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white font-semibold">Focus 1:1</button>
+                    <button onclick="selectCandidate(${idx}); openSameTurtleModal();" class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">Same</button>
+                    <button onclick="selectCandidate(${idx}); rejectSelectedCandidate();" class="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-semibold">Diff</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          })
+          .join('');
+      } else if (state.viewMode === 'blend') {
+        leftCol.className = 'md:col-span-6 relative flex flex-col border-b md:border-b-0 md:border-r border-white/15';
+        rightSingle.classList.remove('hidden');
+        rightMulti.classList.add('hidden');
+        blendToolbar.classList.remove('hidden');
+        blendSvg.classList.remove('hidden');
+        blendSvg.innerHTML = buildTurtleSvg(cand.variant, false, state.layers);
+        blendSvg.style.opacity = String(state.blendOpacity / 100);
+      } else {
+        leftCol.className = 'md:col-span-6 relative flex flex-col border-b md:border-b-0 md:border-r border-white/15';
+        rightSingle.classList.remove('hidden');
+        rightMulti.classList.add('hidden');
+        blendToolbar.classList.add('hidden');
+        blendSvg.classList.add('hidden');
+      }
+      applyViewportTransforms();
+
+      // 6. Evidence Drawer Updates
+      document.getElementById('evidence-summary-inline').textContent =
+        `Relative score ${cand.relativeScore}% · ${cand.junctionSummary}`;
+      document.getElementById('ev-relative-score').textContent = `${cand.relativeScore}%`;
+      document.getElementById('ev-relative-explain').textContent =
+        `MiewID global cosine ${cand.miewCosine.toFixed(2)}. Computed relative to strongest shortlist rival—not probability of true identity.`;
+
+      const evJStatus = document.getElementById('ev-junction-status');
+      evJStatus.textContent = cand.junctionSummary;
+      evJStatus.className =
+        cand.junctionMatchState === 'match'
+          ? 'text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+          : cand.junctionMatchState === 'occluded'
+          ? 'text-xs font-bold px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400'
+          : 'text-xs font-bold px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400';
+      document.getElementById('ev-junction-explain').textContent = cand.junctionDetail;
+
+      document.getElementById('ev-xfeat-count').textContent = `${cand.xfeatCount} matched pts`;
+      document.getElementById('ev-xfeat-explain').textContent = cand.xfeatDetail;
+
+      document.getElementById('ev-i3s-score').textContent =
+        cand.i3sDistance !== null ? `Distance: ${cand.i3sDistance.toFixed(2)} (${cand.i3sPairs}/35 pairs)` : 'N/A (Opposite Head Side)';
+      document.getElementById('ev-i3s-note').textContent = cand.i3sDetail;
+
+      // 7. Decision Bar Target Label
+      document.getElementById('decision-target-label').textContent = `Rank #${cand.rank} · ${cand.name}`;
+
+      // 8. Right Slim Inspector
+      document.getElementById('inspector-sighting-side').textContent = sc.sighting.side;
+      document.getElementById('inspector-sighting-title').textContent = `${sc.sighting.id} · ${sc.sighting.species}`;
+      document.getElementById('inspector-sighting-meta').textContent = `${sc.sighting.date} · ${sc.sighting.location}`;
+
+      const qAlert = document.getElementById('inspector-quality-alert');
+      qAlert.textContent = sc.sighting.qualityAlert;
+      qAlert.className =
+        sc.sighting.qualityTone === 'emerald'
+          ? 'mt-2 text-xs px-2.5 py-1.5 rounded-lg border bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 font-medium'
+          : 'mt-2 text-xs px-2.5 py-1.5 rounded-lg border bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300 font-medium';
+
+      const pendingCount = sc.candidates.filter(c => c.status === 'pending').length;
+      document.getElementById('candidate-counter').textContent = `${pendingCount}/${sc.candidates.length} active`;
+
+      const listHtml = sc.candidates
+        .map((c, idx) => {
+          const isSelected = idx === state.selectedCandidateIndex;
+          let statusBadge = '';
+          if (c.status === 'rejected') {
+            statusBadge = `<span class="text-xs px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 font-semibold">Rejected</span>`;
+          } else if (c.status === 'confirmed') {
+            statusBadge = `<span class="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 font-semibold">Confirmed</span>`;
+          } else {
+            statusBadge = `<span class="text-xs font-mono font-semibold text-[var(--muted-foreground)]">${c.relativeScore}% rel</span>`;
+          }
+
+          return `
+            <button onclick="selectCandidate(${idx})" class="w-full text-left p-2.5 rounded-xl border transition block ${
+            isSelected
+              ? 'bg-[var(--card)] border-[var(--primary)] ring-2 ring-[var(--primary)]/30 shadow-sm'
+              : 'bg-[var(--card)]/70 border-[var(--border)] hover:bg-[var(--card)]'
+          } ${c.status === 'rejected' ? 'opacity-65' : ''}">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-xs font-bold px-2 py-0.5 rounded ${
+                    isSelected ? 'bg-[var(--primary)] text-[var(--primary-foreground)]' : 'bg-[var(--background)] text-[var(--foreground)]'
+                  }">#${c.rank}</span>
+                  <span class="text-xs font-bold text-[var(--foreground)] truncate">${c.name}</span>
+                </div>
+                ${statusBadge}
+              </div>
+              <div class="flex items-center justify-between mt-1.5 text-xs text-[var(--muted-foreground)]">
+                <span>${c.side}</span>
+                <span>${c.date.split('·')[0]}</span>
+              </div>
+              <div class="mt-1 text-xs font-medium ${
+                c.junctionMatchState === 'match'
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : c.junctionMatchState === 'occluded'
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-rose-600 dark:text-rose-400'
+              }">
+                ${c.junctionSummary}
+              </div>
+            </button>
+          `;
+        })
+        .join('');
+      document.getElementById('candidate-list').innerHTML = listHtml;
+
+      const widerBtn = document.getElementById('btn-wider-search');
+      const isWiderDone = state.widerSearchRun[state.activeScenarioKey];
+      widerBtn.disabled = isWiderDone;
+      widerBtn.textContent = isWiderDone ? '✓ Wider search added Rank #4' : 'Run wider search (Crop + Local Rerank)';
+      document.getElementById('retrieval-scope-badge').textContent = `Top-${sc.candidates.length} shown`;
+    }
+
+    // Initialize prototype on load
+    window.addEventListener('DOMContentLoaded', () => {
+      setupInteractiveViewports();
+      logAudit('Loaded Scientist Review Workspace prototype (1440×900). Starting with clean Original photos.');
+      renderAll();
+    });
+  </script>
+</body>
+</html>
