@@ -4,6 +4,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case dashboard
     case map
     case individuals
+    case scientistReview
     case identification
     case favorites
 
@@ -14,6 +15,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .dashboard: "Dashboard"
         case .map: "Map"
         case .individuals: "Individuals"
+        case .scientistReview: "Scientist Review"
         case .identification: "I3S Pattern ID"
         case .favorites: "Favorites"
         }
@@ -24,6 +26,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .dashboard: "chart.xyaxis.line"
         case .map: "map"
         case .individuals: "tortoise"
+        case .scientistReview: "rectangle.split.2x1.badge.gearshape"
         case .identification: "viewfinder.circle"
         case .favorites: "heart"
         }

@@ -141,6 +141,7 @@ struct ContentView: View {
     private var pageSubtitle: String? {
         if store.activeSection == .map { return "last seen 30 days" }
         if store.activeSection == .dashboard { return "Sea Turtle Group · Bali monitoring" }
+        if store.activeSection == .scientistReview { return "Side-by-side scale junction verification · MiewID + XFeat + optional I3S" }
         if store.activeSection == .identification { return "Interactive Individual Identification System (I3S Pattern v4.02 + MiewID/XFeat)" }
         return nil
     }
@@ -154,6 +155,8 @@ struct ContentView: View {
             MapPageView(turtles: store.turtles, sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod, selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition, onReload: { Task { await store.reloadMap() } }, onSelect: store.select)
         case .individuals:
             IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select)
+        case .scientistReview:
+            ScientistReviewWorkspaceView()
         case .identification:
             I3SWorkspaceView(store: store)
         case .favorites:
