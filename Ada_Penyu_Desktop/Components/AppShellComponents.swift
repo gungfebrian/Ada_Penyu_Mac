@@ -32,6 +32,7 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 3) {
                 SidebarSectionRow(section: .dashboard, selection: $selection)
                 SidebarSectionRow(section: .map, selection: $selection)
+                SidebarSectionRow(section: .scientistReview, selection: $selection)
                 SidebarSectionRow(section: .identification, selection: $selection)
                 SidebarSectionRow(section: .favorites, selection: $selection, count: favoriteCount)
             }
