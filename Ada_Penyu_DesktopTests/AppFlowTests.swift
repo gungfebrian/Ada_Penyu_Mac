@@ -154,4 +154,29 @@ final class AppFlowTests: XCTestCase {
             XCTAssertEqual(best.id.prefix(while: { !$0.isNumber }), query.id.prefix(while: { !$0.isNumber }), query.id)
         }
     }
+
+    func testDemoVisualComparisonResolvesBundledGalleryPhotosAndOverlays() async throws {
+        let repo = DemoTurtleRepository()
+        let store = AppStore(mode: .demo, repository: repo)
+        let sampleData = try XCTUnwrap(I3SSampleLibrary.loadImageData(named: "Amina3_L.jpg"))
+        let outcome = try await store.matchPhoto(imageData: sampleData, side: .left, limit: 4)
+        XCTAssertEqual(outcome.candidates.count, 4)
+
+        for cand in outcome.candidates {
+            XCTAssertNotNil(cand.photoURL)
+            let loadedImage = await store.loadPhoto(for: cand.photoURL)
+            XCTAssertNotNil(loadedImage, "Expected Compare Visually photo to load for \(cand.name)")
+        }
+
+        let topCandidate = try XCTUnwrap(outcome.candidates.first)
+        let overlay = try await store.fetchOverlayAnnotations(
+            imageData: sampleData,
+            side: .left,
+            candidateID: topCandidate.individualID,
+            candidateSide: topCandidate.matchedPhotoSide,
+            candidatePhotoURL: topCandidate.photoURL
+        )
+        XCTAssertFalse(overlay.queryPoints.isEmpty)
+        XCTAssertEqual(overlay.queryPoints.count, overlay.candidatePoints.count)
+    }
 }
