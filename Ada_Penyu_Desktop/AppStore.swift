@@ -233,6 +233,11 @@ final class AppStore: ObservableObject {
         if let cached = photoCache[pathOrURL] {
             return cached
         }
+        if !pathOrURL.hasPrefix("http://") && !pathOrURL.hasPrefix("https://") && !pathOrURL.hasPrefix("/api/"),
+           let bundledImage = I3SSampleLibrary.loadImage(named: pathOrURL) {
+            photoCache[pathOrURL] = bundledImage
+            return bundledImage
+        }
         do {
             let data = try await repository.fetchPhotoData(pathOrURL: pathOrURL)
             if let image = NSImage(data: data) {
@@ -240,7 +245,10 @@ final class AppStore: ObservableObject {
                 return image
             }
         } catch {
-            // Ignore image fetch failure and fall back to placeholder
+            if let fallbackImage = I3SSampleLibrary.loadImage(named: pathOrURL) {
+                photoCache[pathOrURL] = fallbackImage
+                return fallbackImage
+            }
         }
         return nil
     }
