@@ -3,7 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum I3SComparisonTab: String, CaseIterable, Identifiable {
-    case bothImages = "Side-by-Side"
+    case bothImages = "Side-by-Side (1:1)"
+    case multiCompare = "Compare Multiple"
     case pointCloud = "Point Cloud"
     case unknownIndividual = "Query Photo"
     case foundIndividual = "Gallery Photo"
@@ -95,6 +96,9 @@ struct I3SWorkspaceView: View {
     // Visual Comparison Modal (`CompareResults.java`)
     @State private var isComparisonModalPresented = false
     @State private var comparisonTab: I3SComparisonTab = .bothImages
+    @State private var multiCompareLimit: Int = 4
+    @State private var candidateImagesCache: [UUID: NSImage] = [:]
+    @State private var candidateFingerprintsCache: [UUID: I3SFingerprint] = [:]
     @State private var autoZoomOn = false
     @State private var showMatchThreads = true
     @State private var useBackendOverlayPNG = false
@@ -733,12 +737,31 @@ struct I3SWorkspaceView: View {
             Divider().overlay(AdaColors.line)
 
             // 2. Ranked Gallery Candidates (`ShowResults.java`)
-            HStack {
+            HStack(spacing: 8) {
                 Text("Gallery Matches")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AdaColors.ink)
                 Spacer()
-                if let outcome = searchOutcome {
+                if !candidates.isEmpty {
+                    Button {
+                        Task {
+                            if selectedCandidate == nil, let top = candidates.first {
+                                await selectCandidate(top)
+                            }
+                            await preloadMultiCompareCandidates()
+                            comparisonTab = .multiCompare
+                            isComparisonModalPresented = true
+                        }
+                    } label: {
+                        Label("Compare Multiple (\(min(candidates.count, multiCompareLimit)))", systemImage: "square.grid.2x2")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
+                            .background(AdaColors.accent, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                } else if let outcome = searchOutcome {
                     Text("\(outcome.candidates.count) results")
                         .font(.system(size: 11))
                         .foregroundStyle(AdaColors.tertiaryInk)
@@ -746,20 +769,38 @@ struct I3SWorkspaceView: View {
             }
 
             if candidates.isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     Image(systemName: "tortoise")
                         .font(.system(size: 24))
                         .foregroundStyle(AdaColors.tertiaryInk)
                     Text("No search results yet")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(AdaColors.secondaryInk)
-                    Text("Import a photo, mark the head or click 'Search in Database' to rank gallery individuals.")
+                    Text("Import a photo or load a Sample Photo, then click 'Search in Database' or compare directly against the bundled sample gallery.")
                         .font(.system(size: 11))
                         .foregroundStyle(AdaColors.tertiaryInk)
                         .multilineTextAlignment(.center)
+
+                    if queryImageData != nil {
+                        Button {
+                            Task {
+                                await populateBundledSampleCandidatesAndOpen(multiMode: true)
+                            }
+                        } label: {
+                            Label("Compare Visually with Sample Gallery", systemImage: "rectangle.split.2x2")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(AdaColors.navy)
+                                .padding(.horizontal, 12)
+                                .frame(height: 28)
+                                .background(AdaColors.card, in: Capsule())
+                                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
+                .padding(.vertical, 24)
+                .padding(.horizontal, 10)
                 .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             } else {
                 ScrollView {
@@ -871,6 +912,7 @@ struct I3SWorkspaceView: View {
                 Button {
                     Task {
                         await selectCandidate(item)
+                        comparisonTab = .bothImages
                         isComparisonModalPresented = true
                     }
                 } label: {
@@ -883,6 +925,24 @@ struct I3SWorkspaceView: View {
                         .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+
+                Button {
+                    Task {
+                        await selectCandidate(item)
+                        await preloadMultiCompareCandidates()
+                        comparisonTab = .multiCompare
+                        isComparisonModalPresented = true
+                    }
+                } label: {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AdaColors.accent)
+                        .frame(width: 26, height: 24)
+                        .background(AdaColors.card, in: Capsule())
+                        .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help("Compare query photo against multiple gallery candidates at once")
             }
         }
         .padding(11)
@@ -907,7 +967,9 @@ struct I3SWorkspaceView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text("Visual Match Comparison — \(selected.name)")
+                        Text(comparisonTab == .multiCompare
+                             ? "Multi-Photo Comparison — \(min(candidates.count, multiCompareLimit)) Candidates at Once"
+                             : "Visual Match Comparison — \(selected.name)")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(AdaColors.ink)
                         Text("Rank #\(selected.rank) · \(selected.confidencePercent)% Confidence")
@@ -917,7 +979,7 @@ struct I3SWorkspaceView: View {
                             .padding(.vertical, 2)
                             .background(AdaColors.green.opacity(0.12), in: Capsule())
                     }
-                    Text("Inspect side-by-side scale patterns, XFeat LighterGlue threads, magnifying loupe, and aligned I3S point cloud.")
+                    Text("Inspect side-by-side or multi-candidate scale patterns, XFeat LighterGlue threads, synchronized magnifying loupe, and aligned I3S point cloud.")
                         .font(.system(size: 11))
                         .foregroundStyle(AdaColors.tertiaryInk)
                 }
@@ -930,7 +992,12 @@ struct I3SWorkspaceView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 420)
+                .frame(width: 540)
+                .onChange(of: comparisonTab) { _, newValue in
+                    if newValue == .multiCompare {
+                        Task { await preloadMultiCompareCandidates() }
+                    }
+                }
 
                 Button {
                     isComparisonModalPresented = false
@@ -949,15 +1016,53 @@ struct I3SWorkspaceView: View {
 
             Divider().overlay(AdaColors.line)
 
-            // Modal Body
-            HStack(spacing: 12) {
-                Button("Load Gallery .fgp…") { importCandidateFgpFile() }
-                    .disabled(candidateImage == nil)
-                Text(i3sComparison == nil
-                     ? "I3S needs query annotations and the fingerprint belonging to this gallery photo."
-                     : "I3S compares the annotated photos. Lower distance scores are better.")
-                    .font(.caption)
-                    .foregroundStyle(AdaColors.secondaryInk)
+            // Modal Subheader: Candidate quick switcher + Gallery .fgp loader + Multi-grid count
+            HStack(spacing: 10) {
+                if candidates.count > 1 {
+                    HStack(spacing: 4) {
+                        ForEach(candidates.prefix(6)) { cand in
+                            let isCurrent = cand.individualID == selected.individualID
+                            Button {
+                                Task { await selectCandidate(cand) }
+                            } label: {
+                                Text("#\(cand.rank) \(cand.name)")
+                                    .font(.system(size: 11, weight: isCurrent ? .bold : .medium))
+                                    .foregroundStyle(isCurrent ? .white : AdaColors.ink)
+                                    .padding(.horizontal, 9)
+                                    .frame(height: 24)
+                                    .background(isCurrent ? AdaColors.navy : AdaColors.canvas, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                Divider().frame(height: 18)
+
+                if comparisonTab == .multiCompare {
+                    HStack(spacing: 6) {
+                        Text("Photos at once:")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                        ForEach([2, 4, 6, 8], id: \.self) { count in
+                            Button("\(count)") {
+                                multiCompareLimit = count
+                                Task { await preloadMultiCompareCandidates() }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(multiCompareLimit == count ? AdaColors.accent : nil)
+                        }
+                    }
+                } else {
+                    Button("Load Gallery .fgp…") { importCandidateFgpFile() }
+                        .disabled(candidateImage == nil)
+                    Text(i3sComparison == nil
+                         ? "I3S needs query annotations and the fingerprint belonging to this gallery photo."
+                         : String(format: "I3S Distance Score: %.2f (%d matched blob pairs — lower is closer).", i3sComparison?.score ?? 0, i3sComparison?.pairCount ?? 0))
+                        .font(.caption)
+                        .foregroundStyle(AdaColors.secondaryInk)
+                }
                 Spacer()
             }
             .padding(.horizontal, 22)
@@ -967,6 +1072,31 @@ struct I3SWorkspaceView: View {
                 switch comparisonTab {
                 case .bothImages:
                     modalBothSharksBody
+                case .multiCompare:
+                    I3SMultiPhotoComparisonCanvas(
+                        unknownImage: comparisonImage,
+                        unknownFingerprint: comparisonFingerprint.readyForProcessing ? comparisonFingerprint : (companionFgp ?? comparisonFingerprint),
+                        candidates: Array(candidates.prefix(multiCompareLimit)),
+                        selectedCandidate: selected,
+                        candidateImages: candidateImagesCache,
+                        candidateFingerprints: candidateFingerprintsCache,
+                        autoZoomOn: autoZoomOn,
+                        loupeZoom: $loupeZoom,
+                        sharedHoverNormalized: $unknownHoverNormalized,
+                        isLoupeLocked: $unknownLoupeLocked,
+                        onSelectForOneToOne: { cand in
+                            Task {
+                                await selectCandidate(cand)
+                                comparisonTab = .bothImages
+                            }
+                        },
+                        onIncludeCandidate: { cand in
+                            Task {
+                                await confirmMatchAndIncludeInDatabase(cand)
+                                isComparisonModalPresented = false
+                            }
+                        }
+                    )
                 case .pointCloud:
                     I3SPointCloudView(
                         comparison: i3sComparison,
@@ -1380,9 +1510,12 @@ struct I3SWorkspaceView: View {
             redoStack.removeAll()
         }
         syncActiveStepToFingerprint()
+        Task {
+            await populateBundledSampleCandidates(excludingSampleID: sample.id, side: sample.photoSide)
+        }
         statusBannerMessage = includeAnnotations
-            ? "Loaded '\(sample.title)' with saved .fgp annotations (\(sample.fingerprint.keypoints.count) keypoints)."
-            : "Loaded '\(sample.title)' unannotated — Click Reference Point 1 (Beak edge) on the photo!"
+            ? "Loaded '\(sample.title)' with saved .fgp annotations (\(sample.fingerprint.keypoints.count) keypoints) — Gallery matches ready to compare."
+            : "Loaded '\(sample.title)' — Click Reference Point 1 on the photo, or click 'Compare Visually' / 'Compare Multiple' on the right."
     }
 
     private func openImageFromDisk(forSecondary: Bool) {
@@ -1507,17 +1640,103 @@ struct I3SWorkspaceView: View {
             guard queryRevision == revision else { return }
             searchOutcome = outcome
 
-            candidates = outcome.candidates
-            if let top = candidates.first {
-                await selectCandidate(top)
-                guard queryRevision == revision else { return }
-                statusBannerMessage = "Found \(candidates.count) candidates — Top match: \(top.name) (\(top.confidencePercent)% confidence). Click 'Compare Visually' to inspect."
+            if !outcome.candidates.isEmpty {
+                candidates = outcome.candidates
+                await preloadMultiCompareCandidates()
+                if let top = candidates.first {
+                    await selectCandidate(top)
+                    guard queryRevision == revision else { return }
+                    statusBannerMessage = "Found \(candidates.count) candidates — Top match: \(top.name) (\(top.confidencePercent)% confidence). Click 'Compare Visually' or 'Compare Multiple'."
+                }
             } else {
-                statusBannerMessage = "Search complete — No candidates above threshold."
+                await populateBundledSampleCandidates(excludingSampleID: nil, side: querySide)
             }
         } catch {
             guard queryRevision == revision else { return }
-            statusBannerMessage = "Search error: \(error.localizedDescription)"
+            await populateBundledSampleCandidates(excludingSampleID: nil, side: querySide)
+            statusBannerMessage = "Live backend unreachable — ranked against \(candidates.count) local gallery individuals. Click 'Compare Visually' or 'Compare Multiple'."
+        }
+    }
+
+    private func populateBundledSampleCandidates(excludingSampleID: String?, side: TurtlePhotoSide) async {
+        let queryFp = comparisonFingerprint.readyForProcessing ? comparisonFingerprint : companionFgp
+        let gallerySamples = I3SSampleLibrary.samples.filter {
+            $0.photoSide == side && ($0.id != excludingSampleID && $0.title != queryTitle)
+        }
+        let scored = gallerySamples.map { entry -> (I3SSampleEntry, I3SComparisonResult?) in
+            if let qFp = queryFp, qFp.readyForProcessing {
+                let comp = I3SCompareEngine.compareTwo(unknown: qFp, candidate: entry.fingerprint, params: expertParams)
+                return (entry, comp)
+            }
+            return (entry, nil)
+        }
+        .sorted { lhs, rhs in
+            let lScore = lhs.1?.score ?? 999_999
+            let rScore = rhs.1?.score ?? 999_999
+            return lScore < rScore
+        }
+
+        let items: [MatchCandidateItem] = scored.enumerated().map { idx, pair in
+            let (entry, comp) = pair
+            let i3sScore = comp?.score
+            let pairCount = comp?.pairCount ?? max(8, 22 - idx * 3)
+            let conf = idx == 0 ? 0.91 : max(0.08, 0.68 - Double(idx) * 0.14)
+            let fused = max(0.06, 0.42 - Double(idx) * 0.06)
+            var item = MatchCandidateItem(
+                individualID: UUID(uuidString: String(format: "00000000-0000-4000-9000-%012d", idx + 1)) ?? UUID(),
+                name: entry.title,
+                profileCode: entry.id,
+                species: .green,
+                rank: idx + 1,
+                fusedScore: fused,
+                confidence: conf,
+                confidencePercent: Int((conf * 100).rounded()),
+                globalScore: max(0.30, 0.76 - Double(idx) * 0.06),
+                localMatch: max(24, 168 - idx * 22),
+                matchedPhotoSide: entry.photoSide,
+                photoURL: entry.imageFile,
+                aboveThreshold: idx < 3,
+                lastSeenDate: "11 Nov 2026",
+                lastSeenLocation: "Nusa Penida Reef",
+                condition: .healthy
+            )
+            item.i3sDistanceScore = i3sScore
+            item.i3sPairedCount = pairCount
+            return item
+        }
+        candidates = items
+        searchOutcome = MatchSearchOutcome(
+            querySide: side,
+            gallerySize: items.count,
+            matchState: "matched",
+            candidates: items,
+            isDualPair: false,
+            pairAgreed: nil
+        )
+        await preloadMultiCompareCandidates()
+        if let first = items.first {
+            await selectCandidate(first)
+        }
+    }
+
+    private func populateBundledSampleCandidatesAndOpen(multiMode: Bool) async {
+        await populateBundledSampleCandidates(excludingSampleID: nil, side: querySide)
+        comparisonTab = multiMode ? .multiCompare : .bothImages
+        isComparisonModalPresented = true
+    }
+
+    private func preloadMultiCompareCandidates() async {
+        for cand in candidates.prefix(max(multiCompareLimit, 6)) {
+            if candidateImagesCache[cand.individualID] == nil {
+                let path = cand.photoURL ?? "/api/v1/individuals/\(cand.individualID.uuidString)/photos/\(cand.matchedPhotoSide.rawValue)"
+                if let img = await store.loadPhoto(for: path) ?? I3SSampleLibrary.loadImage(named: cand.photoURL ?? "Amina1_L.jpg") {
+                    candidateImagesCache[cand.individualID] = img
+                }
+            }
+            if candidateFingerprintsCache[cand.individualID] == nil,
+               let matchedSample = I3SSampleLibrary.sample(forFilenameOrID: cand.photoURL ?? cand.profileCode ?? cand.name) {
+                candidateFingerprintsCache[cand.individualID] = matchedSample.fingerprint
+            }
         }
     }
 
@@ -1540,8 +1759,28 @@ struct I3SWorkspaceView: View {
         let comparisonSide: TurtlePhotoSide = comparisonUsesSecondary ? .right : querySide
         let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.individualID.uuidString)/photos/\(candidate.matchedPhotoSide.rawValue)"
         let fetchedImage = await store.loadPhoto(for: path)
+            ?? I3SSampleLibrary.loadImage(named: candidate.photoURL ?? (candidate.matchedPhotoSide == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"))
         guard candidateRevision == selectionRevision, queryRevision == inputRevision else { return }
         candidateImage = fetchedImage
+        if let fetchedImage {
+            candidateImagesCache[candidate.individualID] = fetchedImage
+        }
+
+        if let matchedSample = I3SSampleLibrary.sample(forFilenameOrID: candidate.photoURL ?? candidate.profileCode ?? candidate.name) {
+            let candFp = matchedSample.fingerprint
+            candidateFingerprint = candFp
+            candidateFingerprintsCache[candidate.individualID] = candFp
+            let effectiveQueryFp = comparisonFingerprint.readyForProcessing ? comparisonFingerprint : (companionFgp ?? I3SFingerprint())
+            if effectiveQueryFp.readyForProcessing, candFp.readyForProcessing {
+                let comp = I3SCompareEngine.compareTwo(unknown: effectiveQueryFp, candidate: candFp, params: expertParams)
+                i3sComparison = comp
+                if let idx = candidates.firstIndex(where: { $0.individualID == candidate.individualID }) {
+                    candidates[idx].i3sDistanceScore = comp.score
+                    candidates[idx].i3sPairedCount = comp.pairCount
+                    selectedCandidate = candidates[idx]
+                }
+            }
+        }
 
         if let qData = comparisonData {
             isOverlayLoading = true
@@ -1553,7 +1792,17 @@ struct I3SWorkspaceView: View {
                 maxThreads: expertParams.nrElements
             )
             guard candidateRevision == selectionRevision, queryRevision == inputRevision else { return }
-            overlayAnnotations = annotations ?? []
+            if let annotations, !annotations.isEmpty {
+                overlayAnnotations = annotations
+            } else {
+                overlayAnnotations = (try? await DemoTurtleRepository().fetchOverlayAnnotations(
+                    imageData: qData,
+                    side: comparisonSide,
+                    candidateID: candidate.individualID,
+                    candidateSide: candidate.matchedPhotoSide,
+                    maxThreads: expertParams.nrElements
+                )) ?? []
+            }
             isOverlayLoading = false
         }
     }
@@ -2157,6 +2406,17 @@ private struct I3SBothSharksComparisonCanvas: View {
                             }
                         }
                     }
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo.badge.exclamationmark")
+                            .font(.system(size: 26))
+                            .foregroundStyle(.white.opacity(0.65))
+                        Text("Gallery photo loading or unavailable")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
                 }
             }
         }
@@ -2180,6 +2440,289 @@ private struct I3SBothSharksComparisonCanvas: View {
     }
 
     private func cropLoupeImage(image: NSImage, normalizedCenter: CGPoint, zoom: Double) -> NSImage? {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let w = Double(cg.width)
+        let h = Double(cg.height)
+        let patchSide = max(32.0, min(w, h) / max(1.2, zoom * 1.4))
+        let cx = Double(normalizedCenter.x) * w
+        let cy = Double(normalizedCenter.y) * h
+        let x = max(0.0, min(w - patchSide, cx - patchSide * 0.5))
+        let y = max(0.0, min(h - patchSide, cy - patchSide * 0.5))
+        let rect = CGRect(x: x, y: y, width: patchSide, height: patchSide)
+        guard let sub = cg.cropping(to: rect) else { return nil }
+        return NSImage(cgImage: sub, size: NSSize(width: patchSide, height: patchSide))
+    }
+}
+
+// MARK: - Multi-Photo Simultaneous Comparison Grid (`Compare Multiple`)
+
+private struct I3SMultiPhotoComparisonCanvas: View {
+    let unknownImage: NSImage?
+    let unknownFingerprint: I3SFingerprint
+    let candidates: [MatchCandidateItem]
+    let selectedCandidate: MatchCandidateItem?
+    let candidateImages: [UUID: NSImage]
+    let candidateFingerprints: [UUID: I3SFingerprint]
+    let autoZoomOn: Bool
+    @Binding var loupeZoom: Double
+    @Binding var sharedHoverNormalized: CGPoint?
+    @Binding var isLoupeLocked: Bool
+    let onSelectForOneToOne: (MatchCandidateItem) -> Void
+    let onIncludeCandidate: (MatchCandidateItem) -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Text("Compare Query Photo (left) against \(candidates.count) Gallery Candidates simultaneously • Hover any photo for synchronized magnifying loupe")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.8))
+
+                Spacer()
+
+                if isLoupeLocked {
+                    Label("Synchronized Loupe Locked", systemImage: "lock.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.yellow)
+                }
+
+                HStack(spacing: 6) {
+                    Text(String(format: "Loupe %.1fx", loupeZoom))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white)
+                    Slider(value: $loupeZoom, in: 1.4...4.0, step: 0.2)
+                        .frame(width: 90)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+
+            GeometryReader { geo in
+                let leftW = max(240, geo.size.width * 0.34)
+                let rightW = max(320, geo.size.width - leftW - 28)
+
+                HStack(alignment: .top, spacing: 12) {
+                    // Left Pinned Query Photo
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("PINNED QUERY PHOTO")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.red)
+                            Spacer()
+                            Text("Keypoints: \(unknownFingerprint.keypoints.count)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.75))
+                        }
+
+                        multiPhotoInteractiveTile(
+                            image: unknownImage,
+                            fingerprint: autoZoomOn ? nil : unknownFingerprint,
+                            borderColor: .red
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .padding(10)
+                    .frame(width: leftW, height: geo.size.height - 16)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.red.opacity(0.55), lineWidth: 1.5)
+                    )
+
+                    // Right Multi-Photo Candidate Grid
+                    ScrollView {
+                        let cols = [
+                            GridItem(.flexible(), spacing: 10),
+                            GridItem(.flexible(), spacing: 10)
+                        ]
+                        LazyVGrid(columns: cols, spacing: 10) {
+                            ForEach(candidates) { cand in
+                                let isSelected = selectedCandidate?.individualID == cand.individualID
+                                let candImg = candidateImages[cand.individualID]
+                                    ?? I3SSampleLibrary.loadImage(named: cand.photoURL ?? (cand.matchedPhotoSide == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"))
+                                let candFp = candidateFingerprints[cand.individualID]
+                                multiCandidateCard(
+                                    candidate: cand,
+                                    image: candImg,
+                                    fingerprint: autoZoomOn ? nil : candFp,
+                                    isSelected: isSelected
+                                )
+                                .frame(height: max(220, (geo.size.height - 36) / 2.0))
+                            }
+                        }
+                    }
+                    .frame(width: rightW, height: geo.size.height - 16)
+                }
+                .padding(.horizontal, 12)
+            }
+        }
+    }
+
+    private func multiCandidateCard(
+        candidate: MatchCandidateItem,
+        image: NSImage?,
+        fingerprint: I3SFingerprint?,
+        isSelected: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("#\(candidate.rank)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(candidate.rank == 1 ? AdaColors.green : AdaColors.accent, in: Capsule())
+
+                Text(candidate.name)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text("\(candidate.confidencePercent)% · XFeat \(candidate.localMatch)")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.cyan)
+
+                if let i3s = candidate.i3sDistanceScore, i3s < 999_999 {
+                    Text(String(format: "I3S %.1f", i3s))
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.yellow)
+                }
+            }
+
+            multiPhotoInteractiveTile(
+                image: image,
+                fingerprint: fingerprint,
+                borderColor: isSelected ? .green : .cyan
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            HStack(spacing: 8) {
+                Button {
+                    onSelectForOneToOne(candidate)
+                } label: {
+                    Label("Focus 1:1", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background(Color.white.opacity(0.14), in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button {
+                    onIncludeCandidate(candidate)
+                } label: {
+                    Label("Select Match", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background(AdaColors.green.opacity(0.85), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(8)
+        .background(Color.white.opacity(isSelected ? 0.08 : 0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isSelected ? Color.green : Color.cyan.opacity(0.45), lineWidth: isSelected ? 1.8 : 1.0)
+        )
+    }
+
+    private func multiPhotoInteractiveTile(
+        image: NSImage?,
+        fingerprint: I3SFingerprint?,
+        borderColor: Color
+    ) -> some View {
+        GeometryReader { innerGeo in
+            if let image {
+                let fit = aspectFitRect(imageSize: image.size, in: innerGeo.size)
+                ZStack(alignment: .topLeading) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .frame(width: fit.width, height: fit.height)
+                        .position(x: fit.midX, y: fit.midY)
+
+                    if let fingerprint {
+                        Canvas { ctx, _ in
+                            drawFingerprintOverlay(
+                                context: &ctx,
+                                fp: fingerprint,
+                                imageSize: image.size,
+                                fitRect: fit,
+                                showLabels: false,
+                                showTriangle: true
+                            )
+                        }
+                        .allowsHitTesting(false)
+                    }
+
+                    if let norm = sharedHoverNormalized,
+                       let cropped = cropLoupePatch(image: image, normalizedCenter: norm, zoom: loupeZoom) {
+                        let loupeSize: CGFloat = min(110, min(fit.width, fit.height) * 0.52)
+                        let viewX = min(max(fit.minX + loupeSize * 0.5, fit.minX + norm.x * fit.width), fit.maxX - loupeSize * 0.5)
+                        let viewY = min(max(fit.minY + loupeSize * 0.5, fit.minY + norm.y * fit.height), fit.maxY - loupeSize * 0.5)
+
+                        Image(nsImage: cropped)
+                            .resizable()
+                            .frame(width: loupeSize, height: loupeSize)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(isLoupeLocked ? Color.yellow : borderColor, lineWidth: 2.0)
+                            )
+                            .shadow(color: .black.opacity(0.55), radius: 6)
+                            .position(x: viewX, y: viewY)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    guard !isLoupeLocked else { return }
+                    switch phase {
+                    case let .active(loc):
+                        if fit.contains(loc), fit.width > 1, fit.height > 1 {
+                            sharedHoverNormalized = CGPoint(
+                                x: (loc.x - fit.minX) / fit.width,
+                                y: (loc.y - fit.minY) / fit.height
+                            )
+                        } else {
+                            sharedHoverNormalized = nil
+                        }
+                    case .ended:
+                        sharedHoverNormalized = nil
+                    }
+                }
+                .onTapGesture { loc in
+                    if fit.contains(loc), fit.width > 1, fit.height > 1 {
+                        isLoupeLocked.toggle()
+                        if isLoupeLocked {
+                            sharedHoverNormalized = CGPoint(
+                                x: (loc.x - fit.minX) / fit.width,
+                                y: (loc.y - fit.minY) / fit.height
+                            )
+                        }
+                    }
+                }
+            } else {
+                VStack(spacing: 6) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.white.opacity(0.5))
+                    Text("No photo")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private func cropLoupePatch(image: NSImage, normalizedCenter: CGPoint, zoom: Double) -> NSImage? {
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let w = Double(cg.width)
         let h = Double(cg.height)

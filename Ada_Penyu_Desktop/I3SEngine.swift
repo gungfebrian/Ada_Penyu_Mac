@@ -1057,6 +1057,36 @@ enum I3SSampleLibrary {
         return NSImage(data: data)
     }
 
+    static func sample(forFilenameOrID value: String) -> I3SSampleEntry? {
+        let trimmed = (value as NSString).lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return samples.first { entry in
+            entry.id.caseInsensitiveCompare(trimmed) == .orderedSame
+                || entry.imageFile.caseInsensitiveCompare(trimmed) == .orderedSame
+                || entry.title.caseInsensitiveCompare(trimmed) == .orderedSame
+        }
+    }
+
+    static func loadImageData(named filenameOrPath: String) -> Data? {
+        if let matched = sample(forFilenameOrID: filenameOrPath),
+           let data = loadImageData(for: matched) {
+            return data
+        }
+        let lastComponent = (filenameOrPath as NSString).lastPathComponent
+        guard !lastComponent.isEmpty else { return nil }
+        for url in candidateURLs(for: lastComponent) {
+            if let data = try? Data(contentsOf: url) {
+                return data
+            }
+        }
+        return nil
+    }
+
+    static func loadImage(named filenameOrPath: String) -> NSImage? {
+        guard let data = loadImageData(named: filenameOrPath) else { return nil }
+        return NSImage(data: data)
+    }
+
     private static func candidateURLs(for filename: String) -> [URL] {
         var urls: [URL] = []
         let ns = filename as NSString

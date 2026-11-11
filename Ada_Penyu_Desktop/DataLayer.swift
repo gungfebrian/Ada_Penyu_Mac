@@ -1483,6 +1483,8 @@ final class DemoTurtleRepository: TurtleRepository {
         let items = turtles.prefix(limit).enumerated().map { idx, t -> MatchCandidateItem in
             let fused = max(0.02, 0.36 - Double(idx) * 0.08)
             let conf = idx == 0 ? 0.94 : max(0.01, 0.18 - Double(idx) * 0.04)
+            let defaultPhoto = side == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"
+            let candidatePhoto = side == .right ? (t.rightPhotoURL ?? defaultPhoto) : (t.leftPhotoURL ?? defaultPhoto)
             return MatchCandidateItem(
                 individualID: t.backendID ?? UUID(),
                 name: t.id,
@@ -1495,7 +1497,7 @@ final class DemoTurtleRepository: TurtleRepository {
                 globalScore: max(0.25, 0.68 - Double(idx) * 0.07),
                 localMatch: max(18, 185 - idx * 34),
                 matchedPhotoSide: side,
-                photoURL: nil,
+                photoURL: candidatePhoto,
                 aboveThreshold: idx < 2,
                 lastSeenDate: t.lastSeen,
                 lastSeenLocation: t.location,
@@ -1510,6 +1512,60 @@ final class DemoTurtleRepository: TurtleRepository {
             isDualPair: false,
             pairAgreed: nil
         )
+    }
+
+    func fetchOverlayAnnotations(
+        imageData: Data,
+        side: TurtlePhotoSide,
+        candidateID: UUID,
+        candidateSide: TurtlePhotoSide,
+        maxThreads: Int = 35
+    ) async throws -> [OverlayAnnotationItem] {
+        let baseCoords: [(Double, Double)] = [
+            (0.36, 0.32), (0.44, 0.28), (0.53, 0.27), (0.61, 0.31),
+            (0.39, 0.40), (0.48, 0.38), (0.57, 0.39), (0.65, 0.42),
+            (0.41, 0.49), (0.50, 0.47), (0.59, 0.48), (0.66, 0.51),
+            (0.43, 0.58), (0.52, 0.56), (0.60, 0.57), (0.55, 0.63),
+            (0.34, 0.45), (0.46, 0.34), (0.56, 0.33), (0.49, 0.53),
+        ]
+        let seed = abs(candidateID.uuidString.hashValue % 17)
+        let count = min(maxThreads, baseCoords.count)
+        return (0..<count).map { idx in
+            let (qx, qy) = baseCoords[idx]
+            let dx = Double((seed + idx * 3) % 7 - 3) * 0.008
+            let dy = Double((seed + idx * 5) % 7 - 3) * 0.008
+            return OverlayAnnotationItem(
+                featureID: "demo-xfeat-\(idx + 1)",
+                label: "Scale junction #\(idx + 1)",
+                score: max(0.55, 0.96 - Double(idx) * 0.018),
+                query: OverlayMatchPoint(x: qx, y: qy),
+                candidate: OverlayMatchPoint(x: min(0.85, max(0.15, qx + dx)), y: min(0.85, max(0.15, qy + dy)))
+            )
+        }
+    }
+
+    func fetchPhotoData(pathOrURL: String) async throws -> Data {
+        if let direct = I3SSampleLibrary.loadImageData(named: pathOrURL) {
+            return direct
+        }
+        if pathOrURL.contains("/individuals/") {
+            let parts = pathOrURL.split(separator: "/").map(String.init)
+            if let indIdx = parts.firstIndex(of: "individuals"), indIdx + 1 < parts.count {
+                let uuidStr = parts[indIdx + 1]
+                let isRight = pathOrURL.lowercased().hasSuffix("/right")
+                if let matchedTurtle = turtles.first(where: { $0.backendID?.uuidString.caseInsensitiveCompare(uuidStr) == .orderedSame }) {
+                    let filename = isRight ? (matchedTurtle.rightPhotoURL ?? "Zizo1_R.jpg") : (matchedTurtle.leftPhotoURL ?? "Amina1_L.jpg")
+                    if let data = I3SSampleLibrary.loadImageData(named: filename) {
+                        return data
+                    }
+                }
+            }
+        }
+        let fallbackName = pathOrURL.lowercased().hasSuffix("right") ? "Zizo1_R.jpg" : "Amina1_L.jpg"
+        if let fallback = I3SSampleLibrary.loadImageData(named: fallbackName) {
+            return fallback
+        }
+        throw APIError.invalidResponse
     }
 
     func matchPhotoPair(leftData: Data, rightData: Data, limit: Int = 10) async throws -> MatchSearchOutcome {
@@ -1535,7 +1591,9 @@ final class DemoTurtleRepository: TurtleRepository {
             firstRecorded: APIFormatters.display.string(from: Date()),
             isFavorite: false,
             coordinate: TurtleCoordinate(latitude: -8.6870, longitude: 115.2620),
-            backendID: UUID()
+            backendID: UUID(),
+            leftPhotoURL: "Amina3_L.jpg",
+            rightPhotoURL: "Amina1_R.jpg"
         )
         turtles.insert(created, at: 0)
         return created
@@ -1550,14 +1608,14 @@ final class DemoTurtleRepository: TurtleRepository {
 
 enum DemoFixtures {
     static let turtles: [Turtle] = [
-        Turtle(id: "Turtle #001", species: .hawksbill, location: "Kuta Beach", lastSeen: "17 Aug 2026", sightings: 5, condition: .injured, firstRecorded: "01 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7180, longitude: 115.1690), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000001")),
-        Turtle(id: "Turtle #002", species: .green, location: "Nusa Dua reef", lastSeen: "12 Aug 2026", sightings: 8, condition: .healthy, firstRecorded: "12 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7960, longitude: 115.2280), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000002")),
-        Turtle(id: "Turtle #003", species: .oliveRidley, location: "Serangan Island", lastSeen: "09 Aug 2026", sightings: 4, condition: .scarred, firstRecorded: "21 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7240, longitude: 115.2500), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000003")),
-        Turtle(id: "Turtle #004", species: .green, location: "Sanur flats", lastSeen: "02 Aug 2026", sightings: 3, condition: .scarred, firstRecorded: "07 May 2026", isFavorite: true, coordinate: TurtleCoordinate(latitude: -8.6870, longitude: 115.2620), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000004")),
-        Turtle(id: "Turtle #005", species: .leatherback, location: "Pantai Timur", lastSeen: "28 Jul 2026", sightings: 2, condition: .healthy, firstRecorded: "16 Jun 2026", isFavorite: true, coordinate: TurtleCoordinate(latitude: -8.7800, longitude: 115.2500), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000005")),
-        Turtle(id: "Turtle #006", species: .loggerhead, location: "Jimbaran Bay", lastSeen: "24 Jul 2026", sightings: 6, condition: .healthy, firstRecorded: "18 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7850, longitude: 115.1580), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000006")),
-        Turtle(id: "Turtle #007", species: .hawksbill, location: "Legian Beach", lastSeen: "19 Jul 2026", sightings: 7, condition: .injured, firstRecorded: "02 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7040, longitude: 115.1660), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000007")),
-        Turtle(id: "Turtle #008", species: .green, location: "Tuban Beach", lastSeen: "12 Jul 2026", sightings: 9, condition: .healthy, firstRecorded: "11 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7360, longitude: 115.1670), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000008")),
+        Turtle(id: "Turtle #001", species: .hawksbill, location: "Kuta Beach", lastSeen: "17 Aug 2026", sightings: 5, condition: .injured, firstRecorded: "01 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7180, longitude: 115.1690), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000001"), leftPhotoURL: "Amina1_L.jpg", rightPhotoURL: "Amina1_R.jpg"),
+        Turtle(id: "Turtle #002", species: .green, location: "Nusa Dua reef", lastSeen: "12 Aug 2026", sightings: 8, condition: .healthy, firstRecorded: "12 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7960, longitude: 115.2280), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000002"), leftPhotoURL: "Aikane1_L.jpg", rightPhotoURL: "Zizo1_R.jpg"),
+        Turtle(id: "Turtle #003", species: .oliveRidley, location: "Serangan Island", lastSeen: "09 Aug 2026", sightings: 4, condition: .scarred, firstRecorded: "21 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7240, longitude: 115.2500), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000003"), leftPhotoURL: "Ghost1_L.jpg", rightPhotoURL: "Amina2_R.jpg"),
+        Turtle(id: "Turtle #004", species: .green, location: "Sanur flats", lastSeen: "02 Aug 2026", sightings: 3, condition: .scarred, firstRecorded: "07 May 2026", isFavorite: true, coordinate: TurtleCoordinate(latitude: -8.6870, longitude: 115.2620), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000004"), leftPhotoURL: "Hoku1_L.jpg", rightPhotoURL: "Zizo2_R.jpg"),
+        Turtle(id: "Turtle #005", species: .leatherback, location: "Pantai Timur", lastSeen: "28 Jul 2026", sightings: 2, condition: .healthy, firstRecorded: "16 Jun 2026", isFavorite: true, coordinate: TurtleCoordinate(latitude: -8.7800, longitude: 115.2500), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000005"), leftPhotoURL: "Amina2_L.jpg", rightPhotoURL: "Amina1_R.jpg"),
+        Turtle(id: "Turtle #006", species: .loggerhead, location: "Jimbaran Bay", lastSeen: "24 Jul 2026", sightings: 6, condition: .healthy, firstRecorded: "18 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7850, longitude: 115.1580), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000006"), leftPhotoURL: "Aikane2_L.jpg", rightPhotoURL: "Zizo1_R.jpg"),
+        Turtle(id: "Turtle #007", species: .hawksbill, location: "Legian Beach", lastSeen: "19 Jul 2026", sightings: 7, condition: .injured, firstRecorded: "02 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7040, longitude: 115.1660), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000007"), leftPhotoURL: "Ghost2_L.jpg", rightPhotoURL: "Amina2_R.jpg"),
+        Turtle(id: "Turtle #008", species: .green, location: "Tuban Beach", lastSeen: "12 Jul 2026", sightings: 9, condition: .healthy, firstRecorded: "11 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7360, longitude: 115.1670), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000008"), leftPhotoURL: "Hoku2_L.jpg", rightPhotoURL: "Zizo2_R.jpg"),
     ]
 
     static let sightings: [Sighting] = turtles.enumerated().map { index, turtle in
