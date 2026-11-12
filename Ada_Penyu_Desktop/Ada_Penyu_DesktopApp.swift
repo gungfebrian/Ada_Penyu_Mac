@@ -10,13 +10,14 @@ import AppKit
 
 @main
 struct Ada_Penyu_DesktopApp: App {
+    @StateObject private var store = AppStore()
     init() {
         NSApplication.shared.appearance = NSAppearance(named: .aqua)
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(store: store)
                 .frame(
                     minWidth: AdaLayout.minimumWindowSize.width,
                     minHeight: AdaLayout.minimumWindowSize.height

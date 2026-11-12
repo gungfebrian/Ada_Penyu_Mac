@@ -20,6 +20,9 @@ struct SidebarView: View {
     let isFallback: Bool
     let onModeChange: (DataMode) -> Void
     var onOpenAuthSettings: (() -> Void)? = nil
+    var accountName = "Demo researcher"
+    var accountOrganization = "Demo"
+    var onSignOut: (() -> Void)? = nil
 
     @State private var speciesExpanded = true
     @State private var conditionsExpanded = true
@@ -138,22 +141,28 @@ struct SidebarView: View {
                     Text("Live backend unreachable — showing demo data.")
                 }
             }
+            #if DEBUG
             if let onOpenAuthSettings {
                 Divider()
                 Button {
                     onOpenAuthSettings()
                 } label: {
-                    Label("Backend Account & Server…", systemImage: "network.badge.shield.half.filled")
+                    Label("Developer API Settings…", systemImage: "network.badge.shield.half.filled")
                 }
+            }
+            #endif
+            if let onSignOut {
+                Divider()
+                Button("Sign Out", action: onSignOut)
             }
         } label: {
             HStack(spacing: 12) {
                 Circle()
                     .fill(AdaColors.navy)
                     .frame(width: 28, height: 28)
-                    .overlay { Text("B").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white) }
+                    .overlay { Text(String(accountName.prefix(1))).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Bli Wayan").font(.system(size: 12, weight: .medium)).foregroundStyle(AdaColors.ink)
+                    Text(accountName).font(.system(size: 12, weight: .medium)).foregroundStyle(AdaColors.ink)
                     Text(isFallback ? "Demo fallback" : dataModeLabel)
                         .font(.system(size: 10))
                         .foregroundStyle(isFallback ? AdaColors.orange : AdaColors.tertiaryInk)
@@ -169,12 +178,12 @@ struct SidebarView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .accessibilityLabel("Bli Wayan, field researcher, \(dataModeLabel)")
+        .accessibilityLabel("\(accountName), \(accountOrganization), \(dataModeLabel)")
         .help("Account and data source")
     }
 
     private var dataModeLabel: String {
-        dataMode == .live ? "Field researcher · Live" : "Field researcher · Demo"
+        dataMode == .live ? "\(accountOrganization) · Live" : "Demo"
     }
 }
 

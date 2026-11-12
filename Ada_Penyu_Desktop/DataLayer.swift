@@ -238,6 +238,8 @@ struct TurtleLogSummary: Identifiable, Hashable {
     /// Only populated for body-condition records. `nil` for regular sighting
     /// entries. The Body Condition tab filters on this.
     let bodyPart: TurtleBodyPart?
+    let markingSeverity: String?
+    var isBodyConditionRecord: Bool { bodyPart != nil }
 
     init(
         id: String,
@@ -247,7 +249,8 @@ struct TurtleLogSummary: Identifiable, Hashable {
         condition: TurtleCondition?,
         notes: String?,
         coordinate: TurtleCoordinate?,
-        bodyPart: TurtleBodyPart? = nil
+        bodyPart: TurtleBodyPart? = nil,
+        markingSeverity: String? = nil
     ) {
         self.id = id
         self.date = date
@@ -257,6 +260,7 @@ struct TurtleLogSummary: Identifiable, Hashable {
         self.notes = notes
         self.coordinate = coordinate
         self.bodyPart = bodyPart
+        self.markingSeverity = markingSeverity
     }
 }
 
@@ -264,6 +268,7 @@ struct TurtleDetailData {
     let turtle: Turtle
     let measurements: [TurtleMeasurement]
     let logs: [TurtleLogSummary]
+    var sightingLogs: [TurtleLogSummary] { logs.filter { !$0.isBodyConditionRecord } }
 }
 
 protocol TurtleRepository: AnyObject {
@@ -279,7 +284,7 @@ protocol TurtleRepository: AnyObject {
     func fetchOverlayAnnotations(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> [OverlayAnnotationItem]
     func fetchOverlayPNG(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> Data
     func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String
-    func createIndividual(name: String, species: TurtleSpecies, condition: TurtleCondition, notes: String?) async throws -> Turtle
+    func createIndividual(_ draft: IndividualDraft) async throws -> Turtle
     func fetchPhotoData(pathOrURL: String) async throws -> Data
 }
 
@@ -304,39 +309,16 @@ extension TurtleRepository {
         "/api/v1/individuals/\(individualID.uuidString)/photos/\(side.rawValue)"
     }
 
-    func createIndividual(name: String, species: TurtleSpecies, condition: TurtleCondition, notes: String?) async throws -> Turtle {
-        Turtle(
-            id: name,
-            species: species,
-            location: "Newly enrolled",
-            lastSeen: APIFormatters.display.string(from: Date()),
-            sightings: 1,
-            condition: condition,
-            firstRecorded: APIFormatters.display.string(from: Date()),
-            isFavorite: false,
-            coordinate: nil,
-            backendID: UUID()
-        )
+    func createIndividual(_ draft: IndividualDraft) async throws -> Turtle {
+        try draft.validate()
+        return Turtle(id: draft.id.uuidString, species: TurtleSpecies(apiValue: draft.species), location: "Not recorded",
+            lastSeen: "Not recorded", sightings: 0, condition: .unknown,
+            firstRecorded: APIFormatters.display.string(from: draft.firstSeenAt), isFavorite: false,
+            coordinate: nil, backendID: draft.id, name: draft.name)
     }
 
     func fetchPhotoData(pathOrURL: String) async throws -> Data {
         throw APIError.invalidResponse
-    }
-}
-
-enum APIError: LocalizedError {
-    case invalidResponse
-    case http(status: Int, message: String)
-    case invalidURL
-    case invalidFileName
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidResponse: "The API returned an invalid response."
-        case let .http(status, message): "API error \(status): \(message)"
-        case .invalidURL: "The API URL is invalid."
-        case .invalidFileName: "The downloaded file name is invalid."
-        }
     }
 }
 
@@ -358,6 +340,7 @@ enum APIFormatters {
 extension TurtleSpecies {
     var apiValue: String {
         switch self {
+        case .unknown: "unknown"
         case .green: "green"
         case .hawksbill: "hawksbill"
         case .oliveRidley: "olive_ridley"
@@ -373,7 +356,7 @@ extension TurtleSpecies {
         case "olive_ridley", "olive ridley": self = .oliveRidley
         case "loggerhead": self = .loggerhead
         case "leatherback": self = .leatherback
-        default: self = .green
+        default: self = .unknown
         }
     }
 }
@@ -381,6 +364,7 @@ extension TurtleSpecies {
 extension TurtleCondition {
     var apiValue: String {
         switch self {
+        case .unknown: "unknown"
         case .healthy: "healthy"
         case .scarred: "scarred"
         case .injured: "injured"
@@ -405,273 +389,7 @@ struct MultipartPart {
     let data: Data
 }
 
-private struct AuthLoginPayload: Encodable {
-    let email: String
-    let password: String
-}
-
-private struct AuthRefreshPayload: Encodable {
-    let refreshToken: String
-
-    enum CodingKeys: String, CodingKey {
-        case refreshToken = "refresh_token"
-    }
-}
-
-struct AuthTokenResponseDTO: Decodable {
-    let accessToken: String
-    let refreshToken: String
-    let tokenType: String
-    let expiresIn: Int
-
-    enum CodingKeys: String, CodingKey {
-        case accessToken = "access_token"
-        case refreshToken = "refresh_token"
-        case tokenType = "token_type"
-        case expiresIn = "expires_in"
-    }
-}
-
-final class APIClient {
-    static let shared = APIClient()
-
-    var baseURL: URL {
-        didSet {
-            UserDefaults.standard.set(baseURL.absoluteString, forKey: "ada.apiBaseURL")
-        }
-    }
-    private let session: URLSession
-    private let userID: String
-    private(set) var accessToken: String? {
-        didSet {
-            UserDefaults.standard.set(accessToken, forKey: "ada.accessToken")
-        }
-    }
-    private(set) var refreshToken: String? {
-        didSet {
-            UserDefaults.standard.set(refreshToken, forKey: "ada.refreshToken")
-        }
-    }
-    var authEmail: String {
-        didSet {
-            UserDefaults.standard.set(authEmail, forKey: "ada.authEmail")
-        }
-    }
-    var authPassword: String {
-        didSet {
-            UserDefaults.standard.set(authPassword, forKey: "ada.authPassword")
-        }
-    }
-
-    init(
-        baseURL: URL = URL(string: UserDefaults.standard.string(forKey: "ada.apiBaseURL") ?? "http://127.0.0.1:8010")!,
-        session: URLSession = .shared,
-        userID: String = UserDefaults.standard.string(forKey: "ada.userID") ?? "00000000-0000-4000-8000-000000000001"
-    ) {
-        self.baseURL = baseURL
-        self.session = session
-        self.userID = userID
-        self.accessToken = UserDefaults.standard.string(forKey: "ada.accessToken")
-        self.refreshToken = UserDefaults.standard.string(forKey: "ada.refreshToken")
-        self.authEmail = UserDefaults.standard.string(forKey: "ada.authEmail") ?? "admin@adapenyu.org"
-        self.authPassword = UserDefaults.standard.string(forKey: "ada.authPassword") ?? "Adapenyu2026!"
-        UserDefaults.standard.set(userID, forKey: "ada.userID")
-    }
-
-    @discardableResult
-    func login(email: String? = nil, password: String? = nil) async throws -> AuthTokenResponseDTO {
-        let targetEmail = email ?? authEmail
-        let targetPassword = password ?? authPassword
-        let payload = try JSONEncoder.api.encode(AuthLoginPayload(email: targetEmail, password: targetPassword))
-        let (data, _) = try await rawRequestData(
-            path: "api/v1/auth/login",
-            method: "POST",
-            queryItems: [],
-            body: payload,
-            contentType: "application/json",
-            includeAuth: false
-        )
-        let tokens = try JSONDecoder.api.decode(AuthTokenResponseDTO.self, from: data)
-        self.authEmail = targetEmail
-        self.authPassword = targetPassword
-        self.accessToken = tokens.accessToken
-        self.refreshToken = tokens.refreshToken
-        return tokens
-    }
-
-    func logout() {
-        self.accessToken = nil
-        self.refreshToken = nil
-    }
-
-    private func ensureAuthenticated() async throws {
-        if accessToken != nil { return }
-        _ = try await login()
-    }
-
-    private func refreshOrRelogin() async throws {
-        if let refresh = refreshToken {
-            if let payload = try? JSONEncoder.api.encode(AuthRefreshPayload(refreshToken: refresh)),
-               let (data, _) = try? await rawRequestData(
-                   path: "api/v1/auth/refresh",
-                   method: "POST",
-                   queryItems: [],
-                   body: payload,
-                   contentType: "application/json",
-                   includeAuth: false
-               ),
-               let tokens = try? JSONDecoder.api.decode(AuthTokenResponseDTO.self, from: data) {
-                self.accessToken = tokens.accessToken
-                self.refreshToken = tokens.refreshToken
-                return
-            }
-        }
-        _ = try await login()
-    }
-
-    func get<T: Decodable>(_ path: String, queryItems: [URLQueryItem] = []) async throws -> T {
-        try await request(path: path, method: "GET", queryItems: queryItems)
-    }
-
-    func getData(_ path: String, queryItems: [URLQueryItem] = []) async throws -> (Data, HTTPURLResponse) {
-        try await requestData(path: path, method: "GET", queryItems: queryItems)
-    }
-
-    func request<T: Decodable>(path: String, method: String, queryItems: [URLQueryItem] = [], body: Data? = nil) async throws -> T {
-        let (data, _) = try await requestData(path: path, method: method, queryItems: queryItems, body: body)
-        do {
-            return try JSONDecoder.api.decode(T.self, from: data)
-        } catch {
-            throw APIError.invalidResponse
-        }
-    }
-
-    func requestMultipart<T: Decodable>(
-        path: String,
-        method: String = "POST",
-        queryItems: [URLQueryItem] = [],
-        parts: [MultipartPart]
-    ) async throws -> T {
-        let (data, _) = try await requestMultipartData(path: path, method: method, queryItems: queryItems, parts: parts)
-        do {
-            return try JSONDecoder.api.decode(T.self, from: data)
-        } catch {
-            throw APIError.invalidResponse
-        }
-    }
-
-    func requestMultipartData(
-        path: String,
-        method: String = "POST",
-        queryItems: [URLQueryItem] = [],
-        parts: [MultipartPart],
-        accept: String = "application/json"
-    ) async throws -> (Data, HTTPURLResponse) {
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var body = Data()
-        for part in parts {
-            body.append(Data("--\(boundary)\r\n".utf8))
-            if let filename = part.filename {
-                body.append(Data("Content-Disposition: form-data; name=\"\(part.name)\"; filename=\"\(filename)\"\r\n".utf8))
-            } else {
-                body.append(Data("Content-Disposition: form-data; name=\"\(part.name)\"\r\n".utf8))
-            }
-            if let contentType = part.contentType {
-                body.append(Data("Content-Type: \(contentType)\r\n".utf8))
-            }
-            body.append(Data("\r\n".utf8))
-            body.append(part.data)
-            body.append(Data("\r\n".utf8))
-        }
-        body.append(Data("--\(boundary)--\r\n".utf8))
-        return try await requestData(
-            path: path,
-            method: method,
-            queryItems: queryItems,
-            body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)",
-            accept: accept
-        )
-    }
-
-    func requestData(
-        path: String,
-        method: String,
-        queryItems: [URLQueryItem] = [],
-        body: Data? = nil,
-        contentType: String = "application/json",
-        accept: String = "application/json"
-    ) async throws -> (Data, HTTPURLResponse) {
-        try await ensureAuthenticated()
-        do {
-            return try await rawRequestData(
-                path: path,
-                method: method,
-                queryItems: queryItems,
-                body: body,
-                contentType: contentType,
-                accept: accept,
-                includeAuth: true
-            )
-        } catch let APIError.http(status, _) where status == 401 {
-            try await refreshOrRelogin()
-            return try await rawRequestData(
-                path: path,
-                method: method,
-                queryItems: queryItems,
-                body: body,
-                contentType: contentType,
-                accept: accept,
-                includeAuth: true
-            )
-        }
-    }
-
-    private func rawRequestData(
-        path: String,
-        method: String,
-        queryItems: [URLQueryItem],
-        body: Data?,
-        contentType: String,
-        accept: String = "application/json",
-        includeAuth: Bool
-    ) async throws -> (Data, HTTPURLResponse) {
-        let resolvedURL: URL
-        if path.hasPrefix("http://") || path.hasPrefix("https://"), let direct = URL(string: path) {
-            resolvedURL = direct
-        } else {
-            let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
-            resolvedURL = baseURL.appendingPathComponent(trimmed)
-        }
-        guard var components = URLComponents(url: resolvedURL, resolvingAgainstBaseURL: false) else {
-            throw APIError.invalidURL
-        }
-        if !queryItems.isEmpty {
-            components.queryItems = (components.queryItems ?? []) + queryItems
-        }
-        guard let url = components.url else { throw APIError.invalidURL }
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.httpBody = body
-        request.setValue(accept, forHTTPHeaderField: "Accept")
-        request.setValue(userID, forHTTPHeaderField: "X-User-Id")
-        if includeAuth, let token = accessToken {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        if body != nil {
-            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        }
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Request failed"
-            throw APIError.http(status: http.statusCode, message: message)
-        }
-        return (data, http)
-    }
-}
-
-private extension JSONDecoder {
+extension JSONDecoder {
     static let api: JSONDecoder = {
         let decoder = JSONDecoder()
         let fractional = ISO8601DateFormatter()
@@ -690,7 +408,7 @@ private extension JSONDecoder {
     }()
 }
 
-private extension JSONEncoder {
+extension JSONEncoder {
     static let api: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -801,35 +519,6 @@ private struct MapSightingDTO: Decodable {
         case name, species, condition, timestamp
         case placeName = "place_name"
         case latitude, longitude
-    }
-}
-
-private struct LogPageDTO: Decodable {
-    let items: [LogDTO]
-}
-
-private struct LogDTO: Decodable {
-    let id: UUID
-    let timestamp: Date
-    let placeName: String
-    let statusKind: String
-    let bodyCondition: String?
-    let notes: String?
-    let latitude: Double?
-    let longitude: Double?
-    let curvedCarapaceLength: Double?
-    let curvedCarapaceWidth: Double?
-    let weight: Double?
-
-    enum CodingKeys: String, CodingKey {
-        case id, timestamp
-        case placeName = "place_name"
-        case statusKind = "status_kind"
-        case bodyCondition = "body_condition"
-        case notes, latitude, longitude
-        case curvedCarapaceLength = "curved_carapace_length"
-        case curvedCarapaceWidth = "curved_carapace_width"
-        case weight
     }
 }
 
@@ -1000,37 +689,24 @@ private struct OverlayAnnotationsDTO: Decodable {
     let annotations: [OverlayAnnotationItem]
 }
 
-private struct CreateIndividualPayload: Encodable {
-    let name: String
-    let species: String
-    let currentHealthStatus: String
-    let notes: String?
-
-    enum CodingKeys: String, CodingKey {
-        case name
-        case species
-        case currentHealthStatus = "current_health_status"
-        case notes
-    }
-}
-
 private extension IndividualDTO {
     func turtle() -> Turtle {
         let leftURL = photos["left"]??.url
         let rightURL = photos["right"]??.url
         return Turtle(
-            id: name.isEmpty ? profileCode : name,
+            id: id.uuidString,
             species: TurtleSpecies(apiValue: species),
             location: lastSeenLocation ?? "Location not recorded",
             lastSeen: lastSeenDate.map(APIFormatters.display.string(from:)) ?? "Not recorded",
             sightings: totalSightings,
-            condition: TurtleCondition(apiValue: currentHealthStatus) ?? .healthy,
+            condition: TurtleCondition(apiValue: currentHealthStatus) ?? .unknown,
             firstRecorded: APIFormatters.display.string(from: firstSeenDate),
             isFavorite: false,
             coordinate: nil,
             backendID: id,
             leftPhotoURL: leftURL,
-            rightPhotoURL: rightURL
+            rightPhotoURL: rightURL,
+            name: name.isEmpty ? profileCode : name
         )
     }
 }
@@ -1039,10 +715,10 @@ final class RemoteTurtleRepository: TurtleRepository {
     let client: APIClient
     private var cache: [String: Turtle] = [:]
 
-    init(client: APIClient = .shared) { self.client = client }
+    init(client: APIClient? = nil) { self.client = client ?? .shared }
 
     func listIndividuals(query: IndividualQuery) async throws -> Page<Turtle> {
-        let dto: IndividualPageDTO = try await client.get("api/v1/individuals", queryItems: query.queryItems)
+        let dto: V2Page<V2Profile> = try await client.get("api/v2/individuals", queryItems: query.queryItems)
         let items = dto.items.map { $0.turtle() }
         items.forEach { cache[$0.id] = $0 }
         return Page(items: items, total: dto.total, request: PageRequest(limit: dto.limit, offset: dto.offset))
@@ -1056,7 +732,7 @@ final class RemoteTurtleRepository: TurtleRepository {
     }
 
     func setFavorite(turtleID: String, isFavorite: Bool) async throws -> Bool {
-        guard let turtle = cache[turtleID], let backendID = turtle.backendID else { return isFavorite }
+        guard let backendID = UUID(uuidString: turtleID) ?? cache[turtleID]?.backendID else { throw APIError.invalidResponse }
         let path = "api/v1/favorites/\(backendID.uuidString)"
         if isFavorite { _ = try await client.requestData(path: path, method: "PUT") }
         else { _ = try await client.requestData(path: path, method: "DELETE") }
@@ -1075,23 +751,25 @@ final class RemoteTurtleRepository: TurtleRepository {
         let dto: MapPageDTO = try await client.get("api/v1/dashboard/map/sightings", queryItems: query.queryItems)
         return dto.items.compactMap { item in
             guard let species = item.species else { return nil }
-            let condition = TurtleCondition(apiValue: item.condition) ?? .healthy
+            let condition = TurtleCondition(apiValue: item.condition) ?? .unknown
             let turtleID = item.name ?? "Unidentified turtle"
-            return Sighting(id: item.logID.uuidString, turtleID: turtleID, species: TurtleSpecies(apiValue: species), location: item.placeName, date: APIFormatters.display.string(from: item.timestamp), condition: condition, coordinate: TurtleCoordinate(latitude: item.latitude, longitude: item.longitude))
+            return Sighting(name: turtleID, id: item.logID.uuidString, turtleID: item.turtleID?.uuidString ?? item.logID.uuidString, species: TurtleSpecies(apiValue: species), location: item.placeName, date: APIFormatters.display.string(from: item.timestamp), condition: condition, coordinate: TurtleCoordinate(latitude: item.latitude, longitude: item.longitude))
         }
     }
 
     func detail(for turtle: Turtle) async throws -> TurtleDetailData {
-        guard let backendID = turtle.backendID else { return TurtleDetailData(turtle: turtle, measurements: [], logs: []) }
-        let logs: LogPageDTO = try await client.get("api/v1/individuals/\(backendID.uuidString)/logs", queryItems: [URLQueryItem(name: "limit", value: "200")])
-        let measurements = logs.items.compactMap { log -> TurtleMeasurement? in
-            guard log.curvedCarapaceLength != nil || log.curvedCarapaceWidth != nil || log.weight != nil else { return nil }
-            return TurtleMeasurement(id: log.id.uuidString, date: APIFormatters.display.string(from: log.timestamp), length: log.curvedCarapaceLength, width: log.curvedCarapaceWidth, weight: log.weight)
+        guard let backendID = turtle.backendID else { throw APIError.invalidResponse }
+        let profile: V2Profile = try await client.get("api/v2/individuals/\(backendID.uuidString)")
+        var logs: [V2Sighting] = []
+        var offset = 0
+        while true {
+            let page: V2Page<V2Sighting> = try await client.get("api/v2/individuals/\(backendID.uuidString)/logs",
+                queryItems: [URLQueryItem(name: "limit", value: "200"), URLQueryItem(name: "offset", value: String(offset))])
+            logs.append(contentsOf: page.items)
+            offset += page.items.count
+            if offset >= page.total || page.items.isEmpty { break }
         }
-        let summaries = logs.items.map { log in
-            TurtleLogSummary(id: log.id.uuidString, date: APIFormatters.display.string(from: log.timestamp), location: log.placeName, status: log.statusKind.replacingOccurrences(of: "_", with: " ").capitalized, condition: TurtleCondition(apiValue: log.bodyCondition), notes: log.notes, coordinate: log.latitude.flatMap { latitude in log.longitude.map { TurtleCoordinate(latitude: latitude, longitude: $0) } })
-        }
-        return TurtleDetailData(turtle: turtle, measurements: measurements, logs: summaries)
+        return TurtleDetailData(turtle: profile.turtle(), measurements: logs.compactMap(\.measurement), logs: logs.flatMap(\.logs))
     }
 
     func export(_ request: ExportRequest) async throws -> DownloadedFile {
@@ -1229,28 +907,17 @@ final class RemoteTurtleRepository: TurtleRepository {
 
     func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String {
         let part = MultipartPart(name: "file", filename: "\(side.rawValue).jpg", contentType: "image/jpeg", data: imageData)
-        let dto: PhotoDTO = try await client.requestMultipart(
-            path: "api/v1/individuals/\(individualID.uuidString)/photos/\(side.rawValue)",
+        let dto: V2Photo = try await client.requestMultipart(
+            path: "api/v2/individuals/\(individualID.uuidString)/photos/\(side.rawValue)",
             method: "PUT",
             parts: [part]
         )
         return dto.url
     }
 
-    func createIndividual(name: String, species: TurtleSpecies, condition: TurtleCondition, notes: String?) async throws -> Turtle {
-        let payload = try JSONEncoder.api.encode(
-            CreateIndividualPayload(
-                name: name,
-                species: species.apiValue,
-                currentHealthStatus: condition.apiValue,
-                notes: notes
-            )
-        )
-        let dto: IndividualDTO = try await client.request(
-            path: "api/v1/individuals",
-            method: "POST",
-            body: payload
-        )
+    func createIndividual(_ draft: IndividualDraft) async throws -> Turtle {
+        try draft.validate()
+        let dto: V2Profile = try await client.request(path: "api/v2/individuals", method: "POST", body: JSONEncoder.api.encode(draft))
         let created = dto.turtle()
         cache[created.id] = created
         return created
@@ -1287,7 +954,7 @@ final class DemoTurtleRepository: TurtleRepository {
     func listIndividuals(query: IndividualQuery) async throws -> Page<Turtle> {
         var results = turtles.filter { turtle in
             let searchMatches = query.search.map { value in
-                turtle.id.localizedCaseInsensitiveContains(value) || turtle.species.rawValue.localizedCaseInsensitiveContains(value) || turtle.location.localizedCaseInsensitiveContains(value)
+                turtle.displayName.localizedCaseInsensitiveContains(value) || turtle.id.localizedCaseInsensitiveContains(value) || turtle.species.rawValue.localizedCaseInsensitiveContains(value) || turtle.location.localizedCaseInsensitiveContains(value)
             } ?? true
             let speciesMatches = query.species.isEmpty || query.species.contains(turtle.species)
             let conditionMatches = query.condition == nil || turtle.condition == query.condition
@@ -1303,7 +970,7 @@ final class DemoTurtleRepository: TurtleRepository {
                 return lhsDate > rhsDate
             }
         } else {
-            results.sort { $0.id < $1.id }
+            results.sort { $0.displayName < $1.displayName }
         }
         let start = min(query.page.offset, results.count)
         let end = min(start + query.page.limit, results.count)
@@ -1372,7 +1039,7 @@ final class DemoTurtleRepository: TurtleRepository {
     /// come from the API once that field lands server-side.
     private static func demoBodyConditionLogs(for turtle: Turtle) -> [TurtleLogSummary] {
         switch turtle.condition {
-        case .healthy:
+        case .healthy, .unknown:
             return []
         case .injured:
             return [
@@ -1475,7 +1142,8 @@ final class DemoTurtleRepository: TurtleRepository {
             coordinate: turtle.coordinate,
             backendID: turtle.backendID,
             leftPhotoURL: turtle.leftPhotoURL,
-            rightPhotoURL: turtle.rightPhotoURL
+            rightPhotoURL: turtle.rightPhotoURL,
+            name: turtle.name
         )
     }
 
@@ -1580,21 +1248,12 @@ final class DemoTurtleRepository: TurtleRepository {
         )
     }
 
-    func createIndividual(name: String, species: TurtleSpecies, condition: TurtleCondition, notes: String?) async throws -> Turtle {
-        let created = Turtle(
-            id: name,
-            species: species,
-            location: "Sanur Reef",
-            lastSeen: APIFormatters.display.string(from: Date()),
-            sightings: 1,
-            condition: condition,
-            firstRecorded: APIFormatters.display.string(from: Date()),
-            isFavorite: false,
-            coordinate: TurtleCoordinate(latitude: -8.6870, longitude: 115.2620),
-            backendID: UUID(),
-            leftPhotoURL: "Amina3_L.jpg",
-            rightPhotoURL: "Amina1_R.jpg"
-        )
+    func createIndividual(_ draft: IndividualDraft) async throws -> Turtle {
+        try draft.validate()
+        let created = Turtle(id: draft.id.uuidString, species: TurtleSpecies(apiValue: draft.species),
+            location: "Not recorded", lastSeen: "Not recorded", sightings: 0, condition: .unknown,
+            firstRecorded: APIFormatters.display.string(from: draft.firstSeenAt), isFavorite: false,
+            coordinate: nil, backendID: draft.id, leftPhotoURL: "Amina3_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: draft.name)
         turtles.insert(created, at: 0)
         return created
     }

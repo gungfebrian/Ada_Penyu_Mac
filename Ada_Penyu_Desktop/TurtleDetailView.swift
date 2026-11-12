@@ -36,11 +36,11 @@ struct TurtleDetailView: View {
                     onExport: onExport
                 )
 
-                DetailTabBar(active: $activeTab, logCount: logs.count)
+                DetailTabBar(active: $activeTab, logCount: logs.filter(\.isBodyConditionRecord).count)
 
                 switch activeTab {
                 case .overview:
-                    OverviewTab(logs: logs, measurements: measurements)
+                    OverviewTab(logs: detail?.sightingLogs ?? [], measurements: measurements)
                 case .bodyCondition:
                     BodyConditionTab(logs: logs, onExport: onExport)
                 }
@@ -161,14 +161,15 @@ private struct BodyConditionTab: View {
     /// Only entries anchored to a body part — plain sightings stay in the
     /// Overview tab's sighting history.
     private var bodyLogs: [TurtleLogSummary] {
-        logs.filter { $0.bodyPart != nil && $0.condition != nil }
+        logs.filter(\.isBodyConditionRecord)
     }
 
     /// Body part → its worst recorded condition. Used for the diagram tint.
     private var highlights: [TurtleBodyPart: TurtleCondition] {
         var result: [TurtleBodyPart: TurtleCondition] = [:]
         for log in bodyLogs where matchesFilter(log) {
-            guard let part = log.bodyPart, let condition = log.condition else { continue }
+            guard let part = log.bodyPart else { continue }
+            let condition = log.condition ?? .unknown
             if let existing = result[part], severity(existing) >= severity(condition) { continue }
             result[part] = condition
         }
@@ -178,7 +179,7 @@ private struct BodyConditionTab: View {
     /// The conditions we actually observed on this turtle — drives the legend.
     private var legendConditions: [TurtleCondition] {
         TurtleCondition.allCases.filter { condition in
-            bodyLogs.contains(where: { $0.condition == condition })
+            bodyLogs.contains(where: { ($0.condition ?? .unknown) == condition })
         }
     }
 
@@ -213,12 +214,13 @@ private struct BodyConditionTab: View {
     private func matchesFilter(_ log: TurtleLogSummary) -> Bool {
         switch diagramFilter {
         case .all: return true
-        case .condition(let condition): return log.condition == condition
+        case .condition(let condition): return (log.condition ?? .unknown) == condition
         }
     }
 
     private func severity(_ condition: TurtleCondition) -> Int {
         switch condition {
+        case .unknown: -1
         case .healthy: 0
         case .scarred: 1
         case .injured: 2
@@ -240,6 +242,8 @@ private struct BodyConditionDiagramCard: View {
                 .foregroundStyle(AdaColors.ink)
 
             DiagramFilterChips(filter: $filter)
+            Text("Body parts without their own assessment use a neutral tint.")
+                .font(.caption).foregroundStyle(AdaColors.tertiaryInk)
 
             TurtleBodyDiagram(highlights: highlights)
                 .frame(maxWidth: .infinity, minHeight: 190)
@@ -457,6 +461,8 @@ private struct BodyConditionEntry: View {
                 Text(log.bodyPart?.displayName ?? "Unknown")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(AdaColors.ink)
+                Text(log.status + (log.markingSeverity.map { " · " + $0.capitalized } ?? ""))
+                    .font(.caption).foregroundStyle(AdaColors.secondaryInk)
                 if let notes = log.notes {
                     Text(notes)
                         .font(.system(size: 12))
@@ -688,7 +694,7 @@ private struct TurtleSummaryCard: View {
             PlaceholderImage(size: 85)
             VStack(alignment: .leading, spacing: 7) {
                 Text(turtle.species.rawValue).font(.system(size: 12, weight: .medium)).foregroundStyle(AdaColors.ink)
-                Text(turtle.id).font(.system(size: 22, weight: .semibold)).foregroundStyle(AdaColors.ink)
+                Text(turtle.displayName).font(.system(size: 22, weight: .semibold)).foregroundStyle(AdaColors.ink)
                 HStack(spacing: 7) {
                     DetailTag(text: "Unknown sex")
                     DetailTag(text: turtle.location)

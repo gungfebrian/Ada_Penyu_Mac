@@ -173,10 +173,9 @@ final class AppFlowTests: XCTestCase {
             imageData: sampleData,
             side: .left,
             candidateID: topCandidate.individualID,
-            candidateSide: topCandidate.matchedPhotoSide,
-            candidatePhotoURL: topCandidate.photoURL
+            candidateSide: topCandidate.matchedPhotoSide
         )
-        XCTAssertFalse(overlay.queryPoints.isEmpty)
-        XCTAssertEqual(overlay.queryPoints.count, overlay.candidatePoints.count)
+        XCTAssertFalse(overlay.isEmpty)
+        XCTAssertTrue(overlay.allSatisfy { (0...1).contains($0.query.x) && (0...1).contains($0.candidate.x) })
     }
 }

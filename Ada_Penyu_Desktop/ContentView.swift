@@ -1,11 +1,45 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var store = AppStore()
+    @ObservedObject var store: AppStore
     @State private var showingExport = false
     @State private var exportQueryOverride: IndividualQuery?
 
     var body: some View {
+        Group {
+            if store.isRestoring {
+                ProgressView("Restoring sign-in…")
+            } else if store.mode == .live && !store.isAuthenticated {
+                AccountLoginView(store: store)
+            } else {
+                workspace.id(store.sessionGeneration)
+            }
+        }
+        .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
+        .task { await store.bootstrap() }
+        .onChange(of: store.sessionGeneration) { _, _ in
+            showingExport = false
+            exportQueryOverride = nil
+        }
+        #if DEBUG
+        .sheet(isPresented: $store.isAuthSheetPresented) { BackendSettingsSheet(store: store) }
+        #endif
+    }
+
+    private var debugSettingsAction: (() -> Void)? {
+        #if DEBUG
+        return { store.isAuthSheetPresented = true }
+        #else
+        return nil
+        #endif
+    }
+
+    private var signOutAction: (() -> Void)? {
+        guard store.isAuthenticated else { return nil }
+        return { store.signOut() }
+    }
+
+    private var workspace: some View {
         ZStack {
             HStack(spacing: 0) {
                 SidebarView(
@@ -20,7 +54,10 @@ struct ContentView: View {
                     dataMode: store.mode,
                     isFallback: store.isUsingFallback,
                     onModeChange: store.switchMode,
-                    onOpenAuthSettings: { store.isAuthSheetPresented = true }
+                    onOpenAuthSettings: debugSettingsAction,
+                    accountName: store.mode == .demo ? "Demo researcher" : store.accountName,
+                    accountOrganization: store.mode == .demo ? "Demo" : store.accountOrganization,
+                    onSignOut: signOutAction
                 )
 
                 VStack(spacing: 0) {
@@ -64,7 +101,7 @@ struct ContentView: View {
                         onClose: store.dismissDetail,
                         onToggleFavorite: { store.toggleFavorite(turtle) },
                         onExport: {
-                            exportQueryOverride = IndividualQuery(search: turtle.id, page: PageRequest(limit: 1))
+                            exportQueryOverride = IndividualQuery(search: turtle.displayName, page: PageRequest(limit: 1))
                             showingExport = true
                         }
                     )
@@ -98,7 +135,6 @@ struct ContentView: View {
         }
         .background(AdaColors.canvas)
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
-        .task { await store.bootstrap() }
         .animation(.easeOut(duration: 0.16), value: showingExport)
         .animation(.easeOut(duration: 0.18), value: store.selectedTurtle?.id)
         .onExitCommand {
@@ -109,16 +145,18 @@ struct ContentView: View {
                 store.dismissDetail()
             }
         }
-        .alert("Could not complete request", isPresented: Binding(
-            get: { store.lastError != nil && !store.isUsingFallback },
-            set: { if !$0 { store.clearError() } }
-        )) {
-            Button("OK", role: .cancel) { store.clearError() }
-        } message: {
-            Text(store.lastError ?? "Please try again.")
-        }
-        .sheet(isPresented: $store.isAuthSheetPresented) {
-            BackendAuthSheet(store: store)
+        .safeAreaInset(edge: .top) {
+            if let error = store.lastError {
+                HStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text(error).font(.callout).textSelection(.enabled)
+                    Spacer()
+                    Button("Retry") { Task { await store.reloadAll() } }
+                    Button("Dismiss") { store.clearError() }
+                }
+                .padding(12)
+                .background(AdaColors.card)
+            }
         }
     }
 
@@ -402,80 +440,5 @@ private struct ModalPrimaryButtonStyle: ButtonStyle {
 private struct ModalSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk).padding(.horizontal, 15).frame(height: 30).background(Color.black.opacity(configuration.isPressed ? 0.08 : 0.045)).clipShape(Capsule())
-    }
-}
-
-private struct BackendAuthSheet: View {
-    @ObservedObject var store: AppStore
-    @State private var baseURLString: String = APIClient.shared.baseURL.absoluteString
-    @State private var email: String = APIClient.shared.authEmail
-    @State private var password: String = APIClient.shared.authPassword
-    @State private var isSigningIn = false
-    @State private var errorMessage: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Turtle Identification Backend Connection")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(AdaColors.ink)
-
-            Text("Connects to CodingProject/turtle-identification-be using Bearer JWT authentication (/api/v1/auth/login).")
-                .font(.system(size: 12))
-                .foregroundStyle(AdaColors.secondaryInk)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Server URL").font(.system(size: 11, weight: .semibold)).foregroundStyle(AdaColors.secondaryInk)
-                TextField("http://127.0.0.1:8010", text: $baseURLString)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Account Email").font(.system(size: 11, weight: .semibold)).foregroundStyle(AdaColors.secondaryInk)
-                TextField("admin@adapenyu.org", text: $email)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Password").font(.system(size: 11, weight: .semibold)).foregroundStyle(AdaColors.secondaryInk)
-                SecureField("Password", text: $password)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(AdaColors.red)
-            }
-
-            HStack {
-                Button("Close") {
-                    store.isAuthSheetPresented = false
-                }
-                .buttonStyle(ModalSecondaryButtonStyle())
-
-                Spacer()
-
-                Button {
-                    Task {
-                        isSigningIn = true
-                        errorMessage = nil
-                        do {
-                            try await store.signIn(email: email, password: password, baseURLString: baseURLString)
-                            store.isAuthSheetPresented = false
-                        } catch {
-                            errorMessage = error.localizedDescription
-                        }
-                        isSigningIn = false
-                    }
-                } label: {
-                    Text(isSigningIn ? "Connecting…" : "Sign In & Reload Live Data")
-                }
-                .buttonStyle(ModalPrimaryButtonStyle())
-                .disabled(isSigningIn)
-            }
-            .padding(.top, 4)
-        }
-        .padding(24)
-        .frame(width: 440)
     }
 }

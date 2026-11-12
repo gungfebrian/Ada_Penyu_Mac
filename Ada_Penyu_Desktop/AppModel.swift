@@ -42,6 +42,7 @@ enum ChartMode: String, CaseIterable, Identifiable {
 }
 
 enum TurtleSpecies: String, CaseIterable, Identifiable {
+    case unknown = "Unknown species"
     case green = "Green turtle"
     case hawksbill = "Hawksbill"
     case oliveRidley = "Olive Ridley"
@@ -92,6 +93,7 @@ enum TurtleBodyPart: String, CaseIterable, Identifiable, Hashable {
 }
 
 enum TurtleCondition: String, CaseIterable, Identifiable {
+    case unknown = "Unknown"
     case healthy = "Healthy"
     case scarred = "Scarred"
     case injured = "Injured"
@@ -100,6 +102,7 @@ enum TurtleCondition: String, CaseIterable, Identifiable {
 
     var tint: Color {
         switch self {
+        case .unknown: AdaColors.tertiaryInk
         case .healthy: AdaColors.green
         case .scarred: AdaColors.orange
         case .injured: AdaColors.red
@@ -108,6 +111,7 @@ enum TurtleCondition: String, CaseIterable, Identifiable {
 
     var background: Color {
         switch self {
+        case .unknown: AdaColors.tertiaryInk.opacity(0.12)
         case .healthy: AdaColors.green.opacity(0.12)
         case .scarred: AdaColors.orange.opacity(0.15)
         case .injured: AdaColors.red.opacity(0.12)
@@ -116,6 +120,8 @@ enum TurtleCondition: String, CaseIterable, Identifiable {
 }
 
 struct Turtle: Identifiable, Hashable {
+    let name: String?
+    var displayName: String { name ?? id }
     let id: String
     let species: TurtleSpecies
     let location: String
@@ -141,8 +147,10 @@ struct Turtle: Identifiable, Hashable {
         coordinate: TurtleCoordinate?,
         backendID: UUID? = nil,
         leftPhotoURL: String? = nil,
-        rightPhotoURL: String? = nil
+        rightPhotoURL: String? = nil,
+        name: String? = nil
     ) {
+        self.name = name
         self.id = id
         self.species = species
         self.location = location
@@ -233,6 +241,8 @@ struct TurtleCoordinate: Hashable {
 }
 
 struct Sighting: Identifiable, Hashable {
+    var name: String? = nil
+    var displayName: String { name ?? turtleID }
     let id: String
     let turtleID: String
     let species: TurtleSpecies
