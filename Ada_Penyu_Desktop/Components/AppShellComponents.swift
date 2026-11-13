@@ -15,15 +15,11 @@ struct SidebarView: View {
     /// species filter. The caller is expected to route to `.individuals`.
     let onSelectSpecies: (TurtleSpecies?) -> Void
 
-    // Data-source picker lives in the sidebar user menu so we only have one
-    // menu affordance in the shell (top bar stays clean).
-    let dataMode: DataMode
-    let isFallback: Bool
-    let onModeChange: (DataMode) -> Void
+    // Account actions live in the sidebar user menu.
     var onOpenAuthSettings: (() -> Void)? = nil
-    var accountName = "Demo researcher"
+    var accountName = "Researcher"
     var accountEmail = ""
-    var accountOrganization = "Demo"
+    var accountOrganization = ""
     var onSignOut: (() -> Void)? = nil
 
     @State private var speciesExpanded = true
@@ -128,9 +124,6 @@ struct SidebarView: View {
             SidebarAccountMenu(
                 label: accountLabel,
                 accessibilityLabel: accountAccessibilityLabel,
-                dataMode: dataMode,
-                isFallback: isFallback,
-                onModeChange: onModeChange,
                 onOpenAuthSettings: onOpenAuthSettings,
                 onSignOut: onSignOut
             )
@@ -138,7 +131,7 @@ struct SidebarView: View {
             .padding(.top, 10)
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .help("Account and data source")
+            .help("Account")
         }
     }
 
@@ -168,7 +161,7 @@ struct SidebarView: View {
                 }
                 Text(statusLine)
                     .font(.system(size: 10))
-                    .foregroundStyle(isFallback ? AdaColors.orange : AdaColors.tertiaryInk)
+                    .foregroundStyle(AdaColors.tertiaryInk)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -198,17 +191,13 @@ struct SidebarView: View {
     }
 
     private var statusLine: String {
-        isFallback ? "Demo fallback" : dataModeLabel
+        accountOrganization.isEmpty ? "Live" : "\(accountOrganization) · Live"
     }
 
     private var accountAccessibilityLabel: String {
         [accountName, accountEmail, statusLine]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
-    }
-
-    private var dataModeLabel: String {
-        dataMode == .live ? "\(accountOrganization) · Live" : "Demo"
     }
 }
 
@@ -217,9 +206,6 @@ struct SidebarView: View {
 private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
     var label: Label
     var accessibilityLabel: String
-    var dataMode: DataMode
-    var isFallback: Bool
-    var onModeChange: (DataMode) -> Void
     var onOpenAuthSettings: (() -> Void)?
     var onSignOut: (() -> Void)?
 
@@ -249,25 +235,14 @@ private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
     }
 
     private func apply(_ model: SidebarAccountMenuModel) {
-        model.dataMode = dataMode
-        model.isFallback = isFallback
-        model.onModeChange = onModeChange
         model.onOpenAuthSettings = onOpenAuthSettings
         model.onSignOut = onSignOut
     }
 }
 
 final class SidebarAccountMenuModel: NSObject {
-    var dataMode: DataMode = .demo
-    var isFallback = false
-    var onModeChange: (DataMode) -> Void = { _ in }
     var onOpenAuthSettings: (() -> Void)?
     var onSignOut: (() -> Void)?
-
-    @objc func chooseMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let mode = DataMode(rawValue: raw) else { return }
-        onModeChange(mode)
-    }
 
     @objc func openSettings(_ sender: NSMenuItem) { onOpenAuthSettings?() }
 
@@ -277,28 +252,9 @@ final class SidebarAccountMenuModel: NSObject {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        let header = NSMenuItem(title: "Data source", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
-
-        for value in DataMode.allCases {
-            let item = NSMenuItem(title: value.title, action: #selector(chooseMode(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = value.rawValue
-            item.state = (value == dataMode && !isFallback) ? .on : .off
-            menu.addItem(item)
-        }
-
-        if isFallback {
-            menu.addItem(.separator())
-            let note = NSMenuItem(title: "Live backend unreachable — showing demo data.", action: nil, keyEquivalent: "")
-            note.isEnabled = false
-            menu.addItem(note)
-        }
-
         #if DEBUG
         if onOpenAuthSettings != nil {
-            menu.addItem(.separator())
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
             let item = NSMenuItem(title: "Developer API Settings…", action: #selector(openSettings(_:)), keyEquivalent: "")
             item.target = self
             item.image = NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: nil)
@@ -307,7 +263,7 @@ final class SidebarAccountMenuModel: NSObject {
         #endif
 
         if onSignOut != nil {
-            menu.addItem(.separator())
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
             let item = NSMenuItem(title: "Sign Out", action: #selector(signOut(_:)), keyEquivalent: "")
             item.target = self
             menu.addItem(item)

@@ -61,6 +61,9 @@ final class BackendSessionTests: XCTestCase {
     }
 
     func testDefaultBackendIsHosted() {
-        XCTAssertEqual(APIClient().baseURL.absoluteString, "https://api.donagondev.my.id")
+        let domain = "BackendSessionTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        XCTAssertEqual(APIConfig.currentURL(defaults: defaults).absoluteString, "https://api.donagondev.my.id")
     }
 }

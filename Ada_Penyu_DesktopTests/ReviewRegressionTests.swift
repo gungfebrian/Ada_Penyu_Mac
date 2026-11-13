@@ -32,7 +32,7 @@ final class ReviewRegressionTests: XCTestCase {
 
     func testTwoMarkingsDoNotTurnOneEncounterIntoThreeSightings() throws {
         let logs = try encounter(condition: "\"injured\"").logs
-        let detail = TurtleDetailData(turtle: DemoFixtures.turtles[0], measurements: [], logs: logs)
+        let detail = TurtleDetailData(turtle: TestTurtleRepository.turtle, measurements: [], logs: logs)
         XCTAssertEqual(detail.sightingLogs.count, 1)
         XCTAssertEqual(detail.sightingLogs.first?.location, "Reef")
     }

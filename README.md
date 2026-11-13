@@ -35,7 +35,7 @@
 | **Individuals & Favorites** | Searchable, sortable individual catalog with unified species/condition sidebar filtering, optimistic favorite toggling, live sidebar counters, and CSV/JSON data export. |
 | **Turtle Detail Dossier** | Comprehensive per-individual profile featuring carapace measurements, historical sighting logs, anatomical markers, and location history. |
 | **I3S & AI Identification** | Single-side and dual-side (`Left` / `Right`) database search via backend **MiewID/XFeat**, paired with interactive 3-point anatomical landmarking, polygonal ROI annotation, `.fgp` binary fingerprint import/export, and visual keypoint correspondence inspection. |
-| **Resilient Data Layer** | Authenticated **Live API** mode with explicit errors and a separately selected deterministic **Demo mode**. |
+| **Resilient Data Layer** | Authenticated API access with explicit errors and empty states. |
 
 ---
 
@@ -46,9 +46,8 @@ The application follows a unidirectional state architecture with a strict protoc
 ```mermaid
 flowchart LR
     UI["SwiftUI Views\nDashboard · Map · Individuals · Favorites · Detail · I3S"]
-    STORE["AppStore (@MainActor)\nRoute · Filters · Auth · Fallback · Commands"]
+    STORE["AppStore (@MainActor)\nRoute · Filters · Auth · Commands"]
     REPO["TurtleRepository\nAsync Feature Contract"]
-    DEMO["DemoTurtleRepository\nDeterministic Offline Dataset"]
     API["RemoteTurtleRepository\nDTO Mapping + APIClient"]
     I3S["I3SEngine\n.fgp Parser · Reference Matcher · Blob Extractor"]
     BE["FastAPI Backend\n/api/v2 records · /api/v1 support"]
@@ -57,11 +56,9 @@ flowchart LR
     UI <--> STORE
     UI <--> I3S
     STORE --> REPO
-    REPO --> DEMO
     REPO --> API
     API --> BE --> DB
     API -. "Network / HTTP Error" .-> STORE
-    STORE -. "Automatic Demo Fallback" .-> DEMO
 ```
 
 ### Project Structure
@@ -79,7 +76,7 @@ Ada_Penyu_Desktop/
     ├── Ada_Penyu_DesktopApp.swift       # macOS app entry point and window sizing
     ├── AppModel.swift                   # Domain models, species/condition semantics, formatters
     ├── AppStore.swift                   # Centralized @MainActor state and command coordinator
-    ├── DataLayer.swift                  # TurtleRepository contract, APIClient, DTOs, Demo repo
+    ├── DataLayer.swift                  # TurtleRepository contract, APIClient, DTOs
     ├── I3SEngine.swift                  # I3S Pattern v4.02 .fgp codec, blob detector, and matcher
     ├── ContentView.swift                # Root navigation shell and top bar
     ├── CollectionViews.swift            # Individuals and Favorites table views
@@ -148,9 +145,9 @@ xcodebuild \
 
 ---
 
-## Data Modes & API Integration
+## Authentication & API Integration
 
-The app starts at sign-in for **Live API** mode. **Use Demo Data** on the login screen, or the sidebar data-source menu, explicitly selects bundled fixtures. Live errors remain visible with Retry; the app never substitutes demo records or matching candidates for an API failure.
+The app starts at sign-in and loads authenticated backend records. API errors remain visible with Retry; empty accounts show empty states. Bundled I3S reference tools remain available explicitly and do not replace backend photos, records, or overlays.
 
 Both Debug and Release default to `https://api.donagondev.my.id`. Debug builds expose **Developer API Settings…** on the login screen and sidebar menu: edit a URL, test public `/health`, save, or reset. Saving/resetting signs out and clears private state. Release ignores stored Debug overrides.
 
@@ -170,11 +167,7 @@ POSTGRES_PORT=55432 docker-compose -p ada-penyu-demo up -d postgres
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_identification_api \
   uv run alembic upgrade head
 
-# 3. Seed deterministic desktop demo records
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_identification_api \
-  uv run python scripts/seed_desktop_demo.py
-
-# 4. Launch FastAPI server on port 8010
+# 3. Launch FastAPI server on port 8010
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_identification_api \
   ML_MODELS_ENABLED=false uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 ```
@@ -200,7 +193,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 
 - **Original C++ Oracle Parity (`97/97` pairs):** Compares Swift I3S distance scores and matched feature-pair counts against the official C++ implementation across all 97 same-side combinations (including self-comparisons) from the 13 bundled sample fingerprints.
 - **Encounter Ranking Regression (`13/13` queries):** Leave-one-encounter-out ranking verification across the bundled individuals.
-- **Binary `.fgp` Codec & App Store Flows:** Verifies lossless `I3S40` binary read/write round-tripping, point-in-polygon geometry, sidebar filtering exclusivity, favorite updates, and explicit Live/Demo state.
+- **Binary `.fgp` Codec & App Store Flows:** Verifies lossless `I3S40` binary read/write round-tripping, point-in-polygon geometry, sidebar filtering exclusivity, favorite updates, authenticated startup, and private-state clearing.
 
 *(Note: Passing local regression tests establish compatibility on saved sample fixtures; they do not claim field-level open-set accuracy, new-photo SURF extraction parity, or backend load/stress capacity.)*
 
@@ -225,7 +218,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 | [`docs/i3s-reference.md`](docs/i3s-reference.md) | I3S Pattern v4.02 C++ oracle verification, SHA-256 fixture provenance, and extraction boundaries. |
 | [`docs/components.md`](docs/components.md) | Usage guide for `FavoriteButton`, `TurtleAppIconMark`, `TurtleMapPin`, and filter pills. |
 | [`docs/responsive-layout.md`](docs/responsive-layout.md) | Window resizing strategy, horizontal scroll rules, and layout verification targets. |
-| [`docs/demo-runbook.md`](docs/demo-runbook.md) | Step-by-step offline and live-API presentation checklist. |
+| [`docs/live-api-runbook.md`](docs/live-api-runbook.md) | Authenticated API walkthrough and verification checklist. |
 
 ---
 

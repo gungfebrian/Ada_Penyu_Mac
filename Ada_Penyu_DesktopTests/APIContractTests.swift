@@ -159,14 +159,13 @@ final class APIContractTests: XCTestCase {
     func testBackendChangeClearsPrivateStateAndInvalidURLDoesNotChangeBackend() async throws {
         let original = UserDefaults.standard.string(forKey: APIConfig.overrideKey)
         defer { UserDefaults.standard.set(original, forKey: APIConfig.overrideKey) }
-        let store = AppStore(mode: .demo, client: client())
+        let store = AppStore(repository: TestTurtleRepository(), client: client())
         await store.reloadAll()
         XCTAssertFalse(store.turtles.isEmpty)
         let generation = store.sessionGeneration
         XCTAssertThrowsError(try store.changeBackend("file:///tmp/data"))
         XCTAssertEqual(store.sessionGeneration, generation)
         try store.changeBackend("http://127.0.0.1:8010")
-        XCTAssertEqual(store.mode, .live)
         XCTAssertFalse(store.isAuthenticated)
         XCTAssertTrue(store.turtles.isEmpty)
         XCTAssertTrue(store.sightings.isEmpty)
@@ -292,30 +291,33 @@ final class APIContractTests: XCTestCase {
         _ = try await repo.uploadIndividualPhoto(individualID: UUID(uuidString: APIFixtures.turtleID)!, side: .left, imageData: Data([0, 255, 1]))
     }
 
-    func testMissingV2StaysLiveAndDoesNotUseDemoData() async throws {
+    func testPhotoNamedLikeBundledSampleDoesNotUseBundledImage() async throws {
+        BackendStub.handler = { APIFixtures.auth($0) ?? (404, APIFixtures.data("{}")) }
+        let store = AppStore(client: client())
+        try await store.signIn(email: "person@example.test", password: "test-only", rememberMe: false)
+        let image = await store.loadPhoto(for: "Amina1_L.jpg")
+        XCTAssertNil(image)
+    }
+
+    func testMissingV2ShowsErrorWithoutRecords() async throws {
         BackendStub.handler = { request in
             if let auth = APIFixtures.auth(request) { return auth }
             return (404, APIFixtures.data("{\"detail\":\"Not Found\"}"))
         }
         let store = AppStore(client: client())
         try await store.signIn(email: "person@example.test", password: "test-only", rememberMe: false)
-        XCTAssertEqual(store.mode, .live)
         XCTAssertTrue(store.turtles.isEmpty)
         XCTAssertNotNil(store.lastError)
         XCTAssertTrue(store.isAuthenticated)
     }
 
-    func testSignedOutBootstrapDoesNotFetchPrivateRecordsAndDemoIsExplicit() async {
+    func testSignedOutBootstrapDoesNotFetchPrivateRecords() async {
         var privateRequests = 0
         BackendStub.handler = { _ in privateRequests += 1; return (200, APIFixtures.data("{}")) }
         let store = AppStore(client: client())
         await store.bootstrap()
         XCTAssertEqual(privateRequests, 0)
-        XCTAssertEqual(store.mode, .live)
         XCTAssertTrue(store.turtles.isEmpty)
-        store.switchMode(to: .demo)
-        await store.reloadAll()
-        XCTAssertEqual(store.turtles.count, 8)
         store.signOut()
         XCTAssertTrue(store.turtles.isEmpty)
         XCTAssertTrue(store.sightings.isEmpty)

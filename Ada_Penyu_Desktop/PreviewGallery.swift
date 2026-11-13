@@ -1,68 +1,17 @@
+#if DEBUG
 import SwiftUI
 
-private struct PreviewCollectionScreen: View {
-    let favorites: Bool
-    @State private var searchText = ""
-    @State private var selectedCondition: TurtleCondition?
-    @State private var favoriteIDs = Set(DemoFixtures.turtles.filter { $0.isFavorite }.map { $0.id })
-
-    var body: some View {
-        Group {
-            if favorites {
-                FavoritesView(
-                    turtles: DemoFixtures.turtles.filter { favoriteIDs.contains($0.id) },
-                    searchText: $searchText,
-                    selectedCondition: $selectedCondition,
-                    favoriteIDs: favoriteIDs,
-                    onToggleFavorite: toggleFavorite,
-                    onSelect: { _ in },
-                    onBrowseIndividuals: {}
-                )
-            } else {
-                IndividualsView(
-                    turtles: DemoFixtures.turtles,
-                    total: DemoFixtures.turtles.count,
-                    searchText: $searchText,
-                    selectedCondition: $selectedCondition,
-                    favoriteIDs: favoriteIDs,
-                    onToggleFavorite: toggleFavorite,
-                    onSelect: { _ in }
-                )
-            }
-        }
-        .frame(width: 1_260, height: 750)
-        .background(AdaColors.canvas)
-    }
-
-    private func toggleFavorite(_ turtle: Turtle) {
-        if favoriteIDs.contains(turtle.id) {
-            favoriteIDs.remove(turtle.id)
-        } else {
-            favoriteIDs.insert(turtle.id)
-        }
-    }
+#Preview("Sign in") { AccountLoginView(store: AppStore()) }
+#Preview("Empty dashboard") {
+    DashboardView(snapshot: DashboardSnapshot(months: [], species: []), turtles: [], recentSightings: [], chartMode: .constant(.sightings), chartSpecies: .constant(nil), onExport: {}, onSelect: { _ in })
 }
-
-#Preview("Sea Turtle Group · Dashboard") {
-    ContentView(store: AppStore(mode: .demo))
-        .frame(width: 1_512, height: 982)
+#Preview("Empty map") {
+    MapPageView(turtles: [], sightings: [], selectedPeriod: .constant(.thirtyDays), selectedSpecies: .constant(nil), selectedCondition: .constant(nil), onReload: {}, onSelect: { _ in })
 }
-
-#Preview("Sea Turtle Group · Map") {
-    MapPageView(turtles: DemoFixtures.turtles, sightings: DemoFixtures.sightings, selectedPeriod: .constant(.thirtyDays), selectedSpecies: .constant(nil), selectedCondition: .constant(nil), onReload: {}, onSelect: { _ in })
-        .frame(width: 1_260, height: 750)
+#Preview("Empty individuals") {
+    IndividualsView(turtles: [], total: 0, searchText: .constant(""), selectedCondition: .constant(nil), favoriteIDs: [], onToggleFavorite: { _ in }, onSelect: { _ in })
 }
-
-#Preview("Sea Turtle Group · Individuals") {
-    PreviewCollectionScreen(favorites: false)
+#Preview("Empty favorites") {
+    FavoritesView(turtles: [], searchText: .constant(""), selectedCondition: .constant(nil), favoriteIDs: [], onToggleFavorite: { _ in }, onSelect: { _ in }, onBrowseIndividuals: {})
 }
-
-#Preview("Sea Turtle Group · Favorites") {
-    PreviewCollectionScreen(favorites: true)
-}
-
-#Preview("Sea Turtle Group · Turtle detail") {
-    TurtleDetailView(turtle: DemoFixtures.turtles[0], detail: nil, isFavorite: false, onToggleFavorite: {}, onExport: {})
-        .frame(width: 1_260, height: 750)
-        .background(AdaColors.canvas)
-}
+#endif

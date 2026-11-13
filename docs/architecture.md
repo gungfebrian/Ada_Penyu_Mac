@@ -1,6 +1,6 @@
 # Ada Penyu Desktop architecture
 
-The desktop app is a native SwiftUI client with one state owner and a replaceable data boundary. Live mode starts with session restoration or sign-in before private records load. A deterministic demo repository is available through an explicit user choice. Live failures remain visible and never switch repositories automatically.
+The desktop app is a native SwiftUI client with one state owner and a replaceable data boundary. Live mode starts with session restoration or sign-in before private records load. Live failures remain visible and never switch repositories automatically.
 
 The I3S workspace has two matching paths. Database search goes through `AppStore` and the remote repository to MiewID/XFeat endpoints. Saved-fingerprint comparison runs locally in `I3SCompareEngine` after the user supplies annotations for both displayed photos. Local distances do not alter the backend ranking. See [I3S reference verification](i3s-reference.md) for compatibility evidence and extraction limits.
 
@@ -11,29 +11,26 @@ flowchart LR
     UI[SwiftUI pages\nDashboard · Map · Individuals · Favorites · Detail]
     STORE[AppStore\nroute + filters + loading + session]
     REPO[TurtleRepository\nasync feature contract]
-    DEMO[DemoTurtleRepository\n8 deterministic turtles]
     API[RemoteTurtleRepository\nDTO mapping + APIClient]
     BE[FastAPI backend\n/api/v2 records + v1 support]
     DB[(Postgres\nprofiles · logs · favorites)]
     UI <--> STORE
     STORE --> REPO
-    REPO --> DEMO
     REPO --> API
     API --> BE --> DB
     API -. error .-> STORE
-    STORE -. explicit mode selection .-> DEMO
 ```
 
 ## Responsibilities
 
 | Layer | Files | Responsibility |
 | --- | --- | --- |
-| Shell | `ContentView.swift`, `Components/AppShellComponents.swift` | Navigation, top bar, mode switch, contextual export, global error/loading surfaces. |
+| Shell | `ContentView.swift`, `Components/AppShellComponents.swift` | Navigation, top bar, account menu, contextual export, global error/loading surfaces. |
 | State | `AppStore.swift` | Owns route, query state, selected turtle, async loading, favorites, session generation, and export commands. |
-| Contract | `DataLayer.swift` | Shared query/value types, `TurtleRepository`, API DTOs, date/status mapping, and repository implementations. |
+| Contract | `DataLayer.swift` | Shared query/value types, `TurtleRepository`, API DTOs, date/status mapping, and the remote repository. |
 | Feature views | `Views/DashboardView.swift`, `MapCanvasView.swift`, `CollectionViews.swift`, `TurtleDetailView.swift` | Render realistic data and emit user intent through bindings/closures. No view performs HTTP. |
 | Domain/design | `AppModel.swift`, `DesignSystem.swift`, `Components/` | Stable display models, colors, spacing, condition semantics, branding, and reusable controls. |
-| Backend | `app/api/`, `app/services/`, `scripts/seed_desktop_demo.py` | REST endpoints, persistence, and reproducible demo records. |
+| Backend | `app/api/`, `app/services/` | REST endpoints and persistence. |
 
 ## User flow
 
@@ -82,7 +79,6 @@ Logout / backend change
 ## Why this shape
 
 - A single store prevents favorites, counts, search, and detail navigation from drifting between screens.
-- A repository boundary makes Demo mode reliable for tomorrow's demo while keeping Live API one menu action away.
 - Private bootstrap waits for a valid session; its four data requests then run concurrently.
-- Empty, loading, and fallback states are explicit, so a slow or sparse backend never renders a misleading blank panel.
+- Empty, loading, and error states are explicit, so a slow or sparse backend never renders a misleading blank panel.
 - Map filters are scoped to the map and no longer leak the Individuals page's filters.

@@ -22,53 +22,38 @@ final class AppFlowTests: XCTestCase {
         ])
     }
 
-    func testDemoRepositoryPreservesFavoriteToggleAsynchronousFlow() async throws {
-        let repository = DemoTurtleRepository()
-        let turtles = try await repository.listIndividuals(query: .default)
-        XCTAssertEqual(turtles.items.count, 8)
-
-        let favorite = try await repository.setFavorite(turtleID: turtles.items[0].id, isFavorite: true)
-        XCTAssertTrue(favorite)
-        let favorites = try await repository.listFavorites()
-        XCTAssertTrue(favorites.contains(where: { $0.id == turtles.items[0].id }))
-    }
-
-    func testStoreStartsInLiveMode() {
-        let store = AppStore(repository: DemoTurtleRepository())
-
-        XCTAssertEqual(store.mode, .live)
+    func testStoreFavoriteToggleUpdatesFavorites() async throws {
+        let store = AppStore(repository: TestTurtleRepository())
+        await store.reloadAll()
+        store.toggleFavorite(TestTurtleRepository.turtle)
+        for _ in 0..<100 where store.favoriteTurtles.isEmpty { await Task.yield() }
+        XCTAssertEqual(store.favoriteTurtles.first?.id, TestTurtleRepository.turtle.id)
+        store.toggleFavorite(TestTurtleRepository.turtle)
+        for _ in 0..<100 where !store.favoriteTurtles.isEmpty { await Task.yield() }
+        XCTAssertTrue(store.favoriteTurtles.isEmpty)
     }
 
     func testSelectingIndividualKeepsOriginSectionForModalPresentation() {
-        let store = AppStore(repository: DemoTurtleRepository())
+        let store = AppStore(repository: TestTurtleRepository())
         store.activeSection = .favorites
 
-        store.select(DemoFixtures.turtles[3])
+        store.select(TestTurtleRepository.turtle)
 
         XCTAssertEqual(store.activeSection, .favorites)
-        XCTAssertEqual(store.selectedTurtle?.id, "Turtle #004")
+        XCTAssertEqual(store.selectedTurtle?.id, APIFixtures.turtleID)
         XCTAssertEqual(store.detailOrigin, .favorites)
     }
 
     func testDismissingModalPreventsInFlightDetailFromReappearing() async throws {
-        let store = AppStore(repository: DemoTurtleRepository())
+        let store = AppStore(repository: TestTurtleRepository())
 
-        store.select(DemoFixtures.turtles[3])
+        store.select(TestTurtleRepository.turtle)
         store.dismissDetail()
         try await Task.sleep(for: .milliseconds(50))
 
         XCTAssertNil(store.selectedTurtle)
         XCTAssertNil(store.selectedDetail)
         XCTAssertFalse(store.isDetailLoading)
-    }
-
-    func testDemoDashboardAggregatesFixtureRecordsInsteadOfFabricatingValues() async throws {
-        let repository = DemoTurtleRepository()
-
-        let snapshot = try await repository.dashboard(query: .lastTwelveMonths)
-
-        XCTAssertEqual(snapshot.months.reduce(0) { $0 + $1.sightings }, DemoFixtures.sightings.count)
-        XCTAssertEqual(snapshot.months.reduce(0) { $0 + $1.newIndividuals }, DemoFixtures.turtles.count)
     }
 
     func testI3SBinaryFgpRoundTripAndCompareEngine() throws {
@@ -155,27 +140,4 @@ final class AppFlowTests: XCTestCase {
         }
     }
 
-    func testDemoVisualComparisonResolvesBundledGalleryPhotosAndOverlays() async throws {
-        let repo = DemoTurtleRepository()
-        let store = AppStore(mode: .demo, repository: repo)
-        let sampleData = try XCTUnwrap(I3SSampleLibrary.loadImageData(named: "Amina3_L.jpg"))
-        let outcome = try await store.matchPhoto(imageData: sampleData, side: .left, limit: 4)
-        XCTAssertEqual(outcome.candidates.count, 4)
-
-        for cand in outcome.candidates {
-            XCTAssertNotNil(cand.photoURL)
-            let loadedImage = await store.loadPhoto(for: cand.photoURL)
-            XCTAssertNotNil(loadedImage, "Expected Compare Visually photo to load for \(cand.name)")
-        }
-
-        let topCandidate = try XCTUnwrap(outcome.candidates.first)
-        let overlay = try await store.fetchOverlayAnnotations(
-            imageData: sampleData,
-            side: .left,
-            candidateID: topCandidate.individualID,
-            candidateSide: topCandidate.matchedPhotoSide
-        )
-        XCTAssertFalse(overlay.isEmpty)
-        XCTAssertTrue(overlay.allSatisfy { (0...1).contains($0.query.x) && (0...1).contains($0.candidate.x) })
-    }
 }

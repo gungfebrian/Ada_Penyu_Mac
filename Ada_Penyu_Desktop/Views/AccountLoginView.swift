@@ -38,7 +38,6 @@ struct AccountLoginView: View {
             .buttonStyle(.borderedProminent)
             .disabled(isSigningIn || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
             .keyboardShortcut(.defaultAction)
-            Button("Use Demo Data") { password = ""; store.switchMode(to: .demo) }.disabled(isSigningIn)
             #if DEBUG
             Button("Developer API Settings…") { store.isAuthSheetPresented = true }
             #endif
