@@ -89,6 +89,7 @@ struct SavedSightingReviewOutcome: Equatable {
 }
 
 enum ScientistComparisonLayoutMode: String, CaseIterable, Identifiable {
+    case contours = "Photo contours"
     case sideBySide = "Side-by-Side (1:1)"
     case multiCandidateGrid = "Compare Multiple"
     case superimposeBlend = "Superimpose / Blink"
@@ -273,7 +274,7 @@ final class ScientistReviewViewModel: ObservableObject {
         )
         savedOutcomes[activeScenario] = outcome
         isConfirmSameTurtlePresented = false
-        appendAudit("CONFIRMED SAME TURTLE: Linked \(sighting.sightingID) to \(cand.displayName) (\(cand.profileCode)). Gallery enrollment kept separate (\(nominateForGalleryReference ? "Nominated" : "Not enrolled")).")
+        appendAudit("DEMO IN MEMORY · CONFIRMED SAME TURTLE: Linked \(sighting.sightingID) to \(cand.displayName) (\(cand.profileCode)). Gallery enrollment kept separate (\(nominateForGalleryReference ? "Nominated" : "Not enrolled")).")
     }
 
     func prepareUnsureSheet() {
@@ -299,7 +300,7 @@ final class ScientistReviewViewModel: ObservableObject {
         )
         savedOutcomes[activeScenario] = outcome
         isUnsureSheetPresented = false
-        appendAudit("SAVED UNSURE: \(sighting.sightingID) saved with Identity = EMPTY. Request better photo: \(requestBetterPhoto ? "Yes" : "No"), Second review: \(requestSecondReview ? "Yes" : "No").")
+        appendAudit("DEMO IN MEMORY · SAVED UNSURE: \(sighting.sightingID) saved with Identity = EMPTY. Request better photo: \(requestBetterPhoto ? "Yes" : "No"), Second review: \(requestSecondReview ? "Yes" : "No").")
     }
 
     func runWiderSearch() {
@@ -353,7 +354,7 @@ final class ScientistReviewViewModel: ObservableObject {
         if let addedId = candidates.last?.id {
             multiSelectedCandidateIDs.insert(addedId)
         }
-        appendAudit("Ran wider search (head-crop re-index + local RANSAC rerank): added Rank #4 candidate.")
+        appendAudit("Simulated wider search: added a predefined Rank #4 candidate. No re-indexing or RANSAC was run.")
     }
 
     private func appendAudit(_ entry: String) {
@@ -519,6 +520,7 @@ final class ScientistReviewViewModel: ObservableObject {
 
 struct ScientistReviewWorkspaceView: View {
     @StateObject private var vm = ScientistReviewViewModel()
+    @State private var contourSettings = ContourSettings(enabled: true)
 
     var body: some View {
         HStack(spacing: 0) {
@@ -526,8 +528,10 @@ struct ScientistReviewWorkspaceView: View {
             VStack(spacing: 0) {
                 scenarioAndSimulationBar
                 Divider().overlay(AdaColors.line)
-                comparisonAidsToolbar
-                Divider().overlay(AdaColors.line)
+                if vm.layoutMode != .contours {
+                    comparisonAidsToolbar
+                    Divider().overlay(AdaColors.line)
+                }
                 dualComparisonCanvases
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider().overlay(AdaColors.line)
@@ -556,68 +560,33 @@ struct ScientistReviewWorkspaceView: View {
     // MARK: - Top Scenario Switcher & Simulation Notice
 
     private var scenarioAndSimulationBar: some View {
-        HStack(spacing: 10) {
-            ForEach(ReviewScenarioID.allCases) { scenario in
-                FilterChip(
-                    title: scenario.shortTitle,
-                    isSelected: vm.activeScenario == scenario,
-                    horizontalPadding: 11
-                ) {
-                    vm.switchScenario(scenario)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Scientist review · scenario demo", systemImage: "flask")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(AdaColors.navy)
+                Spacer()
+                Button("Reset demo") { vm.resetDemo() }.controlSize(.small)
             }
-
-            Divider().frame(height: 18)
-
-            Picker("View Mode", selection: $vm.layoutMode) {
-                ForEach(ScientistComparisonLayoutMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 340)
-
-            Toggle("Real Turtle Photos", isOn: $vm.showRealTurtlePhotographs)
-                .toggleStyle(.checkbox)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(AdaColors.ink)
-
-            Spacer()
-
-            if let outcome = vm.currentOutcome {
-                Text(outcome.resolution.rawValue)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(outcome.resolution == .linkedToExisting ? AdaColors.green : AdaColors.orange)
-                    .padding(.horizontal, 10)
-                    .frame(height: 24)
-                    .background(
-                        (outcome.resolution == .linkedToExisting ? AdaColors.green : AdaColors.orange).opacity(0.14),
-                        in: Capsule()
-                    )
-            }
-
-            Button {
-                vm.resetDemo()
-            } label: {
-                Label("Reset demo", systemImage: "arrow.counterclockwise")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(AdaColors.ink)
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(AdaColors.card, in: Capsule())
-                    .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(AdaColors.card)
+            Text("Candidate scores, annotations and decisions are simulated. Decisions stay in memory; no encounter is saved to the backend. Photo contours are computed from the bundled photographs.")
+                .font(.system(size: 11)).foregroundStyle(AdaColors.secondaryInk)
+            HStack {
+                Picker("Scenario", selection: Binding(get: { vm.activeScenario }, set: { vm.switchScenario($0) })) {
+                    ForEach(ReviewScenarioID.allCases) { scenario in Text(scenario.shortTitle).tag(scenario) }
+                }.frame(maxWidth: 250)
+                Picker("View", selection: $vm.layoutMode) {
+                    ForEach(ScientistComparisonLayoutMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
+                }.frame(maxWidth: 210)
+                Button("Photo contours") { vm.layoutMode = .contours }
+                    .controlSize(.small).tint(AdaColors.accent)
+                Spacer(minLength: 0)
+            }.pickerStyle(.menu).font(.system(size: 11))
+        }.padding(.horizontal, 16).padding(.vertical, 8).background(AdaColors.card)
     }
 
     // MARK: - Comparison Aids & Synchronized Zoom Toolbar
 
     private var comparisonAidsToolbar: some View {
+        ScrollView(.horizontal) {
         HStack(spacing: 8) {
             Text("Comparison Aids:")
                 .font(.system(size: 11, weight: .semibold))
@@ -633,7 +602,7 @@ struct ScientistReviewWorkspaceView: View {
             }
 
             FilterChip(
-                title: "Scale outlines (1–6)",
+                title: "Schematic outlines",
                 isSelected: vm.showScaleOutlines,
                 horizontalPadding: 11,
                 unselectedBackground: AdaColors.canvas
@@ -651,7 +620,7 @@ struct ScientistReviewWorkspaceView: View {
             }
 
             FilterChip(
-                title: "XFeat points",
+                title: "Demo keypoints",
                 isSelected: vm.showXFeatPoints,
                 horizontalPadding: 11,
                 unselectedBackground: AdaColors.canvas
@@ -723,11 +692,16 @@ struct ScientistReviewWorkspaceView: View {
         .background(AdaColors.card)
     }
 
+    }
+
     // MARK: - Comparison Canvases (1:1 Side-by-Side | Multi-Candidate Grid | Superimpose Blend)
 
     private var dualComparisonCanvases: some View {
         Group {
             switch vm.layoutMode {
+            case .contours:
+                ScientistContourPhotos(queryName: vm.sighting.sampleImageName,
+                    galleryName: vm.selectedCandidate.sampleImageName, settings: $contourSettings)
             case .sideBySide:
                 sideBySideComparisonCanvas
             case .multiCandidateGrid:
@@ -1168,7 +1142,7 @@ struct ScientistReviewWorkspaceView: View {
                                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                                 .foregroundStyle(AdaColors.ink)
                         }
-                        Text("Automated local keypoints inside head crop. Toggle 'XFeat points' above to inspect spatial placement.")
+                        Text("Illustrative keypoint positions, not computed XFeat correspondences. Toggle 'XFeat points' to inspect the schematic.")
                             .font(.system(size: 11))
                             .foregroundStyle(AdaColors.secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1440,7 +1414,7 @@ struct ScientistReviewWorkspaceView: View {
     private var confirmSameTurtleSheet: some View {
         let cand = vm.selectedCandidate
         return VStack(alignment: .leading, spacing: 14) {
-            Text("Confirm Selected Identity Before Linking")
+            Text("Demo · simulate identity confirmation")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(AdaColors.ink)
 
@@ -1472,7 +1446,7 @@ struct ScientistReviewWorkspaceView: View {
                     vm.isConfirmSameTurtlePresented = false
                 }
                 Spacer()
-                Button("Confirm & Link Sighting") {
+                Button("Simulate confirmation") {
                     vm.confirmSameTurtleIdentity()
                 }
                 .buttonStyle(.borderedProminent)
@@ -1485,7 +1459,7 @@ struct ScientistReviewWorkspaceView: View {
 
     private var saveUnsureSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Save Sighting as Unsure (Identity Empty)")
+            Text("Demo · record unsure in memory")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(AdaColors.ink)
 
@@ -1500,7 +1474,7 @@ struct ScientistReviewWorkspaceView: View {
                 .font(.system(size: 12, weight: .medium))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Scientist Notes (Saved with Unresolved Sighting)")
+                Text("Demo notes · discarded on reset or app exit")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AdaColors.secondaryInk)
                 TextEditor(text: $vm.unsureNotes)
@@ -1514,7 +1488,7 @@ struct ScientistReviewWorkspaceView: View {
                     vm.isUnsureSheetPresented = false
                 }
                 Spacer()
-                Button("Save Unsure (Identity Empty)") {
+                Button("Keep unsure in this demo") {
                     vm.saveUnsureDecision()
                 }
                 .buttonStyle(.borderedProminent)
@@ -1571,7 +1545,7 @@ private struct SimulatedTurtlePhotoPane: View {
                             .scaledToFill()
                             .frame(width: geo.size.width, height: geo.size.height)
                             .clipped()
-                            .overlay(Color.black.opacity(0.12))
+
                     }
 
                     Canvas { context, size in
@@ -1711,7 +1685,7 @@ private struct SimulatedTurtlePhotoPane: View {
         }
 
         // Specular glare patch in Scenario 2 sighting
-        if hasSpecularGlare {
+        if hasSpecularGlare && !overRealPhoto {
             let glareCenter = CGPoint(x: mapX(0.53), y: mapY(0.49))
             let glareRect = CGRect(x: glareCenter.x - 68, y: glareCenter.y - 52, width: 136, height: 104)
             context.fill(Path(ellipseIn: glareRect), with: .color(Color.white.opacity(0.88)))
@@ -1782,5 +1756,23 @@ private struct SimulatedTurtlePhotoPane: View {
                 context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.5)
             }
         }
+    }
+}
+
+/// Caches image objects across slider/color changes; uses only the exact named fixture.
+private struct ScientistContourPhotos: View {
+    let queryName: String?
+    let galleryName: String?
+    @Binding var settings: ContourSettings
+    @State private var query: NSImage?
+    @State private var gallery: NSImage?
+    private var key: String { "\(queryName ?? "")|\(galleryName ?? "")" }
+    var body: some View {
+        ContourComparisonView(queryImage: query, galleryImage: gallery, settings: $settings,
+            queryTitle: "Query · bundled scenario", galleryTitle: "Gallery · bundled scenario")
+            .task(id: key) {
+                query = queryName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
+                gallery = galleryName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
+            }
     }
 }

@@ -197,6 +197,8 @@ struct MatchCandidateItem: Identifiable, Hashable {
     let lastSeenDate: String?
     let lastSeenLocation: String?
     let condition: TurtleCondition?
+    var isBundledExample = false
+    var evidenceLabel: String { isBundledExample ? "Bundled example · no AI score" : "Backend score \(confidencePercent)%" }
     var i3sDistanceScore: Double?
     var i3sPairedCount: Int?
 
@@ -210,6 +212,14 @@ struct MatchSearchOutcome: Hashable {
     let candidates: [MatchCandidateItem]
     let isDualPair: Bool
     let pairAgreed: Bool?
+    var reviewTitle: String {
+        switch matchState {
+        case "likely_match": return "Possible match · human confirmation required"
+        case "no_reliable_match": return "Not found · keep the photograph as unknown"
+        case "bundled_examples": return "Bundled examples · no backend identity decision"
+        default: return "Not sure · compare evidence before deciding"
+        }
+    }
 }
 
 struct OverlayMatchPoint: Hashable, Codable {

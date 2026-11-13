@@ -3,7 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum I3SComparisonTab: String, CaseIterable, Identifiable {
-    case bothImages = "Side-by-Side (1:1)"
+    case bothImages = "Photos & contours"
+    case features = "Keypoints & XFeat"
     case multiCompare = "Compare Multiple"
     case pointCloud = "Point Cloud"
     case unknownIndividual = "Query Photo"
@@ -59,7 +60,12 @@ struct I3SWorkspaceView: View {
     @State private var queryImageData: Data?
     @State private var queryTitle: String = "No photo loaded"
     @State private var fingerprint = I3SFingerprint()
-    @State private var companionFgp: I3SFingerprint?
+    @State private var primaryCompanionFgp: I3SFingerprint?
+    @State private var secondaryCompanionFgp: I3SFingerprint?
+    @State private var primaryIsBundled = false
+    @State private var secondaryIsBundled = false
+    @State private var secondaryPhotoSide: TurtlePhotoSide = .right
+    private var companionFgp: I3SFingerprint? { editingSecondary ? secondaryCompanionFgp : primaryCompanionFgp }
     @State private var undoStack: [I3SFingerprint] = []
     @State private var redoStack: [I3SFingerprint] = []
 
@@ -81,7 +87,8 @@ struct I3SWorkspaceView: View {
 
     // Search & candidate state
     @State private var isSearching = false
-    @State private var queryRevision = 0
+    @State private var matchContext = MatchReviewContext()
+    private var queryRevision: Int { matchContext.revision }
     @State private var candidateRevision = 0
     @State private var searchOutcome: MatchSearchOutcome?
     @State private var candidates: [MatchCandidateItem] = []
@@ -96,6 +103,7 @@ struct I3SWorkspaceView: View {
     // Visual Comparison Modal (`CompareResults.java`)
     @State private var isComparisonModalPresented = false
     @State private var comparisonTab: I3SComparisonTab = .bothImages
+    @State private var contourSettings = ContourSettings()
     @State private var multiCompareLimit: Int = 4
     @State private var candidateImagesCache: [UUID: NSImage] = [:]
     @State private var candidateFingerprintsCache: [UUID: I3SFingerprint] = [:]
@@ -119,6 +127,34 @@ struct I3SWorkspaceView: View {
     @State private var enrollFirstSeenAt = Date()
     @State private var isSubmittingDecision = false
 
+    private struct ReferenceReplacement: Identifiable {
+        let id = UUID()
+        let candidateID: UUID
+        let name: String
+        let side: TurtlePhotoSide
+        let data: Data
+        let revision: Int
+        let generation: UUID
+    }
+    @State private var pendingReplacement: ReferenceReplacement?
+    @State private var showsReplacementConfirmation = false
+    private var photoInputs: MatchPhotoInputs {
+        MatchPhotoInputs(primary: queryImageData, primarySide: querySide,
+            secondary: secondaryImageData, secondarySide: secondaryPhotoSide, paired: isDualMode)
+    }
+    private var canWriteGallery: Bool {
+        store.mode == .live && !primaryIsBundled && (!isDualMode || (!secondaryIsBundled && photoInputs.hasValidPair))
+    }
+    private func setDualMode(_ enabled: Bool) {
+        guard !enabled || queryImageData == nil || querySide == .left else {
+            statusBannerMessage = "This query is marked Right. Import a Left primary photograph before enabling Dual L/R; the current photograph was kept unchanged."
+            return
+        }
+        if enabled { querySide = .left }
+        isDualMode = enabled
+        if !enabled { editingSecondary = false }
+    }
+
     private var activeFingerprint: I3SFingerprint {
         editingSecondary ? secondaryFingerprint : fingerprint
     }
@@ -136,11 +172,12 @@ struct I3SWorkspaceView: View {
     }
 
     private var comparisonImage: NSImage? {
-        comparisonUsesSecondary ? secondaryImage : queryImage
+        guard comparisonImageData != nil else { return nil }
+        return comparisonUsesSecondary ? secondaryImage : queryImage
     }
 
     private var comparisonImageData: Data? {
-        comparisonUsesSecondary ? secondaryImageData : queryImageData
+        photoInputs.referenceData(for: selectedCandidate?.matchedPhotoSide ?? querySide)
     }
 
     var body: some View {
@@ -169,8 +206,8 @@ struct I3SWorkspaceView: View {
                 GeometryReader { proxy in
                     visualComparisonModal(for: selected)
                         .frame(
-                            width: min(max(proxy.size.width - 64, 860), 1_180),
-                            height: min(max(proxy.size.height - 64, 620), 820)
+                            width: min(max(proxy.size.width - 24, 700), 1_180),
+                            height: min(max(proxy.size.height - 24, 480), 820)
                         )
                         .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                 }
@@ -180,13 +217,23 @@ struct I3SWorkspaceView: View {
         .sheet(isPresented: $isEnrollSheetPresented) {
             enrollNewIndividualSheet
         }
+        .confirmationDialog("Replace gallery reference?", isPresented: $showsReplacementConfirmation, titleVisibility: .visible) {
+            Button("Replace reference photograph", role: .destructive) {
+                guard let request = pendingReplacement else { return }
+                Task { await replaceGalleryReference(request) }
+            }
+            Button("Cancel", role: .cancel) { pendingReplacement = nil }
+        } message: {
+            Text("This replaces the \(pendingReplacement?.side.title ?? "selected") reference photograph for \(pendingReplacement?.name ?? "this turtle"). It does not save an encounter or confirm a sighting identity.")
+        }
+
         .onChange(of: fingerprint) { _, _ in invalidateI3SScores() }
         .onChange(of: secondaryFingerprint) { _, _ in invalidateI3SScores() }
         .onChange(of: expertParams) { _, _ in invalidateI3SScores() }
-        .onChange(of: querySide) { _, _ in invalidateI3SScores() }
-        .onChange(of: isDualMode) { _, _ in invalidateI3SScores() }
-        .onChange(of: queryImageData) { _, _ in invalidateI3SScores() }
-        .onChange(of: secondaryImageData) { _, _ in invalidateI3SScores() }
+        .onChange(of: querySide) { _, _ in invalidateSearchResults() }
+        .onChange(of: isDualMode) { _, _ in invalidateSearchResults() }
+
+
     }
 
     // MARK: - Left / Center Main Workspace Area
@@ -661,11 +708,11 @@ struct I3SWorkspaceView: View {
             // 1. Annotation Checklist & Re-pick Controls
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("I3S Annotation Steps")
+                    Text("I3S Annotation Steps · optional")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(AdaColors.ink)
                     Spacer()
-                    Toggle("Dual L/R", isOn: $isDualMode)
+                    Toggle("Dual L/R", isOn: Binding(get: { isDualMode }, set: setDualMode))
                         .toggleStyle(.switch)
                         .controlSize(.mini)
                         .font(.system(size: 11))
@@ -734,7 +781,7 @@ struct I3SWorkspaceView: View {
                 .background(queryImageData != nil ? AdaColors.navy : AdaColors.tertiaryInk, in: Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(queryImageData == nil || isSearching)
+            .disabled(queryImageData == nil || (isDualMode && !photoInputs.hasValidPair) || isSearching)
 
             Divider().overlay(AdaColors.line)
 
@@ -770,12 +817,18 @@ struct I3SWorkspaceView: View {
                 }
             }
 
+            if let outcome = searchOutcome {
+                Text(outcome.reviewTitle).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AdaColors.navy)
+                Text("Gallery searched: \(outcome.gallerySize) photo references. Scores rank candidates; they do not confirm identity.")
+                    .font(.system(size: 10)).foregroundStyle(AdaColors.secondaryInk)
+            }
             if candidates.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "tortoise")
                         .font(.system(size: 24))
                         .foregroundStyle(AdaColors.tertiaryInk)
-                    Text("No search results yet")
+                    Text(searchOutcome == nil ? "No search results yet" : "No candidates returned")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(AdaColors.secondaryInk)
                     Text("Import a photo or load a Sample Photo, then click 'Search in Database' or compare directly against the bundled sample gallery.")
@@ -786,7 +839,7 @@ struct I3SWorkspaceView: View {
                     if queryImageData != nil {
                         Button {
                             Task {
-                                await populateBundledSampleCandidatesAndOpen(multiMode: true)
+                                await populateBundledSampleCandidatesAndOpen(multiMode: false)
                             }
                         } label: {
                             Label("Compare Visually with Sample Gallery", systemImage: "rectangle.split.2x2")
@@ -894,17 +947,17 @@ struct I3SWorkspaceView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(item.confidencePercent)%")
+                    Text(item.isBundledExample ? "Example" : "\(item.confidencePercent)%")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(item.confidencePercent >= 50 ? AdaColors.green : AdaColors.ink)
-                    Text(String(format: "Fused %.2f", item.fusedScore))
+                    Text(item.isBundledExample ? "No AI score" : String(format: "Fused %.2f", item.fusedScore))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(AdaColors.tertiaryInk)
                 }
             }
 
             HStack(spacing: 8) {
-                Text("XFeat \(item.localMatch)")
+                Text(item.isBundledExample ? "Saved .fgp available" : "XFeat \(item.localMatch)")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(AdaColors.accent)
                 if let i3sScore = item.i3sDistanceScore, i3sScore < 999_999 {
@@ -976,27 +1029,32 @@ struct I3SWorkspaceView: View {
                              : "Visual Match Comparison — \(selected.name)")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(AdaColors.ink)
-                        Text("Rank #\(selected.rank) · \(selected.confidencePercent)% Confidence")
+                        Text("#\(selected.rank) · \(selected.evidenceLabel)")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(AdaColors.green)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
                             .background(AdaColors.green.opacity(0.12), in: Capsule())
                     }
-                    Text("Inspect side-by-side or multi-candidate scale patterns, XFeat LighterGlue threads, synchronized magnifying loupe, and aligned I3S point cloud.")
+                    Text("Compare actual photographs. Contours help inspect scale edges; identity still requires human review.")
                         .font(.system(size: 11))
                         .foregroundStyle(AdaColors.tertiaryInk)
                 }
 
                 Spacer()
 
-                Picker("", selection: $comparisonTab) {
+                Toggle("Contours", isOn: $contourSettings.enabled)
+                    .toggleStyle(.checkbox).font(.system(size: 12, weight: .semibold))
+                    .onChange(of: contourSettings.enabled) { _, enabled in
+                        if enabled { comparisonTab = .bothImages }
+                    }
+                Picker("View", selection: $comparisonTab) {
                     ForEach(I3SComparisonTab.allCases) { tab in
                         Text(tab.rawValue).tag(tab)
                     }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 540)
+                .pickerStyle(.menu)
+                .frame(width: 182)
                 .onChange(of: comparisonTab) { _, newValue in
                     if newValue == .multiCompare {
                         Task { await preloadMultiCompareCandidates() }
@@ -1020,7 +1078,8 @@ struct I3SWorkspaceView: View {
 
             Divider().overlay(AdaColors.line)
 
-            // Modal Subheader: Candidate quick switcher + Gallery .fgp loader + Multi-grid count
+            // Scroll at narrow widths to keep full candidate names and controls reachable.
+            ScrollView(.horizontal) {
             HStack(spacing: 10) {
                 if candidates.count > 1 {
                     HStack(spacing: 4) {
@@ -1071,15 +1130,22 @@ struct I3SWorkspaceView: View {
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 8)
+            }.scrollIndicators(.visible)
 
             Group {
                 switch comparisonTab {
                 case .bothImages:
+                    ContourComparisonView(queryImage: comparisonImage, galleryImage: candidateImage,
+                        settings: $contourSettings,
+                        queryTitle: "Query · \(comparisonUsesSecondary ? "Right" : querySide.title)",
+                        galleryTitle: "\(selected.name) · \(selected.matchedPhotoSide.title)",
+                        showsVisibilityControl: false)
+                case .features:
                     modalBothSharksBody
                 case .multiCompare:
                     I3SMultiPhotoComparisonCanvas(
                         unknownImage: comparisonImage,
-                        unknownFingerprint: comparisonFingerprint.readyForProcessing ? comparisonFingerprint : (companionFgp ?? comparisonFingerprint),
+                        unknownFingerprint: comparisonFingerprint,
                         candidates: Array(candidates.prefix(multiCompareLimit)),
                         selectedCandidate: selected,
                         candidateImages: candidateImagesCache,
@@ -1125,11 +1191,13 @@ struct I3SWorkspaceView: View {
 
             // Modal Footer (`CompareResults` actions)
             HStack(spacing: 12) {
-                Toggle("AutoZoom ROI (20%)", isOn: $autoZoomOn)
+                Toggle("ROI zoom", isOn: $autoZoomOn)
+                    .disabled(comparisonTab == .bothImages)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 12, weight: .medium))
 
-                Toggle("XFeat Match Threads (\(overlayAnnotations.count))", isOn: $showMatchThreads)
+                Toggle("XFeat threads (\(overlayAnnotations.count))", isOn: $showMatchThreads)
+                    .disabled(comparisonTab != .features)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 12, weight: .medium))
 
@@ -1160,7 +1228,7 @@ struct I3SWorkspaceView: View {
                     enrollFirstSeenAt = Date()
                     isEnrollSheetPresented = true
                 } label: {
-                    Text("New Individual…")
+                    Text("New gallery individual…")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(AdaColors.ink)
                         .padding(.horizontal, 14)
@@ -1168,6 +1236,7 @@ struct I3SWorkspaceView: View {
                         .background(AdaColors.canvas, in: Capsule())
                 }
                 .buttonStyle(.plain)
+                .disabled(!canWriteGallery)
 
                 Button {
                     Task {
@@ -1175,7 +1244,7 @@ struct I3SWorkspaceView: View {
                         isComparisonModalPresented = false
                     }
                 } label: {
-                    Label("Include in Database (\(selected.name))", systemImage: "checkmark.circle.fill")
+                    Label("Replace reference…", systemImage: "photo.badge.arrow.down")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 16)
@@ -1183,7 +1252,7 @@ struct I3SWorkspaceView: View {
                         .background(AdaColors.green, in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(queryImageData == nil || isSubmittingDecision)
+                .disabled(comparisonImageData == nil || isSubmittingDecision || !canWriteGallery || selected.isBundledExample)
             }
             .padding(.horizontal, 22)
             .frame(height: 56)
@@ -1491,14 +1560,18 @@ struct I3SWorkspaceView: View {
         statusBannerMessage = "Placed a fixed head template with \(generated.keypoints.count) approximate blob keypoints. Adjust the reference points and ROI to fit this photo."
     }
 
-    private func loadSample(_ sample: I3SSampleEntry, includeAnnotations: Bool, forSecondary: Bool) {
+    private func loadSample(_ sample: I3SSampleEntry, includeAnnotations: Bool, forSecondary requestedSecondary: Bool) {
+        // A bundled photograph has a known side, so route it to its actual dual slot.
+        let forSecondary = isDualMode ? sample.photoSide == .right : requestedSecondary
         guard let data = I3SSampleLibrary.loadImageData(for: sample),
               let image = NSImage(data: data) else {
             return
         }
         canvasZoom = 1.0
         canvasPan = .zero
-        companionFgp = sample.fingerprint
+        invalidateSearchResults()
+        if forSecondary { secondaryCompanionFgp = sample.fingerprint; secondaryIsBundled = true; secondaryPhotoSide = sample.photoSide }
+        else { primaryCompanionFgp = sample.fingerprint; primaryIsBundled = true }
         let initialFp = includeAnnotations ? sample.fingerprint : I3SFingerprint()
 
         if forSecondary {
@@ -1516,11 +1589,9 @@ struct I3SWorkspaceView: View {
             redoStack.removeAll()
         }
         syncActiveStepToFingerprint()
-        Task {
-            await populateBundledSampleCandidates(excludingSampleID: sample.id, side: sample.photoSide)
-        }
+
         statusBannerMessage = includeAnnotations
-            ? "Loaded '\(sample.title)' with saved .fgp annotations (\(sample.fingerprint.keypoints.count) keypoints) — Gallery matches ready to compare."
+            ? "Loaded '\(sample.title)' with saved .fgp annotations (\(sample.fingerprint.keypoints.count) keypoints) — choose bundled examples to compare."
             : "Loaded '\(sample.title)' — Click Reference Point 1 on the photo, or click 'Compare Visually' / 'Compare Multiple' on the right."
     }
 
@@ -1542,13 +1613,16 @@ struct I3SWorkspaceView: View {
         canvasZoom = 1.0
         canvasPan = .zero
 
+        invalidateSearchResults()
+        if forSecondary { secondaryIsBundled = false; secondaryPhotoSide = .right } else { primaryIsBundled = false }
+
         // Check if a companion .fgp file exists next to the image, but do NOT auto-apply it so the user can annotate freely
         let fgpURL = url.deletingPathExtension().appendingPathExtension("fgp")
         if let fgpData = try? Data(contentsOf: fgpURL),
            let parsedFgp = try? I3SFingerprintFile.read(from: fgpData, filename: fgpURL.lastPathComponent) {
-            companionFgp = parsedFgp
+            if forSecondary { secondaryCompanionFgp = parsedFgp } else { primaryCompanionFgp = parsedFgp }
         } else {
-            companionFgp = nil
+            if forSecondary { secondaryCompanionFgp = nil } else { primaryCompanionFgp = nil }
         }
 
         if forSecondary {
@@ -1631,6 +1705,10 @@ struct I3SWorkspaceView: View {
 
     private func runDatabaseSearch() async {
         guard let qData = queryImageData else { return }
+        guard !isDualMode || photoInputs.hasValidPair else {
+            statusBannerMessage = "Dual search requires an explicitly Left primary and Right secondary photograph."; return
+        }
+        invalidateSearchResults()
         let revision = queryRevision
         isSearching = true
         statusBannerMessage = "Searching gallery via MiewID + XFeat LighterGlue…"
@@ -1667,7 +1745,10 @@ struct I3SWorkspaceView: View {
     }
 
     private func populateBundledSampleCandidates(excludingSampleID: String?, side: TurtlePhotoSide) async {
-        let queryFp = comparisonFingerprint.readyForProcessing ? comparisonFingerprint : companionFgp
+        matchContext.beginExamples()
+        clearSearchResults()
+        let revision = queryRevision
+        let queryFp: I3SFingerprint? = comparisonFingerprint.readyForProcessing ? comparisonFingerprint : nil
         let gallerySamples = I3SSampleLibrary.samples.filter {
             $0.photoSide == side && ($0.id != excludingSampleID && $0.title != queryTitle)
         }
@@ -1687,27 +1768,26 @@ struct I3SWorkspaceView: View {
         let items: [MatchCandidateItem] = scored.enumerated().map { idx, pair in
             let (entry, comp) = pair
             let i3sScore = comp?.score
-            let pairCount = comp?.pairCount ?? max(8, 22 - idx * 3)
-            let conf = idx == 0 ? 0.91 : max(0.08, 0.68 - Double(idx) * 0.14)
-            let fused = max(0.06, 0.42 - Double(idx) * 0.06)
+            let pairCount = comp?.pairCount
             var item = MatchCandidateItem(
                 individualID: UUID(uuidString: String(format: "00000000-0000-4000-9000-%012d", idx + 1)) ?? UUID(),
                 name: entry.title,
                 profileCode: entry.id,
                 species: .green,
                 rank: idx + 1,
-                fusedScore: fused,
-                confidence: conf,
-                confidencePercent: Int((conf * 100).rounded()),
-                globalScore: max(0.30, 0.76 - Double(idx) * 0.06),
-                localMatch: max(24, 168 - idx * 22),
+                fusedScore: 0,
+                confidence: 0,
+                confidencePercent: 0,
+                globalScore: 0,
+                localMatch: 0,
                 matchedPhotoSide: entry.photoSide,
                 photoURL: entry.imageFile,
-                aboveThreshold: idx < 3,
-                lastSeenDate: "11 Nov 2026",
-                lastSeenLocation: "Nusa Penida Reef",
-                condition: .healthy
+                aboveThreshold: false,
+                lastSeenDate: nil,
+                lastSeenLocation: nil,
+                condition: nil
             )
+            item.isBundledExample = true
             item.i3sDistanceScore = i3sScore
             item.i3sPairedCount = pairCount
             return item
@@ -1716,12 +1796,13 @@ struct I3SWorkspaceView: View {
         searchOutcome = MatchSearchOutcome(
             querySide: side,
             gallerySize: items.count,
-            matchState: "matched",
+            matchState: "bundled_examples",
             candidates: items,
             isDualPair: false,
             pairAgreed: nil
         )
         await preloadMultiCompareCandidates()
+        guard queryRevision == revision else { return }
         if let first = items.first {
             await selectCandidate(first)
         }
@@ -1729,19 +1810,22 @@ struct I3SWorkspaceView: View {
 
     private func populateBundledSampleCandidatesAndOpen(multiMode: Bool) async {
         await populateBundledSampleCandidates(excludingSampleID: nil, side: querySide)
+        guard let selectedCandidate, selectedCandidate.isBundledExample else { return }
         comparisonTab = multiMode ? .multiCompare : .bothImages
         isComparisonModalPresented = true
     }
 
     private func preloadMultiCompareCandidates() async {
+        let revision = queryRevision
         for cand in candidates.prefix(max(multiCompareLimit, 6)) {
             if candidateImagesCache[cand.individualID] == nil {
                 let path = cand.photoURL ?? "/api/v1/individuals/\(cand.individualID.uuidString)/photos/\(cand.matchedPhotoSide.rawValue)"
-                if let img = await store.loadPhoto(for: path) ?? I3SSampleLibrary.loadImage(named: cand.photoURL ?? "Amina1_L.jpg") {
+                if let img = await store.loadPhoto(for: path) {
+                    guard queryRevision == revision else { return }
                     candidateImagesCache[cand.individualID] = img
                 }
             }
-            if candidateFingerprintsCache[cand.individualID] == nil,
+            if cand.isBundledExample, candidateFingerprintsCache[cand.individualID] == nil,
                let matchedSample = I3SSampleLibrary.sample(forFilenameOrID: cand.photoURL ?? cand.profileCode ?? cand.name) {
                 candidateFingerprintsCache[cand.individualID] = matchedSample.fingerprint
             }
@@ -1767,18 +1851,17 @@ struct I3SWorkspaceView: View {
         let comparisonSide: TurtlePhotoSide = comparisonUsesSecondary ? .right : querySide
         let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.individualID.uuidString)/photos/\(candidate.matchedPhotoSide.rawValue)"
         let fetchedImage = await store.loadPhoto(for: path)
-            ?? I3SSampleLibrary.loadImage(named: candidate.photoURL ?? (candidate.matchedPhotoSide == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"))
         guard candidateRevision == selectionRevision, queryRevision == inputRevision else { return }
         candidateImage = fetchedImage
         if let fetchedImage {
             candidateImagesCache[candidate.individualID] = fetchedImage
         }
 
-        if let matchedSample = I3SSampleLibrary.sample(forFilenameOrID: candidate.photoURL ?? candidate.profileCode ?? candidate.name) {
+        if candidate.isBundledExample, let matchedSample = I3SSampleLibrary.sample(forFilenameOrID: candidate.photoURL ?? candidate.profileCode ?? candidate.name) {
             let candFp = matchedSample.fingerprint
             candidateFingerprint = candFp
             candidateFingerprintsCache[candidate.individualID] = candFp
-            let effectiveQueryFp = comparisonFingerprint.readyForProcessing ? comparisonFingerprint : (companionFgp ?? I3SFingerprint())
+            let effectiveQueryFp = comparisonFingerprint
             if effectiveQueryFp.readyForProcessing, candFp.readyForProcessing {
                 let comp = I3SCompareEngine.compareTwo(unknown: effectiveQueryFp, candidate: candFp, params: expertParams)
                 i3sComparison = comp
@@ -1790,7 +1873,7 @@ struct I3SWorkspaceView: View {
             }
         }
 
-        if let qData = comparisonData {
+        if let qData = comparisonData, !candidate.isBundledExample, store.mode == .live {
             isOverlayLoading = true
             let annotations = try? await store.fetchOverlayAnnotations(
                 imageData: qData,
@@ -1800,17 +1883,7 @@ struct I3SWorkspaceView: View {
                 maxThreads: expertParams.nrElements
             )
             guard candidateRevision == selectionRevision, queryRevision == inputRevision else { return }
-            if let annotations, !annotations.isEmpty {
-                overlayAnnotations = annotations
-            } else {
-                overlayAnnotations = (try? await DemoTurtleRepository().fetchOverlayAnnotations(
-                    imageData: qData,
-                    side: comparisonSide,
-                    candidateID: candidate.individualID,
-                    candidateSide: candidate.matchedPhotoSide,
-                    maxThreads: expertParams.nrElements
-                )) ?? []
-            }
+            overlayAnnotations = annotations ?? []
             isOverlayLoading = false
         }
     }
@@ -1846,7 +1919,7 @@ struct I3SWorkspaceView: View {
     }
 
     private func invalidateI3SScores() {
-        queryRevision += 1
+        matchContext.invalidate()
         candidateRevision += 1
         i3sComparison = nil
         overlayAnnotations = []
@@ -1865,7 +1938,7 @@ struct I3SWorkspaceView: View {
     }
 
     private func loadBackendOverlayPNG() async {
-        guard let qData = comparisonImageData, let selected = selectedCandidate else { return }
+        guard let qData = comparisonImageData, let selected = selectedCandidate, !selected.isBundledExample, store.mode == .live else { return }
         let selectionRevision = candidateRevision
         let inputRevision = queryRevision
         let side: TurtlePhotoSide = comparisonUsesSecondary ? .right : querySide
@@ -1887,27 +1960,55 @@ struct I3SWorkspaceView: View {
     }
 
     private func confirmMatchAndIncludeInDatabase(_ candidate: MatchCandidateItem) async {
-        guard let qData = queryImageData else { return }
-        isSubmittingDecision = true
-        defer { isSubmittingDecision = false }
-        do {
-            try await store.confirmMatchAndAttachPhoto(
-                individualID: candidate.individualID,
-                side: querySide,
-                imageData: qData
-            )
-            statusBannerMessage = "Included photo in database for \(candidate.name) (\(querySide.title))."
-        } catch {
-            statusBannerMessage = "Failed to include photo: \(error.localizedDescription)"
+        guard canWriteGallery, !candidate.isBundledExample else {
+            statusBannerMessage = "Examples cannot replace live gallery references."; return
         }
+        let side = isDualMode ? candidate.matchedPhotoSide : querySide
+        guard side == candidate.matchedPhotoSide,
+              let data = photoInputs.referenceData(for: side) else {
+            statusBannerMessage = "A query photograph of the same side is required."; return
+        }
+        pendingReplacement = ReferenceReplacement(candidateID: candidate.individualID, name: candidate.name,
+            side: side, data: data, revision: queryRevision, generation: store.sessionGeneration)
+        showsReplacementConfirmation = true
+    }
+
+    private func replaceGalleryReference(_ request: ReferenceReplacement) async {
+        guard request.revision == queryRevision, request.generation == store.sessionGeneration, canWriteGallery else {
+            statusBannerMessage = "The query or session changed. Review the photograph again."; return
+        }
+        isSubmittingDecision = true
+        defer { isSubmittingDecision = false; pendingReplacement = nil }
+        do {
+            try await store.confirmMatchAndAttachPhoto(individualID: request.candidateID,
+                side: request.side, imageData: request.data)
+            statusBannerMessage = "Replaced \(request.side.title) gallery reference for \(request.name). No encounter decision was saved."
+        } catch { statusBannerMessage = "Reference replacement failed: \(error.localizedDescription)" }
+    }
+
+    private func invalidateSearchResults() {
+        invalidateI3SScores()
+        clearSearchResults()
+    }
+
+    private func clearSearchResults() {
+        candidateRevision += 1
+        i3sComparison = nil; overlayAnnotations = []; backendOverlayImage = nil
+        useBackendOverlayPNG = false; isOverlayLoading = false
+        candidates = []; searchOutcome = nil; selectedCandidate = nil
+        candidateImage = nil; candidateFingerprint = nil
+        candidateImagesCache = [:]; candidateFingerprintsCache = [:]
+        isComparisonModalPresented = false
+        pendingReplacement = nil; showsReplacementConfirmation = false
     }
 
     private func submitNewIndividualEnrollment() async {
+        guard canWriteGallery else { statusBannerMessage = "Use an imported field photograph in Live mode to enroll."; return }
         isSubmittingDecision = true
         defer { isSubmittingDecision = false }
         do {
-            let leftBytes = isDualMode ? queryImageData : (querySide == .left ? queryImageData : nil)
-            let rightBytes = isDualMode ? secondaryImageData : (querySide == .right ? queryImageData : nil)
+            let leftBytes = photoInputs.referenceData(for: .left)
+            let rightBytes = photoInputs.referenceData(for: .right)
             let draft = IndividualDraft(id: enrollID, profileCode: enrollProfileCode,
                 name: enrollName.trimmingCharacters(in: .whitespacesAndNewlines), species: enrollSpecies.apiValue,
                 sex: enrollSex, firstSeenAt: enrollFirstSeenAt)
@@ -2267,7 +2368,7 @@ private struct I3SBothSharksComparisonCanvas: View {
 
                     comparisonImageTile(
                         title: candidate.map { "Found: \($0.name)" } ?? "Found Individual",
-                        subtitle: candidate.map { "Conf \($0.confidencePercent)% · XFeat \($0.localMatch)" } ?? "",
+                        subtitle: candidate.map { $0.isBundledExample ? "Bundled example" : "Backend \($0.confidencePercent)% · XFeat \($0.localMatch)" } ?? "",
                         titleColor: .cyan,
                         image: croppedIfAutoZoom(image: foundImage, fp: foundFingerprint),
                         fingerprint: autoZoomOn ? nil : foundFingerprint,
@@ -2542,7 +2643,6 @@ private struct I3SMultiPhotoComparisonCanvas: View {
                             ForEach(candidates) { cand in
                                 let isSelected = selectedCandidate?.individualID == cand.individualID
                                 let candImg = candidateImages[cand.individualID]
-                                    ?? I3SSampleLibrary.loadImage(named: cand.photoURL ?? (cand.matchedPhotoSide == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"))
                                 let candFp = candidateFingerprints[cand.individualID]
                                 multiCandidateCard(
                                     candidate: cand,
@@ -2583,7 +2683,7 @@ private struct I3SMultiPhotoComparisonCanvas: View {
 
                 Spacer()
 
-                Text("\(candidate.confidencePercent)% · XFeat \(candidate.localMatch)")
+                Text(candidate.isBundledExample ? "Bundled example · no AI score" : "Backend \(candidate.confidencePercent)% · XFeat \(candidate.localMatch)")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.cyan)
 
