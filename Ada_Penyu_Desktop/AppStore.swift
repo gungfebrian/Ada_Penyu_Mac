@@ -60,6 +60,10 @@ final class AppStore: ObservableObject {
     private let hasInjectedRepository: Bool
     private var hasBootstrapped = false
     private var searchTask: Task<Void, Never>?
+    private var individualLoadRevision = 0
+    private var mapLoadRevision = 0
+    private var dashboardLoadRevision = 0
+    private var allLoadRevision = 0
     private var photoCache: [String: NSImage] = [:]
     private var canLoadRecords: Bool { mode == .demo || isAuthenticated || hasInjectedRepository }
 
@@ -123,66 +127,82 @@ final class AppStore: ObservableObject {
     func reloadAll() async {
         guard canLoadRecords else { return }
         let generation = sessionGeneration
-        isLoading = true
-        lastError = nil
+        allLoadRevision += 1; let allRevision = allLoadRevision
+        individualLoadRevision += 1; let individualRevision = individualLoadRevision
+        mapLoadRevision += 1; let mapRevision = mapLoadRevision
+        dashboardLoadRevision += 1; let dashboardRevision = dashboardLoadRevision
+        let individualsQuery = currentIndividualQuery
+        let mapQuery = currentMapQuery
+        let dashboardQuery = currentDashboardQuery
+        isLoading = true; lastError = nil
         if mode == .live { isUsingFallback = false }
+        defer { if sessionGeneration == generation, allLoadRevision == allRevision { isLoading = false } }
         do {
-            async let individuals = repository.listIndividuals(query: currentIndividualQuery)
+            async let individuals = repository.listIndividuals(query: individualsQuery)
             async let favorites = repository.listFavorites()
-            async let dashboard = repository.dashboard(query: currentDashboardQuery)
-            async let sightings = repository.mapSightings(query: currentMapQuery)
-            let (individualPage, favoriteItems, dashboardSnapshot, mapItems) = try await (individuals, favorites, dashboard, sightings)
+            async let dashboard = repository.dashboard(query: dashboardQuery)
+            async let sightings = repository.mapSightings(query: mapQuery)
+            let (page, favoriteItems, snapshot, mapItems) = try await (individuals, favorites, dashboard, sightings)
             guard sessionGeneration == generation else { return }
-            turtles = individualPage.items
-            totalIndividuals = individualPage.total
-            favoriteTurtles = favoriteItems
-            self.dashboard = dashboardSnapshot
-            self.sightings = mapItems
+            if individualLoadRevision == individualRevision, currentIndividualQuery == individualsQuery {
+                turtles = page.items; totalIndividuals = page.total; favoriteTurtles = favoriteItems
+            }
+            if dashboardLoadRevision == dashboardRevision, chartSpecies == dashboardQuery.species { self.dashboard = snapshot }
+            if mapLoadRevision == mapRevision, currentMapQuery == mapQuery { self.sightings = mapItems }
         } catch {
-            guard sessionGeneration == generation else { return }
+            guard sessionGeneration == generation, allLoadRevision == allRevision,
+                  individualLoadRevision == individualRevision, currentIndividualQuery == individualsQuery,
+                  mapLoadRevision == mapRevision, currentMapQuery == mapQuery,
+                  dashboardLoadRevision == dashboardRevision, chartSpecies == dashboardQuery.species else { return }
             if !(error is CancellationError) { lastError = error.localizedDescription }
         }
-        isLoading = false
     }
 
     func reloadIndividuals() async {
         guard canLoadRecords else { return }
         let generation = sessionGeneration
+        individualLoadRevision += 1; let revision = individualLoadRevision
+        let query = currentIndividualQuery
         do {
-            let page = try await repository.listIndividuals(query: currentIndividualQuery)
-            guard sessionGeneration == generation else { return }
-            turtles = page.items
-            totalIndividuals = page.total
+            let page = try await repository.listIndividuals(query: query)
+            guard sessionGeneration == generation, individualLoadRevision == revision, currentIndividualQuery == query else { return }
+            turtles = page.items; totalIndividuals = page.total
             let favorites = try await repository.listFavorites()
-            guard sessionGeneration == generation else { return }
-            favoriteTurtles = favorites
-            lastError = nil
+            guard sessionGeneration == generation, individualLoadRevision == revision, currentIndividualQuery == query else { return }
+            favoriteTurtles = favorites; lastError = nil
         } catch {
-            if sessionGeneration == generation, !(error is CancellationError) { lastError = error.localizedDescription }
+            if sessionGeneration == generation, individualLoadRevision == revision, currentIndividualQuery == query,
+               !(error is CancellationError) { lastError = error.localizedDescription }
         }
     }
 
     func reloadMap() async {
         guard canLoadRecords else { return }
         let generation = sessionGeneration
+        mapLoadRevision += 1; let revision = mapLoadRevision
+        let query = currentMapQuery
         do {
-            let values = try await repository.mapSightings(query: currentMapQuery)
-            guard sessionGeneration == generation else { return }
+            let values = try await repository.mapSightings(query: query)
+            guard sessionGeneration == generation, mapLoadRevision == revision, currentMapQuery == query else { return }
             sightings = values
         } catch {
-            if sessionGeneration == generation, !(error is CancellationError) { lastError = error.localizedDescription }
+            if sessionGeneration == generation, mapLoadRevision == revision, currentMapQuery == query,
+               !(error is CancellationError) { lastError = error.localizedDescription }
         }
     }
 
     func reloadDashboard() async {
         guard canLoadRecords else { return }
         let generation = sessionGeneration
+        dashboardLoadRevision += 1; let revision = dashboardLoadRevision
+        let query = currentDashboardQuery
         do {
-            let value = try await repository.dashboard(query: currentDashboardQuery)
-            guard sessionGeneration == generation else { return }
+            let value = try await repository.dashboard(query: query)
+            guard sessionGeneration == generation, dashboardLoadRevision == revision, chartSpecies == query.species else { return }
             dashboard = value
         } catch {
-            if sessionGeneration == generation, !(error is CancellationError) { lastError = error.localizedDescription }
+            if sessionGeneration == generation, dashboardLoadRevision == revision, chartSpecies == query.species,
+               !(error is CancellationError) { lastError = error.localizedDescription }
         }
     }
 
@@ -260,7 +280,12 @@ final class AppStore: ObservableObject {
         clearPrivateState()
         isUsingFallback = false
         repository = newMode == .live ? RemoteTurtleRepository(client: client) : DemoTurtleRepository()
-        Task { await reloadAll() }
+        let generation = sessionGeneration
+        Task {
+            // A caller may already be awaiting an explicit reload for this transition.
+            guard sessionGeneration == generation, !isLoading else { return }
+            await reloadAll()
+        }
     }
 
     func export(_ request: ExportRequest) {
@@ -346,11 +371,13 @@ final class AppStore: ObservableObject {
     }
 
     func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
-        try await repository.matchPhoto(imageData: imageData, side: side, limit: limit)
+        photoCache.removeAll()
+        return try await repository.matchPhoto(imageData: imageData, side: side, limit: limit)
     }
 
     func matchPhotoPair(leftData: Data, rightData: Data, limit: Int = 10) async throws -> MatchSearchOutcome {
-        try await repository.matchPhotoPair(leftData: leftData, rightData: rightData, limit: limit)
+        photoCache.removeAll()
+        return try await repository.matchPhotoPair(leftData: leftData, rightData: rightData, limit: limit)
     }
 
     func fetchOverlayAnnotations(
