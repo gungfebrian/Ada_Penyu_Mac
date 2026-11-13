@@ -37,7 +37,11 @@ These components standardize filter interaction, condition semantics, and small 
 ## Adding a Component
 
 1. Give it one visual responsibility.
-2. Pass state and actions in from the parent; do not reach into `DemoFixtures` unless the component is explicitly data-display-only.
+2. Pass state and actions in from the parent; do not load records or fixtures inside components.
 3. Keep colors, spacing, and window dimensions in `DesignSystem.swift`.
 4. Add an accessibility label when the component's visual meaning is not represented by visible text.
 5. Add or update a SwiftUI preview when the component has a distinct visual state.
+
+## Turtle photos
+
+`TurtlePhoto` renders identity-photo thumbnails in Individuals/Favorites rows, the detail header, and recent sightings when the corresponding profile is loaded. The app shell supplies `turtlePhotoLoader`, backed by `AppStore.loadPhoto`, so photos use the existing authenticated transport and session-scoped cache. The component tries the provided left/right identity URLs in order and retains a placeholder when neither is available. Cancelled requests cannot replace a newer photo. Previews have no network loader by default.

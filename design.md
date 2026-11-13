@@ -82,4 +82,4 @@ The favorite control sits immediately to the left of the turtle thumbnails in th
 
 ## Current Product Boundary
 
-The current design is backed by `DemoData`. Favorites are interactive but session-only. The next data integration should preserve the same view interfaces and replace the demo source with the mobile/API adapter.
+The original visual design used demo records. The current app uses authenticated backend records and persistent favorites; Demo mode has been removed. See `docs/architecture.md` for the current data flow.

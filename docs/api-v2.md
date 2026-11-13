@@ -20,7 +20,7 @@ Profiles, creation, per-individual sighting history, and identity photo uploads 
 
 The v2 summary supplies exact sighting counts, latest encounter context, and the last recorded condition. Missing conditions/species remain Unknown. Missing latest encounters remain Not recorded. History is loaded through all pages; each encounter's measurements, location, condition, and markings retain that encounter's date. Authenticated photo URLs are loaded through the shared transport. External URLs never receive bearer credentials; private sessions have no shared disk cache or cookies and reject cross-origin redirects.
 
-Favorites, dashboard/map summaries, exports, authentication, overlays, and current matching retain their v1 routes. This is intentional version coexistence, not an automatic fallback when v2 fails. Live mode surfaces backend errors and a Retry action; Demo mode is selected explicitly.
+Favorites, dashboard/map summaries, exports, authentication, overlays, and current matching retain their v1 routes. This is intentional version coexistence, not an automatic fallback when v2 fails. Backend errors remain visible with a Retry action; no demo records are substituted.
 
 ## Deferred matching migration
 
