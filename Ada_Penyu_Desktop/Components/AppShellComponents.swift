@@ -356,6 +356,7 @@ private struct SidebarSectionRow: View {
             .padding(.vertical, 8)
             .background(isSelected ? Color.black.opacity(0.075) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -414,6 +415,7 @@ private struct SidebarSpeciesRow: View {
             .padding(.vertical, 8)
             .background(isSelected ? Color.black.opacity(0.075) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -448,6 +450,7 @@ private struct SidebarConditionRow: View {
             .padding(.vertical, 8)
             .background(isSelected ? Color.black.opacity(0.075) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
