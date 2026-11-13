@@ -56,6 +56,7 @@ struct ContentView: View {
                     onModeChange: store.switchMode,
                     onOpenAuthSettings: debugSettingsAction,
                     accountName: store.mode == .demo ? "Demo researcher" : store.accountName,
+                    accountEmail: store.mode == .demo ? "" : store.authEmail,
                     accountOrganization: store.mode == .demo ? "Demo" : store.accountOrganization,
                     onSignOut: signOutAction
                 )

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// App shell chrome — the sidebar and top bar. Both are shell-level (never
@@ -21,6 +22,7 @@ struct SidebarView: View {
     let onModeChange: (DataMode) -> Void
     var onOpenAuthSettings: (() -> Void)? = nil
     var accountName = "Demo researcher"
+    var accountEmail = ""
     var accountOrganization = "Demo"
     var onSignOut: (() -> Void)? = nil
 
@@ -115,76 +117,258 @@ struct SidebarView: View {
         .padding(.bottom, 22)
     }
 
-    // The user row is a Menu — the single settings surface for the whole
-    // shell. Right now it hosts the demo/live toggle; future account /
-    // preferences items can slot in here without adding new chrome.
+    // SwiftUI Menu draws this label as a 31pt popup button, so the profile
+    // is a normal view and the actions open through an AppKit menu.
     private var userMenu: some View {
-        Menu {
-            Section("Data source") {
-                ForEach(DataMode.allCases) { value in
-                    Button {
-                        onModeChange(value)
-                    } label: {
-                        // Show a checkmark on the current mode, but only when
-                        // we're NOT in fallback (fallback means the user chose
-                        // live but is temporarily on demo).
-                        if value == dataMode && !isFallback {
-                            Label(value.title, systemImage: "checkmark")
-                        } else {
-                            Text(value.title)
-                        }
-                    }
-                }
-            }
-            if isFallback {
-                Section {
-                    Text("Live backend unreachable — showing demo data.")
-                }
-            }
-            #if DEBUG
-            if let onOpenAuthSettings {
-                Divider()
-                Button {
-                    onOpenAuthSettings()
-                } label: {
-                    Label("Developer API Settings…", systemImage: "network.badge.shield.half.filled")
-                }
-            }
-            #endif
-            if let onSignOut {
-                Divider()
-                Button("Sign Out", action: onSignOut)
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(AdaColors.navy)
-                    .frame(width: 28, height: 28)
-                    .overlay { Text(String(accountName.prefix(1))).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white) }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(accountName).font(.system(size: 12, weight: .medium)).foregroundStyle(AdaColors.ink)
-                    Text(isFallback ? "Demo fallback" : dataModeLabel)
-                        .font(.system(size: 10))
-                        .foregroundStyle(isFallback ? AdaColors.orange : AdaColors.tertiaryInk)
-                }
-                Spacer()
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(AdaColors.tertiaryInk)
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 14)
-            .contentShape(Rectangle())
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(AdaColors.line)
+                .frame(height: 1)
+
+            SidebarAccountMenu(
+                label: accountLabel,
+                accessibilityLabel: accountAccessibilityLabel,
+                dataMode: dataMode,
+                isFallback: isFallback,
+                onModeChange: onModeChange,
+                onOpenAuthSettings: onOpenAuthSettings,
+                onSignOut: onSignOut
+            )
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help("Account and data source")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .accessibilityLabel("\(accountName), \(accountOrganization), \(dataModeLabel)")
-        .help("Account and data source")
+    }
+
+    private var accountLabel: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(AdaColors.navy)
+                .frame(width: 32, height: 32)
+                .overlay {
+                    Text(accountInitial)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(accountName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if !accountEmail.isEmpty {
+                    Text(accountEmail)
+                        .font(.system(size: 10))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text(statusLine)
+                    .font(.system(size: 10))
+                    .foregroundStyle(isFallback ? AdaColors.orange : AdaColors.tertiaryInk)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(AdaColors.tertiaryInk)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .frame(width: AdaLayout.sidebarWidth - 24, alignment: .leading)
+        .background(AdaColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(AdaColors.line, lineWidth: 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var accountInitial: String {
+        let trimmed = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return "?" }
+        return String(first).uppercased()
+    }
+
+    private var statusLine: String {
+        isFallback ? "Demo fallback" : dataModeLabel
+    }
+
+    private var accountAccessibilityLabel: String {
+        [accountName, accountEmail, statusLine]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
     }
 
     private var dataModeLabel: String {
         dataMode == .live ? "\(accountOrganization) · Live" : "Demo"
     }
+}
+
+/// Full-width account row. A SwiftUI `Menu` label collapses to the initial
+/// on macOS, so this view draws the profile and pops an `NSMenu` on click.
+private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
+    var label: Label
+    var accessibilityLabel: String
+    var dataMode: DataMode
+    var isFallback: Bool
+    var onModeChange: (DataMode) -> Void
+    var onOpenAuthSettings: (() -> Void)?
+    var onSignOut: (() -> Void)?
+
+    func makeCoordinator() -> SidebarAccountMenuModel { SidebarAccountMenuModel() }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SidebarAccountMenuHost, context: Context) -> CGSize? {
+        let fitting = nsView.hosting.fittingSize
+        let width = proposal.width ?? (fitting.width > 20 ? fitting.width : AdaLayout.sidebarWidth - 24)
+        let height = fitting.height > 20 ? fitting.height : 56
+        return CGSize(width: width, height: height)
+    }
+
+    func makeNSView(context: Context) -> SidebarAccountMenuHost {
+        let host = SidebarAccountMenuHost(rootView: AnyView(label))
+        host.model = context.coordinator
+        apply(context.coordinator)
+        host.syncAccessibilityLabel(accessibilityLabel)
+        return host
+    }
+
+    func updateNSView(_ nsView: SidebarAccountMenuHost, context: Context) {
+        nsView.hosting.rootView = AnyView(label)
+        nsView.model = context.coordinator
+        apply(context.coordinator)
+        nsView.syncAccessibilityLabel(accessibilityLabel)
+        nsView.invalidateIntrinsicContentSize()
+    }
+
+    private func apply(_ model: SidebarAccountMenuModel) {
+        model.dataMode = dataMode
+        model.isFallback = isFallback
+        model.onModeChange = onModeChange
+        model.onOpenAuthSettings = onOpenAuthSettings
+        model.onSignOut = onSignOut
+    }
+}
+
+final class SidebarAccountMenuModel: NSObject {
+    var dataMode: DataMode = .demo
+    var isFallback = false
+    var onModeChange: (DataMode) -> Void = { _ in }
+    var onOpenAuthSettings: (() -> Void)?
+    var onSignOut: (() -> Void)?
+
+    @objc func chooseMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let mode = DataMode(rawValue: raw) else { return }
+        onModeChange(mode)
+    }
+
+    @objc func openSettings(_ sender: NSMenuItem) { onOpenAuthSettings?() }
+
+    @objc func signOut(_ sender: NSMenuItem) { onSignOut?() }
+
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let header = NSMenuItem(title: "Data source", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+
+        for value in DataMode.allCases {
+            let item = NSMenuItem(title: value.title, action: #selector(chooseMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = value.rawValue
+            item.state = (value == dataMode && !isFallback) ? .on : .off
+            menu.addItem(item)
+        }
+
+        if isFallback {
+            menu.addItem(.separator())
+            let note = NSMenuItem(title: "Live backend unreachable — showing demo data.", action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+        }
+
+        #if DEBUG
+        if onOpenAuthSettings != nil {
+            menu.addItem(.separator())
+            let item = NSMenuItem(title: "Developer API Settings…", action: #selector(openSettings(_:)), keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: nil)
+            menu.addItem(item)
+        }
+        #endif
+
+        if onSignOut != nil {
+            menu.addItem(.separator())
+            let item = NSMenuItem(title: "Sign Out", action: #selector(signOut(_:)), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        return menu
+    }
+}
+
+private final class SidebarAccountMenuHost: NSView {
+    let hosting: InertAccountHostingView
+    var model: SidebarAccountMenuModel?
+
+    init(rootView: AnyView) {
+        hosting = InertAccountHostingView(rootView: rootView)
+        super.init(frame: .zero)
+        hosting.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(hosting)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: NSSize {
+        let fitting = hosting.fittingSize
+        guard fitting.width > 20, fitting.height > 20 else {
+            return NSSize(width: AdaLayout.sidebarWidth - 24, height: 56)
+        }
+        return fitting
+    }
+
+    override func layout() {
+        super.layout()
+        hosting.frame = bounds
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        return bounds.contains(local) ? self : nil
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func syncAccessibilityLabel(_ label: String) {
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(label)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let menu = model?.makeMenu() else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard let menu = model?.makeMenu() else { return false }
+        menu.popUp(positioning: nil, at: NSPoint(x: bounds.midX, y: bounds.maxY), in: self)
+        return true
+    }
+}
+
+private final class InertAccountHostingView: NSHostingView<AnyView> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 // MARK: - Sidebar rows
