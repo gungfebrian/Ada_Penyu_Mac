@@ -34,9 +34,9 @@ struct FavoritesView: View {
     let onSelect: (Turtle) -> Void
     let onBrowseIndividuals: () -> Void
 
-    private var filtered: [Turtle] {
+    var filtered: [Turtle] {
         turtles.filter { turtle in
-            (searchText.isEmpty || turtle.id.localizedCaseInsensitiveContains(searchText) || turtle.location.localizedCaseInsensitiveContains(searchText)) &&
+            (searchText.isEmpty || turtle.displayName.localizedCaseInsensitiveContains(searchText) || turtle.id.localizedCaseInsensitiveContains(searchText) || turtle.location.localizedCaseInsensitiveContains(searchText)) &&
             (selectedCondition == nil || selectedCondition == turtle.condition)
         }
     }
@@ -199,7 +199,7 @@ private struct TurtleTableRow: View {
             HStack(spacing: 8) {
                 FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
                 PlaceholderImage(size: 30)
-                Text(turtle.id).font(.system(size: 13, weight: .medium)).foregroundStyle(AdaColors.ink).padding(.leading, 2)
+                Text(turtle.displayName).font(.system(size: 13, weight: .medium)).foregroundStyle(AdaColors.ink).padding(.leading, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(turtle.species.rawValue).font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk).frame(width: AdaLayout.tableSpeciesWidth, alignment: .leading)

@@ -44,7 +44,7 @@ private struct PreviewCollectionScreen: View {
 }
 
 #Preview("Sea Turtle Group · Dashboard") {
-    ContentView()
+    ContentView(store: AppStore(mode: .demo))
         .frame(width: 1_512, height: 982)
 }
 

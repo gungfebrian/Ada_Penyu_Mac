@@ -20,7 +20,7 @@ DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_ident
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_identification_api ML_MODELS_ENABLED=false uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 ```
 
-Verify `curl http://127.0.0.1:8010/health` before switching the app to **Live API**. The desktop client uses the seeded records (`Turtle #001` … `Turtle #008`). If the API stops responding, the app falls back to Demo mode and labels the state in the top bar.
+Verify `curl http://127.0.0.1:8010/health` before switching the app to **Live API**. The desktop client uses the seeded records (`Turtle #001` … `Turtle #008`). In Debug, select `http://127.0.0.1:8010` in Developer API Settings, then sign in with a real backend account. The backend must expose v2 records. If the API stops responding, the app stays in Live mode and shows the error; select Demo explicitly for an offline walkthrough.
 
 The `ML_MODELS_ENABLED=false` setup above is for browsing seeded records. It does not verify live photo identification. For a matching walkthrough, enable and configure the backend models, then check single-photo and paired-photo requests separately. Demo candidate results are presentation fixtures, not model predictions.
 

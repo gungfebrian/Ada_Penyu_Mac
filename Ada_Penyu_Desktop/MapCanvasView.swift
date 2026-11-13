@@ -55,7 +55,7 @@ struct MapPageView: View {
     }
 
     private func open(_ sighting: Sighting) {
-        guard let turtle = turtles.first(where: { $0.id == sighting.turtleID }) ?? DemoFixtures.turtles.first(where: { $0.id == sighting.turtleID }) else { return }
+        guard let turtle = turtles.first(where: { $0.id == sighting.turtleID }) else { return }
         onSelect(turtle)
     }
 
@@ -134,7 +134,7 @@ private struct MapFilterPanel: View {
                             HStack(spacing: 12) {
                                 RoundedRectangle(cornerRadius: 2).fill(sighting.condition.tint).frame(width: 4, height: 56)
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(sighting.turtleID).font(.system(size: 13, weight: .medium)).foregroundStyle(AdaColors.ink)
+                                    Text(sighting.displayName).font(.system(size: 13, weight: .medium)).foregroundStyle(AdaColors.ink)
                                     Text("\(sighting.species.rawValue) · \(sighting.date)").font(.system(size: 10)).foregroundStyle(AdaColors.tertiaryInk)
                                 }
                                 Spacer()

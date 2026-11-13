@@ -113,8 +113,10 @@ struct I3SWorkspaceView: View {
     @State private var isEnrollSheetPresented = false
     @State private var enrollName = ""
     @State private var enrollSpecies: TurtleSpecies = .green
-    @State private var enrollCondition: TurtleCondition = .healthy
-    @State private var enrollNotes = ""
+    @State private var enrollID = UUID()
+    @State private var enrollProfileCode = ""
+    @State private var enrollSex = "unknown"
+    @State private var enrollFirstSeenAt = Date()
     @State private var isSubmittingDecision = false
 
     private var activeFingerprint: I3SFingerprint {
@@ -820,8 +822,10 @@ struct I3SWorkspaceView: View {
                 Button {
                     enrollName = "Turtle #\(String(format: "%03d", store.turtles.count + 1))"
                     enrollSpecies = selectedCandidate?.species ?? .green
-                    enrollCondition = .healthy
-                    enrollNotes = "Enrolled via I3S Pattern v4.02 workspace"
+                    enrollID = UUID()
+                    enrollProfileCode = ""
+                    enrollSex = "unknown"
+                    enrollFirstSeenAt = Date()
                     isEnrollSheetPresented = true
                 } label: {
                     Label("Enroll as New Individual…", systemImage: "plus.circle")
@@ -1150,8 +1154,10 @@ struct I3SWorkspaceView: View {
                     isComparisonModalPresented = false
                     enrollName = "Turtle #\(String(format: "%03d", store.turtles.count + 1))"
                     enrollSpecies = selected.species
-                    enrollCondition = .healthy
-                    enrollNotes = "Enrolled via I3S Pattern v4.02 workspace"
+                    enrollID = UUID()
+                    enrollProfileCode = ""
+                    enrollSex = "unknown"
+                    enrollFirstSeenAt = Date()
                     isEnrollSheetPresented = true
                 } label: {
                     Text("New Individual…")
@@ -1348,14 +1354,14 @@ struct I3SWorkspaceView: View {
                 }
             }
 
-            Picker("Health Condition", selection: $enrollCondition) {
-                ForEach(TurtleCondition.allCases) { cond in
-                    Text(cond.rawValue).tag(cond)
-                }
-            }
-
-            TextField("Notes / Capture Location", text: $enrollNotes)
+            TextField("Six-digit profile code", text: $enrollProfileCode)
                 .textFieldStyle(.roundedBorder)
+            Picker("Sex", selection: $enrollSex) {
+                Text("Unknown").tag("unknown")
+                Text("Female").tag("female")
+                Text("Male").tag("male")
+            }
+            DatePicker("First seen", selection: $enrollFirstSeenAt)
 
             HStack {
                 Spacer()
@@ -1370,7 +1376,7 @@ struct I3SWorkspaceView: View {
                     Text(isSubmittingDecision ? "Enrolling…" : "Create & Index Gallery Photo")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(enrollName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingDecision)
+                .disabled(enrollName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || enrollProfileCode.count != 6 || isSubmittingDecision)
             }
         }
         .padding(22)
@@ -1649,12 +1655,14 @@ struct I3SWorkspaceView: View {
                     statusBannerMessage = "Found \(candidates.count) candidates — Top match: \(top.name) (\(top.confidencePercent)% confidence). Click 'Compare Visually' or 'Compare Multiple'."
                 }
             } else {
-                await populateBundledSampleCandidates(excludingSampleID: nil, side: querySide)
+                candidates = []
+                selectedCandidate = nil
+                candidateImage = nil
+                statusBannerMessage = "No reliable matching candidates found."
             }
         } catch {
             guard queryRevision == revision else { return }
-            await populateBundledSampleCandidates(excludingSampleID: nil, side: querySide)
-            statusBannerMessage = "Live backend unreachable — ranked against \(candidates.count) local gallery individuals. Click 'Compare Visually' or 'Compare Multiple'."
+            statusBannerMessage = error.localizedDescription
         }
     }
 
@@ -1900,16 +1908,12 @@ struct I3SWorkspaceView: View {
         do {
             let leftBytes = isDualMode ? queryImageData : (querySide == .left ? queryImageData : nil)
             let rightBytes = isDualMode ? secondaryImageData : (querySide == .right ? queryImageData : nil)
-            let created = try await store.enrollNewIndividual(
-                name: enrollName.trimmingCharacters(in: .whitespacesAndNewlines),
-                species: enrollSpecies,
-                condition: enrollCondition,
-                notes: enrollNotes.isEmpty ? nil : enrollNotes,
-                leftPhoto: leftBytes,
-                rightPhoto: rightBytes
-            )
+            let draft = IndividualDraft(id: enrollID, profileCode: enrollProfileCode,
+                name: enrollName.trimmingCharacters(in: .whitespacesAndNewlines), species: enrollSpecies.apiValue,
+                sex: enrollSex, firstSeenAt: enrollFirstSeenAt)
+            let created = try await store.enrollNewIndividual(draft, leftPhoto: leftBytes, rightPhoto: rightBytes)
             isEnrollSheetPresented = false
-            statusBannerMessage = "Enrolled new individual '\(created.id)' and indexed head photo(s) in backend."
+            statusBannerMessage = "Enrolled new individual '\(created.displayName)' and indexed head photo(s) in backend."
         } catch {
             statusBannerMessage = "Enrollment failed: \(error.localizedDescription)"
         }

@@ -11,7 +11,7 @@
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI_%26_MapKit-4A90CD?style=for-the-badge&logo=swift&logoColor=white)](#architecture)
 [![I3S Pattern](https://img.shields.io/badge/I3S_Pattern-v4.02_Oracle_Verified-177A4F?style=for-the-badge)](docs/i3s-reference.md)
 [![AI Retrieval](https://img.shields.io/badge/Backend_AI-MiewID_%2B_XFeat-183A52?style=for-the-badge)](#photo-identification--i3s-workspace)
-[![Tests](https://img.shields.io/badge/Tests-10_Passed_(97_Pairs)-2EA043?style=for-the-badge)](#validation--testing)
+[![Tests](https://img.shields.io/badge/Tests-XCTest_(97_Oracle_Pairs)-2EA043?style=for-the-badge)](#validation--testing)
 [![License](https://img.shields.io/badge/I3S_Matcher-GPL--2.0--or--later-blue?style=for-the-badge)](docs/licenses/I3S-GPL-2.0.txt)
 
 [Features](#key-features) • [Architecture](#architecture) • [Photo Identification](#photo-identification--i3s-workspace) • [Getting Started](#getting-started) • [Data Modes](#data-modes--api-integration) • [Validation](#validation--testing) • [Documentation](#documentation)
@@ -35,7 +35,7 @@
 | **Individuals & Favorites** | Searchable, sortable individual catalog with unified species/condition sidebar filtering, optimistic favorite toggling, live sidebar counters, and CSV/JSON data export. |
 | **Turtle Detail Dossier** | Comprehensive per-individual profile featuring carapace measurements, historical sighting logs, anatomical markers, and location history. |
 | **I3S & AI Identification** | Single-side and dual-side (`Left` / `Right`) database search via backend **MiewID/XFeat**, paired with interactive 3-point anatomical landmarking, polygonal ROI annotation, `.fgp` binary fingerprint import/export, and visual keypoint correspondence inspection. |
-| **Resilient Data Layer** | Seamless switching between authenticated **Live API** mode and deterministic **Demo mode**, with automatic non-blocking fallback if the backend becomes unreachable. |
+| **Resilient Data Layer** | Authenticated **Live API** mode with explicit errors and a separately selected deterministic **Demo mode**. |
 
 ---
 
@@ -51,7 +51,7 @@ flowchart LR
     DEMO["DemoTurtleRepository\nDeterministic Offline Dataset"]
     API["RemoteTurtleRepository\nDTO Mapping + APIClient"]
     I3S["I3SEngine\n.fgp Parser · Reference Matcher · Blob Extractor"]
-    BE["FastAPI Backend\n/api/v1 (MiewID / XFeat)"]
+    BE["FastAPI Backend\n/api/v2 records · /api/v1 support"]
     DB[("PostgreSQL\nProfiles · Sightings · Favorites")]
 
     UI <--> STORE
@@ -150,12 +150,13 @@ xcodebuild \
 
 ## Data Modes & API Integration
 
-The application starts in **Live API** mode and can be switched to **Demo mode** at any time from the top-bar account menu.
+The app starts at sign-in for **Live API** mode. **Use Demo Data** on the login screen, or the sidebar data-source menu, explicitly selects bundled fixtures. Live errors remain visible with Retry; the app never substitutes demo records or matching candidates for an API failure.
 
-| Mode | Behavior |
-| :--- | :--- |
-| **Live API** | Connects to `http://127.0.0.1:8010` by default (configurable via the account sheet or `ada.apiBaseURL` in `UserDefaults`). Authenticates with Bearer tokens and sends a stable `X-User-Id` header for user-scoped favorites. Automatically falls back to Demo mode with a visible banner if the server is unreachable. |
-| **Demo Mode** | Uses `DemoTurtleRepository` with 8 deterministic sea turtle profiles, sighting histories, and bundled sample assets. Ideal for offline walkthroughs and UI evaluations without requiring PostgreSQL or ML weights. |
+Both Debug and Release default to `https://api.donagondev.my.id`. Debug builds expose **Developer API Settings…** on the login screen and sidebar menu: edit a URL, test public `/health`, save, or reset. Saving/resetting signs out and clears private state. Release ignores stored Debug overrides.
+
+Sign-in loads the actual account and organization. **Remember me** stores only rotating refresh credentials in this Mac's data-protection Keychain. Passwords and access tokens are never persisted. Launch restores a remembered session before private requests; concurrent unauthorized requests share one refresh. Sign Out clears private records, images, and workspace state and requests server-side session revocation. Keychain persistence requires an appropriately signed app; storage errors are surfaced rather than downgrading to plaintext.
+
+Profiles, sighting history, and identity-photo uploads use `/api/v2`. Authentication, favorites, dashboard/map, exports, overlays, and current photo matching use their supported `/api/v1` routes. Matching migration is recorded as a deferred checklist pending Gung's sighting workflow. See [API v2 and session setup](docs/api-v2.md).
 
 ### Running the Local Backend Stack
 
@@ -178,7 +179,7 @@ DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/turtle_ident
   ML_MODELS_ENABLED=false uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 ```
 
-Verify service availability with `curl http://127.0.0.1:8010/health` (`{"status":"ok"}`) before switching the desktop client to **Live API**.
+Verify service availability with `curl http://127.0.0.1:8010/health` (`{"status":"ok"}`) before selecting that server in the Debug settings and signing in. A healthy server must also expose the v2 records contract.
 
 ---
 
@@ -199,7 +200,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 
 - **Original C++ Oracle Parity (`97/97` pairs):** Compares Swift I3S distance scores and matched feature-pair counts against the official C++ implementation across all 97 same-side combinations (including self-comparisons) from the 13 bundled sample fingerprints.
 - **Encounter Ranking Regression (`13/13` queries):** Leave-one-encounter-out ranking verification across the bundled individuals.
-- **Binary `.fgp` Codec & App Store Flows:** Verifies lossless `I3S40` binary read/write round-tripping, point-in-polygon geometry, sidebar filtering exclusivity, optimistic favorite updates, and automatic offline fallback.
+- **Binary `.fgp` Codec & App Store Flows:** Verifies lossless `I3S40` binary read/write round-tripping, point-in-polygon geometry, sidebar filtering exclusivity, favorite updates, and explicit Live/Demo state.
 
 *(Note: Passing local regression tests establish compatibility on saved sample fixtures; they do not claim field-level open-set accuracy, new-photo SURF extraction parity, or backend load/stress capacity.)*
 
@@ -211,7 +212,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 - **Mapping:** Apple MapKit (`MapCanvasView` with custom `TurtleMapPin` annotations)
 - **Concurrency:** Swift Structured Concurrency (`async`/`await`, `@MainActor` state isolation)
 - **Pattern Matching:** Native Swift port of I3S Pattern v4.02 affine alignment & metric scoring (`I3SEngine`)
-- **Backend Integration:** RESTful `URLSession` client with Bearer authentication, multipart photo upload, and ISO-8601 decoding
+- **Backend Integration:** RESTful `URLSession` client with coordinated Bearer authentication, Keychain-backed refresh sessions, v2 records, multipart photos, and ISO-8601 decoding
 
 ---
 
