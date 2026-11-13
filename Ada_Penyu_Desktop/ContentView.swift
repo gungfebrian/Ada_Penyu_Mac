@@ -9,10 +9,11 @@ struct ContentView: View {
         Group {
             if store.isRestoring {
                 ProgressView("Restoring sign-in…")
-            } else if store.mode == .live && !store.isAuthenticated {
+            } else if !store.isAuthenticated {
                 AccountLoginView(store: store)
             } else {
                 workspace.id(store.sessionGeneration)
+                    .environment(\.turtlePhotoLoader, { await store.loadPhoto(for: $0) })
             }
         }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
@@ -51,13 +52,10 @@ struct ContentView: View {
                         store.selectedSpecies = species
                         store.activeSection = .individuals
                     },
-                    dataMode: store.mode,
-                    isFallback: store.isUsingFallback,
-                    onModeChange: store.switchMode,
                     onOpenAuthSettings: debugSettingsAction,
-                    accountName: store.mode == .demo ? "Demo researcher" : store.accountName,
-                    accountEmail: store.mode == .demo ? "" : store.authEmail,
-                    accountOrganization: store.mode == .demo ? "Demo" : store.accountOrganization,
+                    accountName: store.accountName,
+                    accountEmail: store.authEmail,
+                    accountOrganization: store.accountOrganization,
                     onSignOut: signOutAction
                 )
 

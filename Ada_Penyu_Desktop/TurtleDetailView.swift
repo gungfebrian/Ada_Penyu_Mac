@@ -691,7 +691,7 @@ private struct TurtleSummaryCard: View {
 
     var body: some View {
         HStack(spacing: 22) {
-            PlaceholderImage(size: 85)
+            TurtlePhoto(paths: turtle.identityPhotoPaths, size: 85)
             VStack(alignment: .leading, spacing: 7) {
                 Text(turtle.species.rawValue).font(.system(size: 12, weight: .medium)).foregroundStyle(AdaColors.ink)
                 Text(turtle.displayName).font(.system(size: 22, weight: .semibold)).foregroundStyle(AdaColors.ink)

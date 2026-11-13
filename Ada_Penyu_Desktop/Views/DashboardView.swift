@@ -287,7 +287,7 @@ private struct RecentSightingsCard: View {
             HStack { Text("Recent sightings").font(.system(size: 14, weight: .semibold)).foregroundStyle(AdaColors.ink); Spacer(); Text("Latest field records").font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk) }
             VStack(spacing: 0) {
                 ForEach(sightings.prefix(5)) { sighting in
-                    Button { if let turtle = turtles.first(where: { $0.id == sighting.turtleID }) { onSelect(turtle) } } label: { RecentSightingRow(sighting: sighting) }
+                    Button { if let turtle = turtles.first(where: { $0.id == sighting.turtleID }) { onSelect(turtle) } } label: { RecentSightingRow(sighting: sighting, photoPaths: turtles.first(where: { $0.id == sighting.turtleID })?.identityPhotoPaths ?? []) }
                         .buttonStyle(.plain)
                     if sighting.id != sightings.prefix(5).last?.id { Divider().overlay(AdaColors.line) }
                 }
@@ -303,9 +303,10 @@ private struct RecentSightingsCard: View {
 
 private struct RecentSightingRow: View {
     let sighting: Sighting
+    let photoPaths: [String]
     var body: some View {
         HStack(spacing: 12) {
-            PlaceholderImage(size: 30)
+            TurtlePhoto(paths: photoPaths, size: 30)
             VStack(alignment: .leading, spacing: 3) { Text(sighting.displayName).font(.system(size: 13)).foregroundStyle(AdaColors.ink); Text(sighting.location).font(.system(size: 11)).foregroundStyle(AdaColors.tertiaryInk) }
             Spacer(minLength: 8)
             ConditionPill(condition: sighting.condition)

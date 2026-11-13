@@ -198,7 +198,7 @@ private struct TurtleTableRow: View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
                 FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
-                PlaceholderImage(size: 30)
+                TurtlePhoto(paths: turtle.identityPhotoPaths, size: 30)
                 Text(turtle.displayName).font(.system(size: 13, weight: .medium)).foregroundStyle(AdaColors.ink).padding(.leading, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

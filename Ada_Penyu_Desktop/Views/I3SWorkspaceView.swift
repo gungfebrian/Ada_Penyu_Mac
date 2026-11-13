@@ -80,6 +80,8 @@ struct I3SWorkspaceView: View {
     @State private var isDropTargeted = false
 
     // Search & candidate state
+    private enum CandidateOrigin { case backend, referenceSamples }
+    @State private var candidateOrigin: CandidateOrigin = .backend
     @State private var isSearching = false
     @State private var queryRevision = 0
     @State private var candidateRevision = 0
@@ -1183,7 +1185,7 @@ struct I3SWorkspaceView: View {
                         .background(AdaColors.green, in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(queryImageData == nil || isSubmittingDecision)
+                .disabled(candidateOrigin != .backend || queryImageData == nil || isSubmittingDecision)
             }
             .padding(.horizontal, 22)
             .frame(height: 56)
@@ -1631,6 +1633,7 @@ struct I3SWorkspaceView: View {
 
     private func runDatabaseSearch() async {
         guard let qData = queryImageData else { return }
+        queryRevision += 1
         let revision = queryRevision
         isSearching = true
         statusBannerMessage = "Searching gallery via MiewID + XFeat LighterGlue…"
@@ -1644,11 +1647,13 @@ struct I3SWorkspaceView: View {
                 outcome = try await store.matchPhoto(imageData: qData, side: querySide, limit: 10)
             }
             guard queryRevision == revision else { return }
+            beginCandidateResults(origin: .backend)
             searchOutcome = outcome
 
             if !outcome.candidates.isEmpty {
                 candidates = outcome.candidates
                 await preloadMultiCompareCandidates()
+                guard queryRevision == revision else { return }
                 if let top = candidates.first {
                     await selectCandidate(top)
                     guard queryRevision == revision else { return }
@@ -1667,6 +1672,8 @@ struct I3SWorkspaceView: View {
     }
 
     private func populateBundledSampleCandidates(excludingSampleID: String?, side: TurtlePhotoSide) async {
+        queryRevision += 1
+        let revision = queryRevision
         let queryFp = comparisonFingerprint.readyForProcessing ? comparisonFingerprint : companionFgp
         let gallerySamples = I3SSampleLibrary.samples.filter {
             $0.photoSide == side && ($0.id != excludingSampleID && $0.title != queryTitle)
@@ -1712,6 +1719,7 @@ struct I3SWorkspaceView: View {
             item.i3sPairedCount = pairCount
             return item
         }
+        beginCandidateResults(origin: .referenceSamples)
         candidates = items
         searchOutcome = MatchSearchOutcome(
             querySide: side,
@@ -1722,6 +1730,7 @@ struct I3SWorkspaceView: View {
             pairAgreed: nil
         )
         await preloadMultiCompareCandidates()
+        guard queryRevision == revision else { return }
         if let first = items.first {
             await selectCandidate(first)
         }
@@ -1733,15 +1742,38 @@ struct I3SWorkspaceView: View {
         isComparisonModalPresented = true
     }
 
+    private func beginCandidateResults(origin: CandidateOrigin) {
+        candidateRevision += 1
+        candidateOrigin = origin
+        selectedCandidate = nil
+        candidateImage = nil
+        candidateFingerprint = nil
+        i3sComparison = nil
+        overlayAnnotations = []
+        backendOverlayImage = nil
+        useBackendOverlayPNG = false
+        isOverlayLoading = false
+        candidateImagesCache = [:]
+        candidateFingerprintsCache = [:]
+    }
+
+    private func loadCandidateImage(path: String) async -> NSImage? {
+        if candidateOrigin == .referenceSamples {
+            return I3SSampleLibrary.sample(forFilenameOrID: path).flatMap { I3SSampleLibrary.loadImage(for: $0) }
+        }
+        return await store.loadPhoto(for: path)
+    }
+
     private func preloadMultiCompareCandidates() async {
+        let revision = candidateRevision
         for cand in candidates.prefix(max(multiCompareLimit, 6)) {
             if candidateImagesCache[cand.individualID] == nil {
                 let path = cand.photoURL ?? "/api/v1/individuals/\(cand.individualID.uuidString)/photos/\(cand.matchedPhotoSide.rawValue)"
-                if let img = await store.loadPhoto(for: path) ?? I3SSampleLibrary.loadImage(named: cand.photoURL ?? "Amina1_L.jpg") {
-                    candidateImagesCache[cand.individualID] = img
-                }
+                let img = await loadCandidateImage(path: path)
+                guard candidateRevision == revision else { return }
+                if let img { candidateImagesCache[cand.individualID] = img }
             }
-            if candidateFingerprintsCache[cand.individualID] == nil,
+            if candidateOrigin == .referenceSamples, candidateFingerprintsCache[cand.individualID] == nil,
                let matchedSample = I3SSampleLibrary.sample(forFilenameOrID: cand.photoURL ?? cand.profileCode ?? cand.name) {
                 candidateFingerprintsCache[cand.individualID] = matchedSample.fingerprint
             }
@@ -1749,6 +1781,7 @@ struct I3SWorkspaceView: View {
     }
 
     private func selectCandidate(_ candidate: MatchCandidateItem) async {
+        guard candidates.contains(where: { $0.individualID == candidate.individualID }) else { return }
         candidateRevision += 1
         let selectionRevision = candidateRevision
         let inputRevision = queryRevision
@@ -1766,15 +1799,14 @@ struct I3SWorkspaceView: View {
         let comparisonData = comparisonImageData
         let comparisonSide: TurtlePhotoSide = comparisonUsesSecondary ? .right : querySide
         let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.individualID.uuidString)/photos/\(candidate.matchedPhotoSide.rawValue)"
-        let fetchedImage = await store.loadPhoto(for: path)
-            ?? I3SSampleLibrary.loadImage(named: candidate.photoURL ?? (candidate.matchedPhotoSide == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"))
+        let fetchedImage = await loadCandidateImage(path: path)
         guard candidateRevision == selectionRevision, queryRevision == inputRevision else { return }
         candidateImage = fetchedImage
         if let fetchedImage {
             candidateImagesCache[candidate.individualID] = fetchedImage
         }
 
-        if let matchedSample = I3SSampleLibrary.sample(forFilenameOrID: candidate.photoURL ?? candidate.profileCode ?? candidate.name) {
+        if candidateOrigin == .referenceSamples, let matchedSample = I3SSampleLibrary.sample(forFilenameOrID: candidate.photoURL ?? candidate.profileCode ?? candidate.name) {
             let candFp = matchedSample.fingerprint
             candidateFingerprint = candFp
             candidateFingerprintsCache[candidate.individualID] = candFp
@@ -1790,7 +1822,7 @@ struct I3SWorkspaceView: View {
             }
         }
 
-        if let qData = comparisonData {
+        if candidateOrigin == .backend, let qData = comparisonData {
             isOverlayLoading = true
             let annotations = try? await store.fetchOverlayAnnotations(
                 imageData: qData,
@@ -1800,17 +1832,8 @@ struct I3SWorkspaceView: View {
                 maxThreads: expertParams.nrElements
             )
             guard candidateRevision == selectionRevision, queryRevision == inputRevision else { return }
-            if let annotations, !annotations.isEmpty {
-                overlayAnnotations = annotations
-            } else {
-                overlayAnnotations = (try? await DemoTurtleRepository().fetchOverlayAnnotations(
-                    imageData: qData,
-                    side: comparisonSide,
-                    candidateID: candidate.individualID,
-                    candidateSide: candidate.matchedPhotoSide,
-                    maxThreads: expertParams.nrElements
-                )) ?? []
-            }
+            overlayAnnotations = annotations ?? []
+            if annotations == nil { statusBannerMessage = "Match overlays are unavailable." }
             isOverlayLoading = false
         }
     }
@@ -1865,7 +1888,7 @@ struct I3SWorkspaceView: View {
     }
 
     private func loadBackendOverlayPNG() async {
-        guard let qData = comparisonImageData, let selected = selectedCandidate else { return }
+        guard candidateOrigin == .backend, let qData = comparisonImageData, let selected = selectedCandidate else { return }
         let selectionRevision = candidateRevision
         let inputRevision = queryRevision
         let side: TurtlePhotoSide = comparisonUsesSecondary ? .right : querySide
@@ -1887,6 +1910,7 @@ struct I3SWorkspaceView: View {
     }
 
     private func confirmMatchAndIncludeInDatabase(_ candidate: MatchCandidateItem) async {
+        guard candidateOrigin == .backend, candidates.contains(where: { $0.individualID == candidate.individualID }) else { return }
         guard let qData = queryImageData else { return }
         isSubmittingDecision = true
         defer { isSubmittingDecision = false }
@@ -2542,7 +2566,6 @@ private struct I3SMultiPhotoComparisonCanvas: View {
                             ForEach(candidates) { cand in
                                 let isSelected = selectedCandidate?.individualID == cand.individualID
                                 let candImg = candidateImages[cand.individualID]
-                                    ?? I3SSampleLibrary.loadImage(named: cand.photoURL ?? (cand.matchedPhotoSide == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"))
                                 let candFp = candidateFingerprints[cand.individualID]
                                 multiCandidateCard(
                                     candidate: cand,

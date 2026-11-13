@@ -4,25 +4,16 @@ import XCTest
 @testable import Ada_Penyu_Desktop
 
 final class SidebarAccountTests: XCTestCase {
-    func testAccountMenuListsDataSourceAndSignOut() {
+    func testAccountMenuListsActionsWithoutDataSource() {
         let model = SidebarAccountMenuModel()
-        model.dataMode = .demo
         model.onSignOut = {}
         model.onOpenAuthSettings = {}
 
         let menu = model.makeMenu()
         let titles = menu.items.map(\.title)
-        XCTAssertTrue(titles.contains("Demo mode"))
-        XCTAssertTrue(titles.contains("Live API"))
+        XCTAssertFalse(titles.contains("Demo mode"))
+        XCTAssertFalse(titles.contains("Live API"))
         XCTAssertTrue(titles.contains("Sign Out"))
-        XCTAssertEqual(menu.items.first { $0.title == "Demo mode" }?.state, .on)
-        XCTAssertEqual(menu.items.first { $0.title == "Live API" }?.state, .off)
-
-        var chosen: DataMode?
-        model.onModeChange = { chosen = $0 }
-        let live = menu.items.first { $0.title == "Live API" }
-        model.chooseMode(live!)
-        XCTAssertEqual(chosen, .live)
     }
 
     @MainActor
@@ -49,7 +40,7 @@ final class SidebarAccountTests: XCTestCase {
         let label = account[0].accessibilityLabel() ?? ""
         XCTAssertTrue(label.contains("Amina Saleh"), label)
         XCTAssertTrue(label.contains("amina@example.com"), label)
-        XCTAssertTrue(label.contains("Demo"), label)
+        XCTAssertTrue(label.contains("Sea Turtle Group · Live"), label)
 
         let local = NSPoint(x: account[0].bounds.midX, y: account[0].bounds.midY)
         let inSuper = account[0].convert(local, to: account[0].superview)
@@ -65,9 +56,6 @@ final class SidebarAccountTests: XCTestCase {
             favoriteCount: 2,
             selectedSpecies: nil,
             onSelectSpecies: { _ in },
-            dataMode: .demo,
-            isFallback: false,
-            onModeChange: { _ in },
             accountName: "Amina Saleh",
             accountEmail: "amina@example.com",
             accountOrganization: "Sea Turtle Group"

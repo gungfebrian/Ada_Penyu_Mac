@@ -44,12 +44,10 @@ final class AppStore: ObservableObject {
     @Published private(set) var totalIndividuals = 0
     @Published private(set) var isLoading = false
     @Published private(set) var lastError: String?
-    @Published private(set) var mode: DataMode
-    @Published private(set) var isUsingFallback = false
     @Published var isAuthSheetPresented = false
     @Published private(set) var authEmail = ""
-    @Published private(set) var accountName = "Demo researcher"
-    @Published private(set) var accountOrganization = "Demo"
+    @Published private(set) var accountName = "Researcher"
+    @Published private(set) var accountOrganization = ""
     @Published private(set) var apiBaseURLString: String
     @Published private(set) var isAuthenticated = false
     @Published private(set) var isRestoring = false
@@ -61,15 +59,14 @@ final class AppStore: ObservableObject {
     private var hasBootstrapped = false
     private var searchTask: Task<Void, Never>?
     private var photoCache: [String: NSImage] = [:]
-    private var canLoadRecords: Bool { mode == .demo || isAuthenticated || hasInjectedRepository }
+    private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
-    init(mode: DataMode = .live, repository: TurtleRepository? = nil, client: APIClient? = nil) {
+    init(repository: TurtleRepository? = nil, client: APIClient? = nil) {
         let client = client ?? APIClient()
         self.client = client
-        self.mode = mode
         self.apiBaseURLString = client.baseURL.absoluteString
         self.hasInjectedRepository = repository != nil
-        self.repository = repository ?? (mode == .live ? RemoteTurtleRepository(client: client) : DemoTurtleRepository())
+        self.repository = repository ?? RemoteTurtleRepository(client: client)
         observeSession()
         updateAccount()
     }
@@ -87,8 +84,8 @@ final class AppStore: ObservableObject {
     private func updateAccount() {
         isAuthenticated = client.account != nil
         authEmail = client.account?.email ?? ""
-        accountName = client.account?.displayName ?? "Demo researcher"
-        accountOrganization = client.account?.organisationName ?? "Demo"
+        accountName = client.account?.displayName ?? "Researcher"
+        accountOrganization = client.account?.organisationName ?? ""
     }
 
     private func clearPrivateState() {
@@ -103,7 +100,7 @@ final class AppStore: ObservableObject {
         dismissDetail()
         isLoading = false
         lastError = nil
-        repository = mode == .live ? RemoteTurtleRepository(client: client) : DemoTurtleRepository()
+        repository = RemoteTurtleRepository(client: client)
     }
 
     deinit { searchTask?.cancel() }
@@ -111,7 +108,7 @@ final class AppStore: ObservableObject {
     func bootstrap() async {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
-        if mode == .live, !hasInjectedRepository, !isAuthenticated {
+        if !hasInjectedRepository, !isAuthenticated {
             isRestoring = true
             do { try await client.restoreSession(); updateAccount() }
             catch { lastError = error.localizedDescription }
@@ -125,7 +122,6 @@ final class AppStore: ObservableObject {
         let generation = sessionGeneration
         isLoading = true
         lastError = nil
-        if mode == .live { isUsingFallback = false }
         do {
             async let individuals = repository.listIndividuals(query: currentIndividualQuery)
             async let favorites = repository.listFavorites()
@@ -253,16 +249,6 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func switchMode(to newMode: DataMode) {
-        guard newMode != mode else { return }
-        client.logout()
-        mode = newMode
-        clearPrivateState()
-        isUsingFallback = false
-        repository = newMode == .live ? RemoteTurtleRepository(client: client) : DemoTurtleRepository()
-        Task { await reloadAll() }
-    }
-
     func export(_ request: ExportRequest) {
         guard canLoadRecords else { return }
         let generation = sessionGeneration
@@ -290,15 +276,12 @@ final class AppStore: ObservableObject {
         isAuthenticated = false
         _ = try await client.login(email: email, password: password, rememberMe: rememberMe)
         updateAccount()
-        mode = .live
-        isUsingFallback = false
         clearPrivateState()
         await reloadAll()
     }
 
     func signOut() {
         client.logout()
-        mode = .live
         clearPrivateState()
         updateAccount()
     }
@@ -311,7 +294,6 @@ final class AppStore: ObservableObject {
         else { BackendEndpointOverride.save(url) }
         client = APIClient(baseURL: url)
         observeSession()
-        mode = .live
         apiBaseURLString = url.absoluteString
         clearPrivateState()
         updateAccount()
@@ -324,11 +306,6 @@ final class AppStore: ObservableObject {
         if let cached = photoCache[pathOrURL] {
             return cached
         }
-        if !pathOrURL.hasPrefix("http://") && !pathOrURL.hasPrefix("https://") && !pathOrURL.hasPrefix("/api/"),
-           let bundledImage = I3SSampleLibrary.loadImage(named: pathOrURL) {
-            photoCache[pathOrURL] = bundledImage
-            return bundledImage
-        }
         do {
             let data = try await repository.fetchPhotoData(pathOrURL: pathOrURL)
             guard sessionGeneration == generation else { return nil }
@@ -336,12 +313,7 @@ final class AppStore: ObservableObject {
                 photoCache[pathOrURL] = image
                 return image
             }
-        } catch {
-            if mode == .demo, sessionGeneration == generation, let fallbackImage = I3SSampleLibrary.loadImage(named: pathOrURL) {
-                photoCache[pathOrURL] = fallbackImage
-                return fallbackImage
-            }
-        }
+        } catch { return nil }
         return nil
     }
 
