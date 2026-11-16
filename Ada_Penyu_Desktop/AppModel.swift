@@ -7,28 +7,31 @@ enum AppSection: String, CaseIterable, Identifiable {
     case scientistReview
     case identification
     case favorites
+    case sightings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .dashboard: "Dashboard"
+        case .dashboard: "Overview"
         case .map: "Map"
-        case .individuals: "Individuals"
+        case .individuals: "Sea Turtles"
         case .scientistReview: "Scientist Review"
         case .identification: "I3S Pattern ID"
         case .favorites: "Favorites"
+        case .sightings: "Sightings"
         }
     }
 
     var icon: String {
         switch self {
-        case .dashboard: "chart.xyaxis.line"
+        case .dashboard: "square.grid.2x2"
         case .map: "map"
         case .individuals: "tortoise"
         case .scientistReview: "rectangle.split.2x1.badge.gearshape"
         case .identification: "viewfinder.circle"
         case .favorites: "heart"
+        case .sightings: "binoculars"
         }
     }
 }
@@ -134,6 +137,7 @@ struct Turtle: Identifiable, Hashable {
     let coordinate: TurtleCoordinate?
     let leftPhotoURL: String?
     let rightPhotoURL: String?
+    let profileCode: String?
 
     init(
         id: String,
@@ -148,9 +152,11 @@ struct Turtle: Identifiable, Hashable {
         backendID: UUID? = nil,
         leftPhotoURL: String? = nil,
         rightPhotoURL: String? = nil,
-        name: String? = nil
+        name: String? = nil,
+        profileCode: String? = nil
     ) {
         self.name = name
+        self.profileCode = profileCode
         self.id = id
         self.species = species
         self.location = location
@@ -197,6 +203,8 @@ struct MatchCandidateItem: Identifiable, Hashable {
     let lastSeenDate: String?
     let lastSeenLocation: String?
     let condition: TurtleCondition?
+    var isBundledExample = false
+    var evidenceLabel: String { isBundledExample ? "Bundled example · no AI score" : "Backend score \(confidencePercent)%" }
     var i3sDistanceScore: Double?
     var i3sPairedCount: Int?
 
@@ -210,6 +218,14 @@ struct MatchSearchOutcome: Hashable {
     let candidates: [MatchCandidateItem]
     let isDualPair: Bool
     let pairAgreed: Bool?
+    var reviewTitle: String {
+        switch matchState {
+        case "likely_match": return "Possible match · human confirmation required"
+        case "no_reliable_match": return "Not found · keep the photograph as unknown"
+        case "bundled_examples": return "Bundled examples · no backend identity decision"
+        default: return "Not sure · compare evidence before deciding"
+        }
+    }
 }
 
 struct OverlayMatchPoint: Hashable, Codable {

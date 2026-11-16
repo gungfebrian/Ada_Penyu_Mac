@@ -2,13 +2,13 @@ import SwiftUI
 
 enum AdaColors {
     // Sampled from the approved 1512 x 982 desktop compositions.
-    static let canvas = Color(red: 245 / 255, green: 245 / 255, blue: 247 / 255)
-    static let sidebar = Color(red: 239 / 255, green: 240 / 255, blue: 241 / 255)
+    static let canvas = Color(red: 245 / 255, green: 246 / 255, blue: 247 / 255)
+    static let sidebar = Color(red: 11 / 255, green: 37 / 255, blue: 58 / 255)
     static let card = Color.white
-    static let ink = Color(red: 0.08, green: 0.09, blue: 0.11)
-    static let secondaryInk = Color(red: 0.43, green: 0.46, blue: 0.51)
-    static let tertiaryInk = Color(red: 0.61, green: 0.64, blue: 0.69)
-    static let navy = Color(red: 12 / 255, green: 42 / 255, blue: 62 / 255)
+    static let ink = Color(red: 11 / 255, green: 37 / 255, blue: 58 / 255)
+    static let secondaryInk = Color(red: 98 / 255, green: 111 / 255, blue: 118 / 255)
+    static let tertiaryInk = Color(red: 98 / 255, green: 111 / 255, blue: 118 / 255)
+    static let navy = Color(red: 11 / 255, green: 37 / 255, blue: 58 / 255)
     static let navySoft = Color(red: 24 / 255, green: 58 / 255, blue: 82 / 255)
     static let brandBlue = Color(red: 22 / 255, green: 60 / 255, blue: 96 / 255)
     static let line = Color.black.opacity(0.08)
@@ -26,9 +26,10 @@ enum AdaColors {
 }
 
 enum AdaLayout {
-    static let defaultWindowSize = CGSize(width: 1_512, height: 900)
+    static let defaultWindowSize = CGSize(width: 1_512, height: 982)
     static let minimumWindowSize = CGSize(width: 1_100, height: 680)
-    static let sidebarWidth: CGFloat = 253
+    static let sidebarWidth: CGFloat = 224
+    static let collapsedSidebarWidth: CGFloat = 72
     static let mapFilterWidth: CGFloat = 287
     static let tableMinimumWidth: CGFloat = 760
     static let tableSpeciesWidth: CGFloat = 220
@@ -37,9 +38,9 @@ enum AdaLayout {
     static let tableSightingsWidth: CGFloat = 55
     static let tableConditionWidth: CGFloat = 82
     static let tableActionWidth: CGFloat = 28
-    static let pagePadding: CGFloat = 22
-    static let cardRadius: CGFloat = 11
-    static let containerRadius: CGFloat = 20
+    static let pagePadding: CGFloat = 32
+    static let cardRadius: CGFloat = 24
+    static let containerRadius: CGFloat = 40
     static let windowChromeTopPadding: CGFloat = 28
 }
 
@@ -57,7 +58,7 @@ struct ConditionPill: View {
     let condition: TurtleCondition
 
     var body: some View {
-        Text(condition.rawValue)
+        Text(condition == .unknown ? "Not recorded" : condition.rawValue)
             .font(.system(size: 11, weight: .medium))
             .lineLimit(1)
             .foregroundStyle(condition.tint)

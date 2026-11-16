@@ -106,6 +106,7 @@ enum MapPeriod: String, CaseIterable, Identifiable {
     case sevenDays = "7 days"
     case thirtyDays = "30 days"
     case thisYear = "This year"
+    case twelveMonths = "Last 12 months"
     case allTime = "All time"
 
     var id: String { rawValue }
@@ -116,6 +117,7 @@ enum MapPeriod: String, CaseIterable, Identifiable {
         case .sevenDays: return calendar.date(byAdding: .day, value: -7, to: Date()) ?? Date()
         case .thirtyDays: return calendar.date(byAdding: .day, value: -30, to: Date()) ?? Date()
         case .thisYear: return calendar.date(from: calendar.dateComponents([.year], from: Date())) ?? Date()
+        case .twelveMonths: return calendar.date(byAdding: .month, value: -11, to: Date()) ?? Date()
         case .allTime: return Date(timeIntervalSince1970: 0)
         }
     }
@@ -225,6 +227,7 @@ struct TurtleLogSummary: Identifiable, Hashable {
     /// entries. The Body Condition tab filters on this.
     let bodyPart: TurtleBodyPart?
     let markingSeverity: String?
+    let sourceSightingID: String?
     var isBodyConditionRecord: Bool { bodyPart != nil }
 
     init(
@@ -236,7 +239,8 @@ struct TurtleLogSummary: Identifiable, Hashable {
         notes: String?,
         coordinate: TurtleCoordinate?,
         bodyPart: TurtleBodyPart? = nil,
-        markingSeverity: String? = nil
+        markingSeverity: String? = nil,
+        sourceSightingID: String? = nil
     ) {
         self.id = id
         self.date = date
@@ -247,6 +251,7 @@ struct TurtleLogSummary: Identifiable, Hashable {
         self.coordinate = coordinate
         self.bodyPart = bodyPart
         self.markingSeverity = markingSeverity
+        self.sourceSightingID = sourceSightingID
     }
 }
 
@@ -569,18 +574,19 @@ private struct MatchCandidateDTO: Decodable {
 
 private struct MatchQueryInfoDTO: Decodable {
     let side: String
-    let gallerySize: Int
-
-    enum CodingKeys: String, CodingKey {
-        case side
-        case gallerySize = "gallery_size"
-    }
+    enum CodingKeys: String, CodingKey { case side }
 }
 
 private struct MatchResultDTO: Decodable {
     let query: MatchQueryInfoDTO
     let state: String
     let candidates: [MatchCandidateDTO]
+    let gallerySize: Int
+    enum CodingKeys: String, CodingKey {
+        case query, candidates
+        case state = "match_state"
+        case gallerySize = "gallery_size"
+    }
 }
 
 private struct PairedSideEvidenceDTO: Decodable {
@@ -619,7 +625,7 @@ private struct PairedCandidateDTO: Decodable {
         case profileCode = "profile_code"
         case species
         case rank
-        case combinedScore = "combined_score"
+        case combinedScore = "merge_rank_score"
         case confidence
         case confidencePercent = "confidence_percent"
         case left
@@ -663,7 +669,7 @@ private struct DualMatchResultDTO: Decodable {
     let photoB: MatchResultDTO
 
     enum CodingKeys: String, CodingKey {
-        case state
+        case state = "match_state"
         case agreed
         case candidates
         case photoA = "photo_a"
@@ -784,7 +790,7 @@ final class RemoteTurtleRepository: TurtleRepository {
         )
         return MatchSearchOutcome(
             querySide: TurtlePhotoSide(rawValue: dto.query.side) ?? side,
-            gallerySize: dto.query.gallerySize,
+            gallerySize: dto.gallerySize,
             matchState: dto.state,
             candidates: dto.candidates.map { $0.toItem() },
             isDualPair: false,
@@ -809,10 +815,10 @@ final class RemoteTurtleRepository: TurtleRepository {
             queryItems: queryItems,
             parts: parts
         )
-        let sideLookup = Dictionary(uniqueKeysWithValues: (dto.photoA.candidates + dto.photoB.candidates).map { ($0.individualID, $0) })
+        let sideEvidence = dto.photoA.candidates + dto.photoB.candidates
         let items = dto.candidates.map { paired -> MatchCandidateItem in
             var item = paired.toItem()
-            if let sideMatch = sideLookup[paired.individualID] {
+            if let sideMatch = sideEvidence.first(where: { $0.individualID == paired.individualID && $0.matchedPhotoSide == item.matchedPhotoSide.rawValue }) {
                 item = MatchCandidateItem(
                     individualID: item.individualID,
                     name: item.name,
@@ -826,7 +832,7 @@ final class RemoteTurtleRepository: TurtleRepository {
                     localMatch: sideMatch.localMatch,
                     matchedPhotoSide: item.matchedPhotoSide,
                     photoURL: item.photoURL,
-                    aboveThreshold: item.aboveThreshold,
+                    aboveThreshold: sideMatch.aboveThreshold,
                     lastSeenDate: item.lastSeenDate,
                     lastSeenLocation: item.lastSeenLocation,
                     condition: item.condition
@@ -836,7 +842,7 @@ final class RemoteTurtleRepository: TurtleRepository {
         }
         return MatchSearchOutcome(
             querySide: .left,
-            gallerySize: dto.photoA.query.gallerySize + dto.photoB.query.gallerySize,
+            gallerySize: dto.photoA.gallerySize + dto.photoB.gallerySize,
             matchState: dto.state,
             candidates: items,
             isDualPair: true,
