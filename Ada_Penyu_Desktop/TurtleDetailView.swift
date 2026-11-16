@@ -129,9 +129,10 @@ private struct OverviewTab: View {
 //   worst recorded condition + a legend.
 // • Right card: chronological, expandable history of body-condition records.
 
-private struct BodyConditionTab: View {
+struct BodyConditionTab: View {
     let logs: [TurtleLogSummary]
     let onExport: () -> Void
+    var onOpenSighting: ((String) -> Void)? = nil
 
     @State private var diagramFilter: DiagramFilter = .all
 
@@ -169,7 +170,7 @@ private struct BodyConditionTab: View {
         var result: [TurtleBodyPart: TurtleCondition] = [:]
         for log in bodyLogs where matchesFilter(log) {
             guard let part = log.bodyPart else { continue }
-            let condition = log.condition ?? .unknown
+            let condition = log.markingCondition ?? log.condition ?? .unknown
             if let existing = result[part], severity(existing) >= severity(condition) { continue }
             result[part] = condition
         }
@@ -179,7 +180,7 @@ private struct BodyConditionTab: View {
     /// The conditions we actually observed on this turtle — drives the legend.
     private var legendConditions: [TurtleCondition] {
         TurtleCondition.allCases.filter { condition in
-            bodyLogs.contains(where: { ($0.condition ?? .unknown) == condition })
+            bodyLogs.contains(where: { ($0.markingCondition ?? $0.condition ?? .unknown) == condition })
         }
     }
 
@@ -200,12 +201,12 @@ private struct BodyConditionTab: View {
                 HStack(alignment: .top, spacing: 16) {
                     BodyConditionDiagramCard(filter: $diagramFilter, highlights: highlights, legend: legendConditions)
                         .frame(width: 340)
-                    BodyConditionHistoryCard(logs: historyLogs, onExport: onExport)
+                    BodyConditionHistoryCard(logs: historyLogs, onExport: onExport, onOpenSighting: onOpenSighting)
                         .frame(maxWidth: .infinity)
                 }
                 VStack(spacing: 16) {
                     BodyConditionDiagramCard(filter: $diagramFilter, highlights: highlights, legend: legendConditions)
-                    BodyConditionHistoryCard(logs: historyLogs, onExport: onExport)
+                    BodyConditionHistoryCard(logs: historyLogs, onExport: onExport, onOpenSighting: onOpenSighting)
                 }
             }
         }
@@ -214,7 +215,7 @@ private struct BodyConditionTab: View {
     private func matchesFilter(_ log: TurtleLogSummary) -> Bool {
         switch diagramFilter {
         case .all: return true
-        case .condition(let condition): return (log.condition ?? .unknown) == condition
+        case .condition(let condition): return (log.markingCondition ?? log.condition ?? .unknown) == condition
         }
     }
 
@@ -242,7 +243,7 @@ private struct BodyConditionDiagramCard: View {
                 .foregroundStyle(AdaColors.ink)
 
             DiagramFilterChips(filter: $filter)
-            Text("Body parts without their own assessment use a neutral tint.")
+            Text("Colors summarize recorded markings; unassessed areas stay neutral.")
                 .font(.caption).foregroundStyle(AdaColors.tertiaryInk)
 
             TurtleBodyDiagram(highlights: highlights)
@@ -389,6 +390,7 @@ private struct TurtleBodyDiagram: View {
 private struct BodyConditionHistoryCard: View {
     let logs: [TurtleLogSummary]
     let onExport: () -> Void
+    let onOpenSighting: ((String) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -415,7 +417,7 @@ private struct BodyConditionHistoryCard: View {
 
             VStack(spacing: 10) {
                 ForEach(Array(logs.enumerated()), id: \.element.id) { index, log in
-                    BodyConditionEntry(log: log, initiallyExpanded: index == 0)
+                    BodyConditionEntry(log: log, initiallyExpanded: index == 0, onOpenSighting: onOpenSighting)
                 }
             }
         }
@@ -426,9 +428,11 @@ private struct BodyConditionHistoryCard: View {
 
 private struct BodyConditionEntry: View {
     let log: TurtleLogSummary
+    let onOpenSighting: ((String) -> Void)?
     @State private var isExpanded: Bool
 
-    init(log: TurtleLogSummary, initiallyExpanded: Bool) {
+    init(log: TurtleLogSummary, initiallyExpanded: Bool, onOpenSighting: ((String) -> Void)?) {
+        self.onOpenSighting = onOpenSighting
         self.log = log
         _isExpanded = State(initialValue: initiallyExpanded)
     }
@@ -436,7 +440,7 @@ private struct BodyConditionEntry: View {
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             Rectangle()
-                .fill(log.condition?.tint ?? AdaColors.tertiaryInk)
+                .fill(log.markingCondition?.tint ?? log.condition?.tint ?? AdaColors.tertiaryInk)
                 .frame(width: 3)
 
             VStack(alignment: .leading, spacing: 10) {
@@ -492,7 +496,7 @@ private struct BodyConditionEntry: View {
     @ViewBuilder
     private var expandedBody: some View {
         HStack(spacing: 10) {
-            if let condition = log.condition {
+            if let condition = log.markingCondition ?? log.condition {
                 ConditionPill(condition: condition)
             }
             Text("Recorded at \(log.location)")
@@ -511,79 +515,10 @@ private struct BodyConditionEntry: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
 
-        // Static placeholder photo strip — encounter photos will hook in once
-        // the API returns per-log attachments. Kept here so the layout is
-        // faithful to the design brief.
-        PhotoStrip(visibleCount: 3, extraCount: 2)
-
-        Button {
-            // Placeholder: dedicated encounter view isn't built yet.
-        } label: {
-            HStack(spacing: 4) {
-                Text("Open \(log.date) encounter")
-                    .font(.system(size: 12, weight: .medium))
-                Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
-            }
-            .foregroundStyle(AdaColors.navySoft)
+        if let sourceID = log.sourceSightingID, let onOpenSighting {
+            Button("Open related sighting →") { onOpenSighting(sourceID) }
+                .buttonStyle(AdaPillButtonStyle())
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open \(log.date) encounter")
-    }
-}
-
-private struct PhotoStrip: View {
-    let visibleCount: Int
-    let extraCount: Int
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                ForEach(0..<visibleCount, id: \.self) { _ in PlaceholderPhoto() }
-                if extraCount > 0 {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.black.opacity(0.045))
-                            .frame(width: 56, height: 56)
-                        Text("+\(extraCount)")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                    }
-                    .accessibilityLabel("\(extraCount) more photos")
-                }
-                Spacer()
-            }
-            Text("\(visibleCount + extraCount) photos")
-                .font(.system(size: 11))
-                .foregroundStyle(AdaColors.tertiaryInk)
-        }
-    }
-}
-
-private struct PlaceholderPhoto: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(Color.black.opacity(0.05))
-            .frame(width: 56, height: 56)
-            .overlay {
-                DiagonalStripes()
-                    .stroke(Color.black.opacity(0.09), lineWidth: 1)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            }
-            .accessibilityHidden(true)
-    }
-}
-
-private struct DiagonalStripes: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let spacing: CGFloat = 6
-        var x: CGFloat = -rect.height
-        while x < rect.width {
-            path.move(to: CGPoint(x: x, y: 0))
-            path.addLine(to: CGPoint(x: x + rect.height, y: rect.height))
-            x += spacing
-        }
-        return path
     }
 }
 

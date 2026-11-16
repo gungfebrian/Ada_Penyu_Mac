@@ -4,6 +4,9 @@ struct ContentView: View {
     @ObservedObject var store: AppStore
     @State private var showingExport = false
     @State private var exportQueryOverride: IndividualQuery?
+    @State private var isSidebarCollapsed = false
+    @State private var selectedSightingID: String?
+    @State private var focusedMapTurtleID: String?
 
     var body: some View {
         Group {
@@ -21,6 +24,8 @@ struct ContentView: View {
         .onChange(of: store.sessionGeneration) { _, _ in
             showingExport = false
             exportQueryOverride = nil
+            selectedSightingID = nil
+            focusedMapTurtleID = nil
         }
         #if DEBUG
         .sheet(isPresented: $store.isAuthSheetPresented) { BackendSettingsSheet(store: store) }
@@ -56,22 +61,29 @@ struct ContentView: View {
                     accountName: store.accountName,
                     accountEmail: store.authEmail,
                     accountOrganization: store.accountOrganization,
-                    onSignOut: signOutAction
+                    onSignOut: signOutAction,
+                    isCollapsed: isSidebarCollapsed,
+                    onToggleSidebar: { isSidebarCollapsed.toggle() }
                 )
 
                 VStack(spacing: 0) {
-                    TopBar(
-                        title: pageTitle,
-                        subtitle: pageSubtitle,
-                        searchText: searchBinding,
-                        onExport: { exportQueryOverride = nil; showingExport = true }
-                    )
+                    WorkspaceHeader(store: store, title: pageTitle,
+                        onExport: { exportQueryOverride = nil; showingExport = true },
+                        onToggleSidebar: { isSidebarCollapsed.toggle() })
 
                     ZStack {
                         AdaColors.canvas
-                        pageView
+                        if let turtle = store.selectedTurtle {
+                            ProfileWorkspaceView(turtle: store.selectedDetail?.turtle ?? turtle,
+                                detail: store.selectedDetail, isLoading: store.isDetailLoading, error: store.detailError,
+                                selectedSightingID: $selectedSightingID,
+                                onBack: { selectedSightingID = nil; store.dismissDetail() },
+                                onMap: { openMap(turtleID: turtle.id) },
+                                onExport: { exportQueryOverride = IndividualQuery(search: turtle.displayName); showingExport = true },
+                                onRetry: { Task { await store.loadDetail(for: turtle) } })
+                        } else { pageView }
 
-                        if store.isLoading {
+                        if store.isLoading || (store.isIndividualsLoading && store.activeSection == .individuals) {
                             ProgressView("Loading records…")
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 12)
@@ -81,36 +93,8 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            if let turtle = store.selectedTurtle {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .overlay(Color.black.opacity(0.22))
-                    .ignoresSafeArea()
-                    .onTapGesture { store.dismissDetail() }
-
-                GeometryReader { proxy in
-                    IndividualDetailModal(
-                        turtle: turtle,
-                        detail: store.selectedDetail,
-                        isLoading: store.isDetailLoading,
-                        errorMessage: store.detailError,
-                        isFavorite: store.favoriteTurtles.contains(where: { $0.id == turtle.id }),
-                        onClose: store.dismissDetail,
-                        onToggleFavorite: { store.toggleFavorite(turtle) },
-                        onExport: {
-                            exportQueryOverride = IndividualQuery(search: turtle.displayName, page: PageRequest(limit: 1))
-                            showingExport = true
-                        }
-                    )
-                    .frame(
-                        width: min(max(proxy.size.width - 72, 820), 1_100),
-                        height: min(max(proxy.size.height - 72, 600), 760)
-                    )
-                    .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .background(AdaColors.canvas)
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 40, bottomLeadingRadius: 40, bottomTrailingRadius: 0, topTrailingRadius: 0))
             }
 
             if showingExport {
@@ -132,7 +116,8 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
-        .background(AdaColors.canvas)
+        .background(AdaColors.navy)
+        .onChange(of: store.activeSection) { _, _ in selectedSightingID = nil; store.dismissDetail() }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
         .animation(.easeOut(duration: 0.16), value: showingExport)
         .animation(.easeOut(duration: 0.18), value: store.selectedTurtle?.id)
@@ -159,39 +144,47 @@ struct ContentView: View {
         }
     }
 
-    private var pageTitle: String { store.activeSection.title }
-
-    private var searchBinding: Binding<String> {
-        Binding(
-            get: { store.searchText },
-            set: { value in
-                store.searchText = value
-                if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   store.activeSection != .individuals,
-                   store.activeSection != .favorites {
-                    store.activeSection = .individuals
-                }
-            }
-        )
+    private var pageTitle: String {
+        store.selectedTurtle == nil ? store.activeSection.title : (selectedSightingID == nil ? "Turtle Profile" : "Sighting Details")
     }
 
-    private var pageSubtitle: String? {
-        if store.activeSection == .map { return "last seen 30 days" }
-        if store.activeSection == .dashboard { return "Sea Turtle Group · Bali monitoring" }
-        if store.activeSection == .scientistReview { return "Side-by-side scale junction verification · MiewID + XFeat + optional I3S" }
-        if store.activeSection == .identification { return "Interactive Individual Identification System (I3S Pattern v4.02 + MiewID/XFeat)" }
-        return nil
+    private func openMap(turtleID: String?) {
+        store.dismissDetail()
+        selectedSightingID = nil
+        focusedMapTurtleID = turtleID
+        store.activeSection = .map
+        if turtleID != nil { store.selectedMapPeriod = .allTime; store.mapSpecies = nil; store.mapCondition = nil }
+        Task { await store.reloadMap() }
     }
 
     @ViewBuilder
     private var pageView: some View {
         switch store.activeSection {
         case .dashboard:
-            DashboardView(snapshot: store.dashboard, turtles: store.turtles, recentSightings: store.sightings, chartMode: $store.chartMode, chartSpecies: $store.chartSpecies, onExport: { exportQueryOverride = nil; showingExport = true }) { turtle in store.select(turtle) }
+            DashboardView(snapshot: store.dashboard, turtles: store.turtles, recentSightings: store.sightings,
+                chartMode: $store.chartMode, chartSpecies: $store.chartSpecies,
+                onExport: { showingExport = true }, onSelect: store.select,
+                onBrowseTurtles: { store.activeSection = .individuals },
+                onShowSightings: {
+                    store.selectedMapPeriod = .twelveMonths
+                    store.mapSpecies = store.chartSpecies
+                    store.mapCondition = nil
+                    store.activeSection = .sightings
+                }, onOpenMap: { openMap(turtleID: nil) })
         case .map:
-            MapPageView(turtles: store.turtles, sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod, selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition, onReload: { Task { await store.reloadMap() } }, onSelect: store.select)
+            MapPageView(turtles: store.turtles, sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod, selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition, onReload: { Task { await store.reloadMap() } }, onSelect: store.select, focusTurtleID: focusedMapTurtleID)
         case .individuals:
-            IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select)
+            IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText,
+                selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                onToggleFavorite: store.toggleFavorite, onSelect: store.select,
+                selectedSpecies: $store.selectedSpecies, pageSize: $store.individualsPageSize,
+                offset: store.individualsOffset, isLoading: store.isIndividualsLoading,
+                onPage: { page in Task { await store.loadIndividualsPage(page) } })
+        case .sightings:
+            SightingsListView(sightings: store.sightings) { sighting in
+                selectedSightingID = sighting.id
+                store.select(store.turtles.first { $0.id == sighting.turtleID } ?? sighting.turtleReference)
+            }
         case .scientistReview:
             ScientistReviewWorkspaceView()
         case .identification:
@@ -199,92 +192,6 @@ struct ContentView: View {
         case .favorites:
             FavoritesView(turtles: store.favoriteTurtles, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select, onBrowseIndividuals: { store.searchText = ""; store.selectedCondition = nil; store.activeSection = .individuals })
         }
-    }
-}
-
-private struct IndividualDetailModal: View {
-    let turtle: Turtle
-    let detail: TurtleDetailData?
-    let isLoading: Bool
-    let errorMessage: String?
-    let isFavorite: Bool
-    let onClose: () -> Void
-    let onToggleFavorite: () -> Void
-    let onExport: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Individual profile")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(AdaColors.ink)
-                    Text("Field history, measurements, and known locations")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AdaColors.tertiaryInk)
-                }
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                        .frame(width: 30, height: 30)
-                        .background(Color.black.opacity(0.045))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .help("Close individual profile")
-            }
-            .padding(.horizontal, 22)
-            .frame(height: 62)
-            .background(AdaColors.card)
-
-            Divider().overlay(AdaColors.line)
-
-            Group {
-                if isLoading {
-                    VStack(spacing: 10) {
-                        ProgressView()
-                        Text("Loading field history…")
-                            .font(.system(size: 12))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let errorMessage, detail == nil {
-                    VStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 23))
-                            .foregroundStyle(AdaColors.orange)
-                        Text("Could not load this individual")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(AdaColors.ink)
-                        Text(errorMessage)
-                            .font(.system(size: 11))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    TurtleDetailView(
-                        turtle: turtle,
-                        detail: detail,
-                        isFavorite: isFavorite,
-                        onToggleFavorite: onToggleFavorite,
-                        onExport: onExport
-                    )
-                }
-            }
-            .background(AdaColors.canvas)
-        }
-        .background(AdaColors.canvas)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.75), lineWidth: 1)
-        }
-        .shadow(color: Color.black.opacity(0.2), radius: 30, y: 12)
     }
 }
 

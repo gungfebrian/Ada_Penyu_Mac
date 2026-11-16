@@ -84,7 +84,7 @@ struct V2Sighting: Decodable {
         let date = APIFormatters.display.string(from: observedAt)
         let encounter = TurtleLogSummary(id: id.uuidString, date: date, location: location.name,
             status: event.type.replacingOccurrences(of: "_", with: " ").capitalized,
-            condition: TurtleCondition(apiValue: condition?.status), notes: notes, coordinate: location.coordinate)
+            condition: TurtleCondition(apiValue: condition?.status), notes: notes, coordinate: location.coordinate, sourceSightingID: id.uuidString)
         let parts: [String: TurtleBodyPart] = ["head": .head, "carapace": .carapace,
             "front_flipper_left": .flipperLeft, "front_flipper_right": .flipperRight,
             "rear_flipper_left": .footLeft, "rear_flipper_right": .footRight, "tail": .tail]
@@ -94,7 +94,7 @@ struct V2Sighting: Decodable {
             return TurtleLogSummary(id: marking.id.uuidString, date: date, location: location.name,
                 status: marking.kind.replacingOccurrences(of: "_", with: " ").capitalized,
                 condition: nil, notes: marking.notes,
-                coordinate: location.coordinate, bodyPart: part, markingSeverity: marking.severity)
+                coordinate: location.coordinate, bodyPart: part, markingSeverity: marking.severity, sourceSightingID: id.uuidString)
         }
     }
 }
@@ -136,6 +136,6 @@ struct V2Profile: Decodable {
             firstRecorded: APIFormatters.display.string(from: firstSeenAt), isFavorite: false,
             coordinate: latest?.location.coordinate, backendID: id,
             leftPhotoURL: identityPhotos.left?.url, rightPhotoURL: identityPhotos.right?.url,
-            name: name.isEmpty ? profileCode : name)
+            name: name.isEmpty ? profileCode : name, profileCode: profileCode)
     }
 }

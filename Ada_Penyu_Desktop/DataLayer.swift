@@ -106,6 +106,7 @@ enum MapPeriod: String, CaseIterable, Identifiable {
     case sevenDays = "7 days"
     case thirtyDays = "30 days"
     case thisYear = "This year"
+    case twelveMonths = "Last 12 months"
     case allTime = "All time"
 
     var id: String { rawValue }
@@ -116,6 +117,7 @@ enum MapPeriod: String, CaseIterable, Identifiable {
         case .sevenDays: return calendar.date(byAdding: .day, value: -7, to: Date()) ?? Date()
         case .thirtyDays: return calendar.date(byAdding: .day, value: -30, to: Date()) ?? Date()
         case .thisYear: return calendar.date(from: calendar.dateComponents([.year], from: Date())) ?? Date()
+        case .twelveMonths: return calendar.date(byAdding: .month, value: -11, to: Date()) ?? Date()
         case .allTime: return Date(timeIntervalSince1970: 0)
         }
     }
@@ -225,6 +227,7 @@ struct TurtleLogSummary: Identifiable, Hashable {
     /// entries. The Body Condition tab filters on this.
     let bodyPart: TurtleBodyPart?
     let markingSeverity: String?
+    let sourceSightingID: String?
     var isBodyConditionRecord: Bool { bodyPart != nil }
 
     init(
@@ -236,7 +239,8 @@ struct TurtleLogSummary: Identifiable, Hashable {
         notes: String?,
         coordinate: TurtleCoordinate?,
         bodyPart: TurtleBodyPart? = nil,
-        markingSeverity: String? = nil
+        markingSeverity: String? = nil,
+        sourceSightingID: String? = nil
     ) {
         self.id = id
         self.date = date
@@ -247,6 +251,7 @@ struct TurtleLogSummary: Identifiable, Hashable {
         self.coordinate = coordinate
         self.bodyPart = bodyPart
         self.markingSeverity = markingSeverity
+        self.sourceSightingID = sourceSightingID
     }
 }
 

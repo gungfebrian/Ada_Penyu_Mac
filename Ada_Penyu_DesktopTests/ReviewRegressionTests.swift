@@ -37,6 +37,19 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertEqual(detail.sightingLogs.first?.location, "Reef")
     }
 
+    func testBodyMarkingRetainsItsParentSightingLink() throws {
+        let logs = try encounter(condition: "null").logs
+        XCTAssertTrue(logs.allSatisfy { $0.sourceSightingID == "10000000-0000-4000-8000-000000000004" })
+        XCTAssertNotEqual(logs.last?.id, logs.last?.sourceSightingID)
+    }
+
+    func testDiagramUsesMarkingKindInsteadOfOverallHealth() throws {
+        let logs = try encounter(condition: "\"healthy\"").logs
+        XCTAssertEqual(logs.first?.condition, .healthy)
+        XCTAssertEqual(logs.first(where: { $0.bodyPart == .head })?.markingCondition, .injured)
+        XCTAssertEqual(logs.first(where: { $0.bodyPart == .tail })?.markingCondition, .scarred)
+    }
+
     func testFavoritesSearchUsesDisplayNameWhenIdentityIsUUID() throws {
         let profile = try JSONDecoder.api.decode(V2Profile.self, from: APIFixtures.data(APIFixtures.profile))
         let view = FavoritesView(turtles: [profile.turtle()], searchText: .constant("amina"),

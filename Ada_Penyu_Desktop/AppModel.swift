@@ -7,28 +7,31 @@ enum AppSection: String, CaseIterable, Identifiable {
     case scientistReview
     case identification
     case favorites
+    case sightings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .dashboard: "Dashboard"
+        case .dashboard: "Overview"
         case .map: "Map"
-        case .individuals: "Individuals"
+        case .individuals: "Sea Turtles"
         case .scientistReview: "Scientist Review"
         case .identification: "I3S Pattern ID"
         case .favorites: "Favorites"
+        case .sightings: "Sightings"
         }
     }
 
     var icon: String {
         switch self {
-        case .dashboard: "chart.xyaxis.line"
+        case .dashboard: "square.grid.2x2"
         case .map: "map"
         case .individuals: "tortoise"
         case .scientistReview: "rectangle.split.2x1.badge.gearshape"
         case .identification: "viewfinder.circle"
         case .favorites: "heart"
+        case .sightings: "binoculars"
         }
     }
 }
@@ -134,6 +137,7 @@ struct Turtle: Identifiable, Hashable {
     let coordinate: TurtleCoordinate?
     let leftPhotoURL: String?
     let rightPhotoURL: String?
+    let profileCode: String?
 
     init(
         id: String,
@@ -148,9 +152,11 @@ struct Turtle: Identifiable, Hashable {
         backendID: UUID? = nil,
         leftPhotoURL: String? = nil,
         rightPhotoURL: String? = nil,
-        name: String? = nil
+        name: String? = nil,
+        profileCode: String? = nil
     ) {
         self.name = name
+        self.profileCode = profileCode
         self.id = id
         self.species = species
         self.location = location
