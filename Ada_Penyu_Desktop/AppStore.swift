@@ -75,6 +75,7 @@ final class AppStore: ObservableObject {
     private var individualRequest = 0
     private var mapRequest = 0
     private var dashboardRequest = 0
+    private var allRequest = 0
     private var photoCache: [String: NSImage] = [:]
     private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
@@ -141,30 +142,45 @@ final class AppStore: ObservableObject {
     func reloadAll() async {
         guard canLoadRecords else { return }
         let generation = sessionGeneration
+        allRequest += 1
+        let allRevision = allRequest
+        individualRequest += 1
+        let individualRevision = individualRequest
+        mapRequest += 1
+        let mapRevision = mapRequest
+        dashboardRequest += 1
+        let dashboardRevision = dashboardRequest
         let individualQuery = currentIndividualQuery
         let mapQuery = currentMapQuery
-        let requestedSpecies = chartSpecies
+        let dashboardQuery = currentDashboardQuery
         isLoading = true
+        isIndividualsLoading = true
         lastError = nil
+        defer {
+            if sessionGeneration == generation, allRequest == allRevision { isLoading = false }
+            if sessionGeneration == generation, individualRequest == individualRevision { isIndividualsLoading = false }
+        }
         do {
             async let individuals = repository.listIndividuals(query: individualQuery)
             async let favorites = repository.listFavorites()
-            async let dashboard = repository.dashboard(query: currentDashboardQuery)
+            async let dashboard = repository.dashboard(query: dashboardQuery)
             async let sightings = repository.mapSightings(query: mapQuery)
-            let (individualPage, favoriteItems, dashboardSnapshot, mapItems) = try await (individuals, favorites, dashboard, sightings)
+            let (page, favoriteItems, snapshot, mapItems) = try await (individuals, favorites, dashboard, sightings)
             guard sessionGeneration == generation else { return }
-            if currentIndividualQuery == individualQuery {
-                turtles = individualPage.items
-                totalIndividuals = individualPage.total
+            if individualRequest == individualRevision, currentIndividualQuery == individualQuery {
+                turtles = page.items
+                totalIndividuals = page.total
+                favoriteTurtles = favoriteItems
             }
-            favoriteTurtles = favoriteItems
-            if chartSpecies == requestedSpecies { self.dashboard = dashboardSnapshot }
-            if currentMapQuery == mapQuery { self.sightings = mapItems }
+            if dashboardRequest == dashboardRevision, chartSpecies == dashboardQuery.species { self.dashboard = snapshot }
+            if mapRequest == mapRevision, currentMapQuery == mapQuery { self.sightings = mapItems }
         } catch {
-            guard sessionGeneration == generation else { return }
+            guard sessionGeneration == generation, allRequest == allRevision,
+                  individualRequest == individualRevision, currentIndividualQuery == individualQuery,
+                  mapRequest == mapRevision, currentMapQuery == mapQuery,
+                  dashboardRequest == dashboardRevision, chartSpecies == dashboardQuery.species else { return }
             if !(error is CancellationError) { lastError = error.localizedDescription }
         }
-        isLoading = false
     }
 
     @discardableResult
@@ -372,11 +388,13 @@ final class AppStore: ObservableObject {
     }
 
     func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
-        try await repository.matchPhoto(imageData: imageData, side: side, limit: limit)
+        photoCache.removeAll()
+        return try await repository.matchPhoto(imageData: imageData, side: side, limit: limit)
     }
 
     func matchPhotoPair(leftData: Data, rightData: Data, limit: Int = 10) async throws -> MatchSearchOutcome {
-        try await repository.matchPhotoPair(leftData: leftData, rightData: rightData, limit: limit)
+        photoCache.removeAll()
+        return try await repository.matchPhotoPair(leftData: leftData, rightData: rightData, limit: limit)
     }
 
     func fetchOverlayAnnotations(

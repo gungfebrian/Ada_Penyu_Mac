@@ -104,6 +104,23 @@ final class DesignPresentationTests: XCTestCase {
         XCTAssertFalse(store.turtles.isEmpty)
     }
 
+    func testOlderFullRefreshCannotReplaceANewerCatalogRequestForTheSameFilter() async {
+        let repository = PagingRepository()
+        let store = AppStore(repository: repository)
+        let held = expectation(description: "Full refresh held")
+        repository.onHold = { held.fulfill() }
+        repository.holdNext = true
+        let oldRefresh = Task { await store.reloadAll() }
+        await fulfillment(of: [held], timeout: 2)
+        await store.reloadIndividuals()
+        repository.pending?.resume(returning: Page(items: [], total: 999, request: PageRequest()))
+        await oldRefresh.value
+        XCTAssertEqual(store.totalIndividuals, 35)
+        XCTAssertFalse(store.turtles.isEmpty)
+        XCTAssertFalse(store.isIndividualsLoading)
+        XCTAssertFalse(store.isLoading)
+    }
+
     func testProfileRetainsBackendCodeForDisplay() throws {
         let profile = try JSONDecoder.api.decode(V2Profile.self, from: APIFixtures.data(APIFixtures.profile))
         XCTAssertEqual(profile.turtle().profileCode, profile.profileCode)
