@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppStore: ObservableObject {
+    let organizationKeySettings: OrganizationAPIKeySettings
     @Published var activeSection: AppSection = .dashboard
     @Published var searchText = "" {
         didSet { scheduleIndividualsReload() }
@@ -99,6 +100,7 @@ final class AppStore: ObservableObject {
     ) {
         let client = client ?? APIClient()
         self.client = client
+        self.organizationKeySettings = OrganizationAPIKeySettings(client: client)
         self.dashboardLayoutStore = dashboardLayoutStore
         self.apiBaseURLString = client.baseURL.absoluteString
         self.hasInjectedRepository = repository != nil
@@ -135,6 +137,7 @@ final class AppStore: ObservableObject {
     }
 
     private func updateAccount() {
+        organizationKeySettings.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
         if isDemoBypassActive {
             isAuthenticated = true
             authEmail = demoPersona.email
@@ -262,6 +265,7 @@ final class AppStore: ObservableObject {
     }
 
     private func clearPrivateState(keepDemoMode: Bool = false) {
+        organizationKeySettings.leave()
         if !keepDemoMode {
             isDemoBypassActive = false
         }
