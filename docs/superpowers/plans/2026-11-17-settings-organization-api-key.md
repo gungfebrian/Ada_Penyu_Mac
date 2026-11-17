@@ -63,3 +63,7 @@ A native NSHostingView probe produced an inspected masked-key snapshot at minimu
 Backend source/build readiness is captured in [the review package](2026-11-17-organization-key-backend-readiness.md). Trusted-host SSH reached production but failed authentication; live image and Alembic revision are unknown. Production promotion, secure QA provisioning and live issuance/read/rotate/revoke acceptance remain pending. No operational key or production data was changed. Main is unchanged; the feature branch/worktree are retained until live acceptance and integration decisions.
 
 Execution rulings: native worktree isolation preserves the original main checkout; GitGud was bound to main, so small commits used Git CLI. A 30-second timeout applies per HTTP request and can be extended by authentication recovery. Runtime UI and production claims require actual access; local test success is not substituted for them. No minor review findings were deferred.
+
+## Follow-up UI evidence
+
+A fresh standalone Debug build at `/tmp/AdaPenyuSettingsBuild` succeeded and was opened. Native computer use verified the new Settings sidebar entry and navigation to Developer Options. The subsequent user-provided [screenshot](../../screenshots/settings-organization-api-key.png) shows active live organization key metadata and Rotate/Revoke actions. Direct key mutation confirmations, multiwindow close callbacks, and the isolated QA lifecycle remain unverified interactively; deterministic tests cover their state behavior. No production key action was performed by the agent.

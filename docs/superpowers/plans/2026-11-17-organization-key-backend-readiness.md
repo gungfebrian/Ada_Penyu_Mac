@@ -42,4 +42,4 @@ Retain only synthetic QA data. Issue a key through the Mac Settings screen, read
 
 ## Current status
 
-No releases, tags, deployments, credentials, QA organizations or database changes were created. Production rollout and live end-to-end acceptance remain pending access and concrete release review.
+No backend releases, tags, deployments, credentials, QA organizations or database changes were created by this work. A later standalone Mac build was opened and Settings navigation verified; the user-provided screenshot shows active key metadata in the live organization. The earlier 404 finding is historical, not the current metadata result. Actual production image and Alembic revision remain unverified, and the complete isolated-QA issuance/read/rotate/revoke acceptance has not run. Any additional production promotion still requires access and concrete release review.
