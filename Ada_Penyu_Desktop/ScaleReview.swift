@@ -137,6 +137,78 @@ final class ScaleReviewStore: ObservableObject {
         update(hash) { $0.replaceProposals(polygons, preserving: protectedIDs) }
     }
     static func photoHash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+
+    /// Seeds realistic mock Head ROI and polygonal cheek scale annotations from bundled `.fgp` coordinates
+    /// (or a standard postocular grid if no sample entry is matched) so Numbered Scale Review works out of the box.
+    func seedMockAnnotations(for hash: String, sample: I3SSampleEntry? = nil) {
+        update(hash) { doc in
+            if let sample, sample.imageWidth > 0, sample.imageHeight > 0, !sample.roi.isEmpty {
+                let w = Double(sample.imageWidth)
+                let h = Double(sample.imageHeight)
+                let xs = sample.roi.compactMap { $0.first.map { $0 / w } }
+                let ys = sample.roi.compactMap { $0.count > 1 ? $0[1] / h : nil }
+                let minX = max(0.02, (xs.min() ?? 0.25) - 0.04)
+                let minY = max(0.02, (ys.min() ?? 0.25) - 0.04)
+                let maxX = min(0.98, (xs.max() ?? 0.75) + 0.04)
+                let maxY = min(0.98, (ys.max() ?? 0.75) + 0.04)
+                let roi = ScaleRect(x: minX, y: minY, width: max(0.15, maxX - minX), height: max(0.15, maxY - minY))
+                doc.setHeadROI(roi)
+
+                var placedCenters: [(Double, Double, Double)] = []
+                for kp in sample.keypoints {
+                    guard kp.count >= 3 else { continue }
+                    let cx = kp[0] / w
+                    let cy = kp[1] / h
+                    let rX = max(0.016, min(0.036, (kp[2] / w) * 0.85))
+                    let rY = max(0.018, min(0.040, (kp[2] / h) * 0.85))
+                    let radius = max(rX, rY)
+
+                    // Keep polygon strictly inside headROI and non-overlapping
+                    guard cx - rX > roi.x + 0.005,
+                          cx + rX < roi.x + roi.width - 0.005,
+                          cy - rY > roi.y + 0.005,
+                          cy + rY < roi.y + roi.height - 0.005 else { continue }
+
+                    let overlaps = placedCenters.contains { ox, oy, orad in
+                        hypot(cx - ox, cy - oy) < (radius + orad) * 1.05
+                    }
+                    guard !overlaps else { continue }
+
+                    let poly: [ScalePoint] = (0..<6).map { i in
+                        let angle = Double(i) * (.pi / 3.0) + 0.2
+                        return ScalePoint(
+                            x: cx + cos(angle) * rX,
+                            y: cy + sin(angle) * rY
+                        )
+                    }
+                    if let addedID = doc.add(polygon: poly, source: .proposal) {
+                        placedCenters.append((cx, cy, radius))
+                        if placedCenters.count <= 8 {
+                            doc.setStatus(addedID, .confirmed)
+                        }
+                    }
+                    if placedCenters.count >= 12 { break }
+                }
+            } else {
+                let roi = ScaleRect(x: 0.28, y: 0.24, width: 0.44, height: 0.48)
+                doc.setHeadROI(roi)
+                let centers: [(Double, Double)] = [
+                    (0.38, 0.34), (0.46, 0.34), (0.54, 0.35), (0.62, 0.36),
+                    (0.39, 0.45), (0.47, 0.45), (0.55, 0.46), (0.63, 0.47),
+                    (0.41, 0.56), (0.49, 0.56), (0.57, 0.57), (0.64, 0.58),
+                ]
+                for (idx, (cx, cy)) in centers.enumerated() {
+                    let poly: [ScalePoint] = (0..<6).map { i in
+                        let angle = Double(i) * (.pi / 3.0)
+                        return ScalePoint(x: cx + cos(angle) * 0.026, y: cy + sin(angle) * 0.030)
+                    }
+                    if let addedID = doc.add(polygon: poly, source: .proposal), idx < 8 {
+                        doc.setStatus(addedID, .confirmed)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Proposes enclosed intensity regions, not anatomically recognized scales.

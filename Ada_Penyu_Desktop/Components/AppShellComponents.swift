@@ -6,6 +6,10 @@ import SwiftUI
 
 // MARK: - Sidebar
 
+enum AdaSidebarStyle {
+    static let animation = Animation.spring(response: 0.34, dampingFraction: 0.88)
+}
+
 struct SidebarView: View {
     @Binding var selection: AppSection
     @Binding var selectedCondition: TurtleCondition?
@@ -24,60 +28,127 @@ struct SidebarView: View {
 
     var isCollapsed = false
     var onToggleSidebar: () -> Void = {}
+    var onExpandSidebar: (() -> Void)? = nil
 
     @State private var speciesExpanded = true
     @State private var conditionsExpanded = true
+
+    private func expandIfCollapsed() {
+        guard isCollapsed else { return }
+        (onExpandSidebar ?? onToggleSidebar)()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             windowChrome
             brandRow
             VStack(spacing: 8) {
-                ForEach([AppSection.dashboard, .map, .individuals]) { section in
+                ForEach([AppSection.dashboard, .map, .individuals, .scientistReview]) { section in
                     navigationRow(section)
                 }
             }
             .padding(.top, 28)
-            Spacer(minLength: 24)
+
+            // Clicking open space in the sidebar toggles/expands smoothly while preserving top chrome window dragging.
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minHeight: 24)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onToggleSidebar()
+                }
+                .accessibilityHidden(true)
+
             ActionDropdown(items: [
-                DropdownAction(title: "Sightings", selected: selection == .sightings, action: { selection = .sightings }),
-                DropdownAction(title: "Favorites (\(favoriteCount))", selected: selection == .favorites, action: { selection = .favorites }),
-                DropdownAction(title: "Scientist Review", selected: selection == .scientistReview, action: { selection = .scientistReview }),
-                DropdownAction(title: "I3S Pattern ID", selected: selection == .identification, action: { selection = .identification })
+                DropdownAction(title: "Sightings", selected: selection == .sightings, action: {
+                    selection = .sightings
+                    expandIfCollapsed()
+                }),
+                DropdownAction(title: "Favorites (\(favoriteCount))", selected: selection == .favorites, action: {
+                    selection = .favorites
+                    expandIfCollapsed()
+                }),
+                DropdownAction(title: "Not Sure Review (2)", selected: selection == .scientistReview, action: {
+                    selection = .scientistReview
+                    expandIfCollapsed()
+                }),
+                DropdownAction(title: "I3S Pattern ID", selected: selection == .identification, action: {
+                    selection = .identification
+                    expandIfCollapsed()
+                })
             ]) {
-                HStack(spacing: 12) {
-                    Image(systemName: "ellipsis.circle").font(.system(size: 18))
-                    if !isCollapsed { Text("More workspaces").font(.system(size: 12)); Spacer() }
+                HStack(spacing: 14) {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 18))
+                        .frame(width: 24)
+                    if !isCollapsed {
+                        Text("More workspaces")
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .transition(.opacity)
+                        Spacer(minLength: 0)
+                    }
                 }
                 .foregroundStyle(.white.opacity(0.85))
-                .padding(14).frame(maxWidth: .infinity)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .clipped()
             }
             .help("Sightings, favorites, and identification workspaces")
             .accessibilityLabel("More workspaces")
             .padding(.horizontal, 12)
-            if isCollapsed {
-                SidebarAccountMenu(label: AnyView(accountAvatar), accessibilityLabel: accountAccessibilityLabel,
-                    onOpenAuthSettings: onOpenAuthSettings, onSignOut: onSignOut)
-                    .frame(width: 48, height: 52).padding(.horizontal, 12).padding(.bottom, 12)
-            } else {
-                userMenu
-            }
+
+            userMenu
         }
-        .frame(width: isCollapsed ? AdaLayout.collapsedSidebarWidth : AdaLayout.sidebarWidth)
+        .frame(width: isCollapsed ? AdaLayout.collapsedSidebarWidth : AdaLayout.sidebarWidth, alignment: .leading)
+        .clipped()
         .background(AdaColors.sidebar)
+        .animation(AdaSidebarStyle.animation, value: isCollapsed)
     }
 
     private func navigationRow(_ section: AppSection) -> some View {
-        Button { selection = section } label: {
+        Button {
+            selection = section
+            expandIfCollapsed()
+        } label: {
             HStack(spacing: 14) {
-                Image(systemName: section.icon).font(.system(size: 17)).frame(width: 24)
-                if !isCollapsed { Text(section.title).font(.system(size: 14)); Spacer() }
+                Image(systemName: section.icon)
+                    .font(.system(size: 17))
+                    .frame(width: 24)
+                    .overlay(alignment: .topTrailing) {
+                        if section == .scientistReview && isCollapsed {
+                            Circle()
+                                .fill(AdaColors.orange)
+                                .frame(width: 8, height: 8)
+                                .offset(x: 4, y: -3)
+                                .transition(.scale.combined(with: .opacity))
+                        }
+                    }
+                if !isCollapsed {
+                    Text(section.title)
+                        .font(.system(size: 14))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .transition(.opacity)
+                    Spacer(minLength: 0)
+                    if section == .scientistReview {
+                        Text("2")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(AdaColors.navy)
+                            .padding(.horizontal, 7)
+                            .frame(height: 18)
+                            .background(AdaColors.orange, in: Capsule())
+                            .transition(.opacity)
+                    }
+                }
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 13)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: isCollapsed ? .center : .leading)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(selection == section || (section == .individuals && selection == .sightings) ? .white.opacity(0.1) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipped()
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -85,11 +156,6 @@ struct SidebarView: View {
         .help(section.title)
         .accessibilityLabel(section.title)
         .accessibilityAddTraits(selection == section ? .isSelected : [])
-    }
-
-    private var accountAvatar: some View {
-        Circle().fill(.white.opacity(0.2)).frame(width: 32, height: 32)
-            .overlay(Text(accountInitial).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white))
     }
 
     // The sidebar highlights a species only while the user is on the
@@ -103,29 +169,48 @@ struct SidebarView: View {
         HStack {
             Spacer()
             if !isCollapsed {
-                Button(action: onToggleSidebar) { Image(systemName: "sidebar.left").foregroundStyle(.white.opacity(0.75)) }
-                    .buttonStyle(.plain).help("Collapse sidebar").accessibilityLabel("Collapse sidebar")
+                Button(action: onToggleSidebar) {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Collapse sidebar")
+                .accessibilityLabel("Collapse sidebar")
+                .transition(.opacity)
             }
         }
         .padding(.horizontal, 14).frame(height: 40)
     }
 
     private var brandRow: some View {
-        HStack(spacing: 8) {
-            Image("AdaPenyuMark").resizable().scaledToFit().frame(width: 36, height: 36)
-            if !isCollapsed {
-                Image("AdaPenyuWordmark").resizable().scaledToFit().frame(width: 126, height: 28)
+        Button(action: onToggleSidebar) {
+            HStack(spacing: 8) {
+                Image("AdaPenyuMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 36, height: 36)
+                if !isCollapsed {
+                    Image("AdaPenyuWordmark")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 126, height: 28)
+                        .fixedSize()
+                        .transition(.opacity)
+                }
             }
+            .padding(.leading, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 8)
+            .padding(.bottom, 12)
+            .clipped()
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 8).padding(.bottom, 12)
-        .accessibilityElement(children: .ignore).accessibilityLabel("AdaPenyu")
-        .overlay {
-            if isCollapsed {
-                Button(action: onToggleSidebar) { Color.clear.contentShape(Rectangle()) }
-                    .buttonStyle(.plain).help("Expand sidebar").accessibilityLabel("Expand sidebar")
-            }
-        }
+        .buttonStyle(.plain)
+        .help(isCollapsed ? "Expand sidebar" : "Collapse sidebar")
+        .accessibilityLabel(isCollapsed ? "AdaPenyu, Expand sidebar" : "AdaPenyu, Collapse sidebar")
     }
 
     // SwiftUI Menu draws this label as a 31pt popup button, so the profile
@@ -151,9 +236,9 @@ struct SidebarView: View {
     }
 
     private var accountLabel: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: isCollapsed ? 0 : 10) {
             Circle()
-                .fill(AdaColors.navy)
+                .fill(isCollapsed ? .white.opacity(0.2) : AdaColors.navy)
                 .frame(width: 32, height: 32)
                 .overlay {
                     Text(accountInitial)
@@ -161,41 +246,46 @@ struct SidebarView: View {
                         .foregroundStyle(.white)
                 }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(accountName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if !accountEmail.isEmpty {
-                    Text(accountEmail)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.75))
+            if !isCollapsed {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(accountName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
+                    if !accountEmail.isEmpty {
+                        Text(accountEmail)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Text(statusLine)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                Text(statusLine)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.65))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.opacity)
 
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.65))
-                .accessibilityHidden(true)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
-        .frame(width: AdaLayout.sidebarWidth - 24, alignment: .leading)
-        .background(Color.white.opacity(0.04))
+        .frame(width: isCollapsed ? 48 : AdaLayout.sidebarWidth - 24, alignment: .leading)
+        .background(Color.white.opacity(isCollapsed ? 0 : 0.04))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(AdaColors.line, lineWidth: 1)
+                .stroke(AdaColors.line.opacity(isCollapsed ? 0 : 1), lineWidth: 1)
         }
+        .clipped()
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
@@ -294,6 +384,8 @@ private final class SidebarAccountMenuHost: NSView {
     init(rootView: AnyView) {
         hosting = InertAccountHostingView(rootView: rootView)
         super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
         hosting.translatesAutoresizingMaskIntoConstraints = true
         addSubview(hosting)
     }

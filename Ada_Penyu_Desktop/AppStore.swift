@@ -61,6 +61,18 @@ final class AppStore: ObservableObject {
     @Published private(set) var authEmail = ""
     @Published private(set) var accountName = "Researcher"
     @Published private(set) var accountOrganization = ""
+    @Published private(set) var accountRoleLabel = "Conservation Lead"
+    @Published private(set) var isDemoBypassActive = false
+    @Published private(set) var demoPersona: DemoDashboardPersona = .demoResearcher
+    @Published private(set) var dashboardLayout: DashboardAccountLayout = DashboardAccountLayout.makeDefault(
+        for: DemoDashboardPersona.demoResearcher.accountStorageKey,
+        preset: .generalOverview
+    )
+    @Published var isEditingDashboardWidgets = false
+    @Published var isWidgetPickerPresented = false
+    @Published var requestedReviewScenario: ReviewScenarioID = .rankOneJunctionMismatch
+    @Published var requestedReviewLayoutMode: ScientistComparisonLayoutMode = .sideBySide
+    @Published var reviewNavigationTrigger = UUID()
     @Published private(set) var apiBaseURLString: String
     @Published private(set) var isAuthenticated = false
     @Published private(set) var isRestoring = false
@@ -68,6 +80,7 @@ final class AppStore: ObservableObject {
 
     private var client: APIClient
     private var repository: TurtleRepository
+    private let dashboardLayoutStore: DashboardLayoutStore
     private let hasInjectedRepository: Bool
     private var hasBootstrapped = false
     private var searchTask: Task<Void, Never>?
@@ -79,9 +92,14 @@ final class AppStore: ObservableObject {
     private var photoCache: [String: NSImage] = [:]
     private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
-    init(repository: TurtleRepository? = nil, client: APIClient? = nil) {
+    init(
+        repository: TurtleRepository? = nil,
+        client: APIClient? = nil,
+        dashboardLayoutStore: DashboardLayoutStore = DashboardLayoutStore()
+    ) {
         let client = client ?? APIClient()
         self.client = client
+        self.dashboardLayoutStore = dashboardLayoutStore
         self.apiBaseURLString = client.baseURL.absoluteString
         self.hasInjectedRepository = repository != nil
         self.repository = repository ?? RemoteTurtleRepository(client: client)
@@ -99,14 +117,154 @@ final class AppStore: ObservableObject {
         client.authorization?.onContextFailure = { [weak self] error in self?.lastError = error.localizedDescription }
     }
 
-    private func updateAccount() {
-        isAuthenticated = client.account != nil
-        authEmail = client.account?.email ?? ""
-        accountName = client.account?.displayName ?? "Researcher"
-        accountOrganization = client.account?.organisationName ?? ""
+    var currentDashboardAccountKey: String {
+        if !isDemoBypassActive, let user = client.account {
+            return "live:\(user.id.uuidString.lowercased())"
+        }
+        if !isDemoBypassActive, !authEmail.isEmpty {
+            return "live:\(authEmail.lowercased())"
+        }
+        return demoPersona.accountStorageKey
     }
 
-    private func clearPrivateState() {
+    var currentAccountDefaultPreset: DashboardRolePreset {
+        if !isDemoBypassActive, let user = client.account {
+            return user.role == .ranger ? .fieldRanger : .generalOverview
+        }
+        return demoPersona.defaultPreset
+    }
+
+    private func updateAccount() {
+        if isDemoBypassActive {
+            isAuthenticated = true
+            authEmail = demoPersona.email
+            accountName = demoPersona.displayName
+            accountOrganization = "Sea Turtle Group"
+            accountRoleLabel = demoPersona.roleLabel
+        } else {
+            isAuthenticated = client.account != nil
+            authEmail = client.account?.email ?? ""
+            accountName = client.account?.displayName ?? "Researcher"
+            accountOrganization = client.account?.organisationName ?? ""
+            accountRoleLabel = client.account?.role == .ranger ? "Field Patrol Ranger" : "Organization Owner"
+        }
+        syncDashboardLayoutForCurrentAccount()
+    }
+
+    private func syncDashboardLayoutForCurrentAccount() {
+        dashboardLayout = dashboardLayoutStore.loadLayout(
+            for: currentDashboardAccountKey,
+            defaultPreset: currentAccountDefaultPreset
+        )
+    }
+
+    // MARK: - Quick Demo Bypass & Per-Account Widget Personalization
+
+    func enterDemoWorkspace(persona: DemoDashboardPersona = .demoResearcher) {
+        client.logout()
+        isDemoBypassActive = true
+        demoPersona = persona
+        isEditingDashboardWidgets = false
+        clearPrivateState(keepDemoMode: true)
+        repository = DemoTurtleRepository()
+        updateAccount()
+        let generation = sessionGeneration
+        Task {
+            guard sessionGeneration == generation else { return }
+            await reloadAll()
+        }
+    }
+
+    func selectDemoPersona(_ persona: DemoDashboardPersona) {
+        demoPersona = persona
+        isEditingDashboardWidgets = false
+        updateAccount()
+    }
+
+    func openNotSureReview(
+        scenario: ReviewScenarioID = .rankOneJunctionMismatch,
+        layoutMode: ScientistComparisonLayoutMode = .sideBySide
+    ) {
+        selectedTurtle = nil
+        requestedReviewScenario = scenario
+        requestedReviewLayoutMode = layoutMode
+        reviewNavigationTrigger = UUID()
+        activeSection = .scientistReview
+    }
+
+    func applyDashboardPreset(_ preset: DashboardRolePreset) {
+        dashboardLayout = dashboardLayoutStore.resetLayout(for: currentDashboardAccountKey, to: preset)
+    }
+
+    func addDashboardWidget(_ kind: DashboardWidgetKind, span: DashboardWidgetSpan? = nil) {
+        guard !dashboardLayout.widgets.contains(where: { $0.kind == kind }) else { return }
+        var next = dashboardLayout
+        next.widgets.append(DashboardWidgetItem(kind: kind, span: span ?? kind.defaultSpan))
+        next.activePreset = nil
+        next.updatedAt = Date()
+        dashboardLayout = next
+        dashboardLayoutStore.saveLayout(next)
+    }
+
+    func removeDashboardWidget(id: UUID) {
+        var next = dashboardLayout
+        next.widgets.removeAll { $0.id == id }
+        next.activePreset = nil
+        next.updatedAt = Date()
+        dashboardLayout = next
+        dashboardLayoutStore.saveLayout(next)
+    }
+
+    func toggleDashboardWidgetSpan(id: UUID) {
+        guard let index = dashboardLayout.widgets.firstIndex(where: { $0.id == id }) else { return }
+        var next = dashboardLayout
+        next.widgets[index].span = next.widgets[index].span.toggled
+        next.activePreset = nil
+        next.updatedAt = Date()
+        dashboardLayout = next
+        dashboardLayoutStore.saveLayout(next)
+    }
+
+    func moveDashboardWidget(id: UUID, direction: Int) {
+        guard let index = dashboardLayout.widgets.firstIndex(where: { $0.id == id }) else { return }
+        let targetIndex = index + direction
+        guard dashboardLayout.widgets.indices.contains(targetIndex) else { return }
+        var next = dashboardLayout
+        let item = next.widgets.remove(at: index)
+        next.widgets.insert(item, at: targetIndex)
+        next.activePreset = nil
+        next.updatedAt = Date()
+        dashboardLayout = next
+        dashboardLayoutStore.saveLayout(next)
+    }
+
+    func moveDashboardWidget(fromID: UUID, toID: UUID) {
+        guard fromID != toID,
+              let fromIndex = dashboardLayout.widgets.firstIndex(where: { $0.id == fromID }),
+              let toIndex = dashboardLayout.widgets.firstIndex(where: { $0.id == toID }) else { return }
+        var next = dashboardLayout
+        let item = next.widgets.remove(at: fromIndex)
+        next.widgets.insert(item, at: toIndex)
+        next.activePreset = nil
+        next.updatedAt = Date()
+        dashboardLayout = next
+        dashboardLayoutStore.saveLayout(next)
+    }
+
+    func updateDashboardWidgetOptions(id: UUID, conditionFilter: String? = nil, metricMode: String? = nil) {
+        guard let index = dashboardLayout.widgets.firstIndex(where: { $0.id == id }) else { return }
+        var next = dashboardLayout
+        next.widgets[index].conditionFilter = conditionFilter
+        next.widgets[index].metricMode = metricMode
+        next.updatedAt = Date()
+        dashboardLayout = next
+        dashboardLayoutStore.saveLayout(next)
+    }
+
+    private func clearPrivateState(keepDemoMode: Bool = false) {
+        if !keepDemoMode {
+            isDemoBypassActive = false
+        }
         sessionGeneration = UUID()
         searchTask?.cancel()
         mapTask?.cancel()
@@ -122,7 +280,7 @@ final class AppStore: ObservableObject {
         dismissDetail()
         isLoading = false
         lastError = nil
-        repository = RemoteTurtleRepository(client: client)
+        repository = isDemoBypassActive ? DemoTurtleRepository() : RemoteTurtleRepository(client: client)
     }
 
     deinit { searchTask?.cancel(); mapTask?.cancel() }

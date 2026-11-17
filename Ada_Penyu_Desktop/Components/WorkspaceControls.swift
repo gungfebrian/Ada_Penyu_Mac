@@ -1,10 +1,37 @@
+import AppKit
 import SwiftUI
+
+@MainActor
+enum SidebarToggleExclusionRegistry {
+    static let windowMarkers = NSMapTable<NSWindow, NSView>.weakToWeakObjects()
+}
+
+private struct SidebarToggleExclusionMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> MarkerView { MarkerView() }
+    func updateNSView(_ nsView: MarkerView, context: Context) { nsView.registerInWindow() }
+
+    final class MarkerView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            registerInWindow()
+        }
+
+        func registerInWindow() {
+            guard let window else { return }
+            SidebarToggleExclusionRegistry.windowMarkers.setObject(self, forKey: window)
+        }
+    }
+}
 
 struct WorkspaceHeader: View {
     @ObservedObject var store: AppStore
     let title: String
     let onExport: () -> Void
+    var isSidebarCollapsed: Bool = false
     let onToggleSidebar: () -> Void
+    @State private var isToggleHovered = false
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -18,11 +45,26 @@ struct WorkspaceHeader: View {
     private var heading: some View {
         HStack(spacing: 14) {
             Button(action: onToggleSidebar) {
-                Image(systemName: store.activeSection.icon).font(.system(size: 16))
-                    .foregroundStyle(AdaColors.navy).frame(width: 38, height: 38)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 12))
+                Image(systemName: store.activeSection.icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(AdaColors.navy)
+                    .frame(width: 38, height: 38)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(isToggleHovered ? Color.white.opacity(0.92) : .white)
+                            .shadow(color: Color.black.opacity(isToggleHovered ? 0.08 : 0.02), radius: isToggleHovered ? 6 : 2, y: 1)
+                    )
+                    .scaleEffect(isToggleHovered ? 1.03 : 1.0)
+                    .background(SidebarToggleExclusionMarker())
             }
-            .buttonStyle(.plain).help("Toggle sidebar").accessibilityLabel("Toggle sidebar")
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.14)) {
+                    isToggleHovered = hovering
+                }
+            }
+            .help(isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
+            .accessibilityLabel(isSidebarCollapsed ? "Expand sidebar" : "Toggle sidebar")
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 24, weight: .semibold)).foregroundStyle(AdaColors.ink)
                 Text(store.accountOrganization.isEmpty ? "Sea Turtle Group" : store.accountOrganization)
@@ -36,8 +78,45 @@ struct WorkspaceHeader: View {
         HStack(spacing: 10) {
             if store.selectedTurtle == nil {
                 if store.activeSection == .dashboard {
+                    if store.isDemoBypassActive {
+                        ActionDropdown(items: DemoDashboardPersona.allCases.map { persona in
+                            DropdownAction(
+                                title: "\(persona.displayName) · \(persona.roleLabel)",
+                                selected: store.demoPersona == persona,
+                                action: { store.selectDemoPersona(persona) }
+                            )
+                        }) {
+                            ContextPill(title: store.demoPersona.displayName, icon: "person.crop.circle", chevron: true)
+                        }
+                        .fixedSize()
+                        .help("Switch account workspace")
+                    }
                     SpeciesPicker(selection: $store.chartSpecies)
-                    ContextPill(title: "Last 12 months", icon: "calendar")
+                    Button {
+                        store.isWidgetPickerPresented = true
+                    } label: {
+                        ContextPill(title: "Add Widget", icon: "plus.square.on.square")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open visual widget gallery")
+
+                    Button {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            store.isEditingDashboardWidgets.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: store.isEditingDashboardWidgets ? "checkmark" : "square.grid.2x2")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(store.isEditingDashboardWidgets ? "Done" : "Edit Widgets")
+                                .font(.system(size: 12, weight: store.isEditingDashboardWidgets ? .semibold : .regular))
+                        }
+                        .foregroundStyle(store.isEditingDashboardWidgets ? .white : AdaColors.ink)
+                        .padding(.horizontal, 16)
+                        .frame(height: 36)
+                        .background(store.isEditingDashboardWidgets ? AdaColors.navy : .white, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
                 } else if store.activeSection == .map || store.activeSection == .sightings {
                     SpeciesPicker(selection: $store.mapSpecies)
                     ActionDropdown(items: MapPeriod.allCases.map { period in

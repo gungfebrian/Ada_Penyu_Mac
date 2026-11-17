@@ -582,9 +582,22 @@ struct I3SWorkspaceView: View {
 
                 if let defaultSample = I3SSampleLibrary.samples.first(where: { $0.id == "Amina3_L" }) ?? I3SSampleLibrary.samples.first {
                     Button {
+                        loadSample(defaultSample, includeAnnotations: true, forSecondary: editingSecondary)
+                        Task { await runDatabaseSearch() }
+                    } label: {
+                        Label("Load Mock Annotated Sample", systemImage: "sparkles")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .frame(height: 36)
+                            .background(AdaColors.green, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
                         loadSample(defaultSample, includeAnnotations: false, forSecondary: editingSecondary)
                     } label: {
-                        Label("Try Sample Photo (Unannotated)", systemImage: "photo")
+                        Label("Annotate Manually", systemImage: "photo")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(AdaColors.ink)
                             .padding(.horizontal, 16)
@@ -596,16 +609,17 @@ struct I3SWorkspaceView: View {
                 }
             }
 
-            // Quick thumbnail strip of bundled raw sea turtle head photos
+            // Quick thumbnail strip of bundled pre-annotated sea turtle head photos
             VStack(spacing: 8) {
-                Text("Or pick a sea turtle head photo to annotate:")
+                Text("Or click a sample turtle photo to load with mock scale annotations:")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(AdaColors.tertiaryInk)
 
                 HStack(spacing: 10) {
                     ForEach(I3SSampleLibrary.samples.prefix(5)) { sample in
                         Button {
-                            loadSample(sample, includeAnnotations: false, forSecondary: editingSecondary)
+                            loadSample(sample, includeAnnotations: true, forSecondary: editingSecondary)
+                            Task { await runDatabaseSearch() }
                         } label: {
                             VStack(spacing: 5) {
                                 if let img = I3SSampleLibrary.loadImage(for: sample) {
