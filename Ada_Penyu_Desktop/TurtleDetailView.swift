@@ -515,9 +515,45 @@ private struct BodyConditionEntry: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
 
+        PhotoStrip(paths: log.photoPaths)
+
         if let sourceID = log.sourceSightingID, let onOpenSighting {
             Button("Open related sighting →") { onOpenSighting(sourceID) }
                 .buttonStyle(AdaPillButtonStyle())
+        }
+    }
+}
+
+private struct PhotoStrip: View {
+    let paths: [String]
+    private let visibleLimit = 3
+
+    var body: some View {
+        if !paths.isEmpty {
+            let visible = Array(paths.prefix(visibleLimit))
+            let extraCount = paths.count - visible.count
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    ForEach(Array(visible.enumerated()), id: \.offset) { _, path in
+                        TurtlePhoto(paths: [path], size: 56)
+                    }
+                    if extraCount > 0 {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.black.opacity(0.045))
+                                .frame(width: 56, height: 56)
+                            Text("+\(extraCount)")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(AdaColors.secondaryInk)
+                        }
+                        .accessibilityLabel("\(extraCount) more photos")
+                    }
+                    Spacer()
+                }
+                Text("\(paths.count) \(paths.count == 1 ? "photo" : "photos")")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AdaColors.tertiaryInk)
+            }
         }
     }
 }

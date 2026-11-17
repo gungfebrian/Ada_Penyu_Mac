@@ -55,6 +55,25 @@ struct V2Condition: Decodable {
     }
 }
 
+struct V2LogPhoto: Decodable {
+    let url: String
+    let downloadURL: String?
+    let markingId: UUID?
+    enum CodingKeys: String, CodingKey {
+        case url, downloadURL = "download_url", markingId = "marking_id"
+    }
+
+    /// The bytes the desktop can actually fetch. A signed download URL wins
+    /// over the stable object URL when both are present.
+    var fetchPath: String {
+        if let downloadURL {
+            let trimmed = downloadURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return url.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 struct V2Sighting: Decodable {
     let id: UUID
     let observedAt: Date
@@ -63,6 +82,7 @@ struct V2Sighting: Decodable {
     let condition: V2Condition?
     let measurements: Measurements?
     let notes: String?
+    let photos: [V2LogPhoto]
     struct Event: Decodable { let type: String }
     struct Measurements: Decodable {
         let length: Double?
@@ -71,7 +91,19 @@ struct V2Sighting: Decodable {
         enum CodingKeys: String, CodingKey { case length = "carapace_length_cm", width = "carapace_width_cm", weight = "weight_kg" }
     }
     enum CodingKeys: String, CodingKey {
-        case id, event, location, condition, measurements, notes, observedAt = "observed_at"
+        case id, event, location, condition, measurements, notes, photos, observedAt = "observed_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        observedAt = try container.decode(Date.self, forKey: .observedAt)
+        event = try container.decode(Event.self, forKey: .event)
+        location = try container.decode(V2Location.self, forKey: .location)
+        condition = try container.decodeIfPresent(V2Condition.self, forKey: .condition)
+        measurements = try container.decodeIfPresent(Measurements.self, forKey: .measurements)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        photos = try container.decodeIfPresent([V2LogPhoto].self, forKey: .photos) ?? []
     }
 
     var measurement: TurtleMeasurement? {
@@ -88,13 +120,18 @@ struct V2Sighting: Decodable {
         let parts: [String: TurtleBodyPart] = ["head": .head, "carapace": .carapace,
             "front_flipper_left": .flipperLeft, "front_flipper_right": .flipperRight,
             "rear_flipper_left": .footLeft, "rear_flipper_right": .footRight, "tail": .tail]
-        // An encounter-wide assessment is not a per-body-part assessment.
+        let untagged = photos.filter { $0.markingId == nil }.map(\.fetchPath).filter { !$0.isEmpty }
+        // The encounter status stays on the sighting row. Each marking is tinted
+        // from its own kind, and only inherits photos that were not tagged to a part.
         return [encounter] + (condition?.markings ?? []).compactMap { marking in
             guard let part = parts[marking.region] else { return nil }
+            let tagged = photos.filter { $0.markingId == marking.id }.map(\.fetchPath).filter { !$0.isEmpty }
             return TurtleLogSummary(id: marking.id.uuidString, date: date, location: location.name,
                 status: marking.kind.replacingOccurrences(of: "_", with: " ").capitalized,
-                condition: nil, notes: marking.notes,
-                coordinate: location.coordinate, bodyPart: part, markingSeverity: marking.severity, sourceSightingID: id.uuidString)
+                condition: TurtleCondition(markingKind: marking.kind), notes: marking.notes,
+                coordinate: location.coordinate, bodyPart: part, markingSeverity: marking.severity,
+                sourceSightingID: id.uuidString,
+                photoPaths: tagged.isEmpty ? untagged : tagged)
         }
     }
 }
