@@ -228,6 +228,9 @@ struct TurtleLogSummary: Identifiable, Hashable {
     let bodyPart: TurtleBodyPart?
     let markingSeverity: String?
     let sourceSightingID: String?
+    /// Authenticated photo URLs for this row. Empty for sightings that have
+    /// no evidence attached, and for markings that neither own nor inherit any.
+    let photoPaths: [String]
     var isBodyConditionRecord: Bool { bodyPart != nil }
 
     init(
@@ -240,7 +243,8 @@ struct TurtleLogSummary: Identifiable, Hashable {
         coordinate: TurtleCoordinate?,
         bodyPart: TurtleBodyPart? = nil,
         markingSeverity: String? = nil,
-        sourceSightingID: String? = nil
+        sourceSightingID: String? = nil,
+        photoPaths: [String] = []
     ) {
         self.id = id
         self.date = date
@@ -252,6 +256,7 @@ struct TurtleLogSummary: Identifiable, Hashable {
         self.bodyPart = bodyPart
         self.markingSeverity = markingSeverity
         self.sourceSightingID = sourceSightingID
+        self.photoPaths = photoPaths
     }
 }
 
@@ -369,6 +374,20 @@ extension TurtleCondition {
         case "scarred": self = .scarred
         case "injured": self = .injured
         default: return nil
+        }
+    }
+
+    /// Per-marking kind, not the encounter-wide status. A healthy encounter can
+    /// still carry a wounded head; copying the encounter status onto every part
+    /// would hide that.
+    init?(markingKind: String) {
+        switch markingKind.lowercased() {
+        case "wound", "missing_limb", "fibropapilloma":
+            self = .injured
+        case "scratch", "deformity", "barnacles", "barnacle", "tag_scar", "other":
+            self = .scarred
+        default:
+            return nil
         }
     }
 }

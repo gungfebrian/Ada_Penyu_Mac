@@ -20,14 +20,40 @@ final class ReviewRegressionTests: XCTestCase {
         let markings = logs.filter(\.isBodyConditionRecord)
         XCTAssertEqual(markings.count, 2)
         XCTAssertEqual(markings.first?.status, "Wound")
-        XCTAssertNil(markings.first?.condition)
+        XCTAssertEqual(markings.first?.condition, .injured)
+        XCTAssertEqual(markings.last?.condition, .scarred)
+        XCTAssertTrue(markings.allSatisfy(\.photoPaths.isEmpty))
     }
 
     func testOverallAssessmentIsNotCopiedOntoEveryMarking() throws {
         let logs = try encounter(condition: "\"healthy\"").logs
         XCTAssertEqual(logs.first?.condition, .healthy)
-        XCTAssertTrue(logs.filter { $0.bodyPart != nil }.allSatisfy { $0.condition == nil })
+        let markings = logs.filter { $0.bodyPart != nil }
+        XCTAssertEqual(markings.map(\.condition), [.injured, .scarred])
+        XCTAssertFalse(markings.contains { $0.condition == .healthy })
         XCTAssertEqual(logs.last?.status, "Tag Scar")
+    }
+
+    func testMarkingPhotosPreferTheirOwnAndFallBackToUntagged() throws {
+        let data = APIFixtures.data("""
+        {"id":"10000000-0000-4000-8000-000000000004","observed_at":"2026-02-01T00:00:00Z",
+        "event":{"type":"sighting"},"location":{"name":"Reef","coordinates":null},"notes":null,"measurements":null,
+        "photos":[
+          {"url":"https://cdn.example/untagged.jpg","download_url":"https://cdn.example/untagged-full.jpg"},
+          {"url":"https://cdn.example/head.jpg","download_url":"https://cdn.example/head-full.jpg","marking_id":"10000000-0000-4000-8000-000000000005"},
+          {"url":"   ","download_url":"","marking_id":"10000000-0000-4000-8000-000000000005"}
+        ],
+        "condition":{"status":"injured","notes":null,"markings":[
+        {"id":"10000000-0000-4000-8000-000000000005","region":"head","kind":"wound","severity":"minor","notes":"Observed wound"},
+        {"id":"10000000-0000-4000-8000-000000000006","region":"tail","kind":"scratch","severity":"minor","notes":null}]}}
+        """)
+        let logs = try JSONDecoder.api.decode(V2Sighting.self, from: data).logs
+        let head = try XCTUnwrap(logs.first { $0.bodyPart == .head })
+        let tail = try XCTUnwrap(logs.first { $0.bodyPart == .tail })
+        XCTAssertEqual(head.photoPaths, ["https://cdn.example/head-full.jpg"])
+        XCTAssertEqual(head.condition, .injured)
+        XCTAssertEqual(tail.photoPaths, ["https://cdn.example/untagged-full.jpg"])
+        XCTAssertEqual(tail.condition, .scarred)
     }
 
     func testTwoMarkingsDoNotTurnOneEncounterIntoThreeSightings() throws {

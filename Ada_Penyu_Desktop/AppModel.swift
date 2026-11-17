@@ -55,9 +55,8 @@ enum TurtleSpecies: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// The body regions we display on the turtle diagram. Raw values map to
-/// image asset names in `Assets.xcassets`, so the enum is the single source
-/// of truth for rendering.
+/// The body regions we display on the turtle diagram. `imageName` is the
+/// catalog name for each region's silhouette.
 enum TurtleBodyPart: String, CaseIterable, Identifiable, Hashable {
     case head
     case flipperLeft
@@ -81,16 +80,17 @@ enum TurtleBodyPart: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Matches the image asset names shipped in `Assets.xcassets`.
+    /// Namespaced catalog names under `SVG turtle`. The group provides a
+    /// namespace, so the bare imageset name does not resolve.
     var imageName: String {
         switch self {
-        case .head: "head"
-        case .flipperLeft: "flipper_left"
-        case .flipperRight: "flipper_right"
-        case .carapace: "carapas"
-        case .footLeft: "left_foot"
-        case .footRight: "right_foot"
-        case .tail: "tail"
+        case .head: "SVG turtle/head"
+        case .flipperLeft: "SVG turtle/flipper left"
+        case .flipperRight: "SVG turtle/flipper right"
+        case .carapace: "SVG turtle/shell"
+        case .footLeft: "SVG turtle/kaki kiri"
+        case .footRight: "SVG turtle/kaki kanan"
+        case .tail: "SVG turtle/tail"
         }
     }
 }
