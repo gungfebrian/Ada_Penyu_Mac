@@ -16,7 +16,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .dashboard: "Overview"
         case .map: "Map"
         case .individuals: "Sea Turtles"
-        case .scientistReview: "Scientist Review"
+        case .scientistReview: "Not Sure Review"
         case .identification: "I3S Pattern ID"
         case .favorites: "Favorites"
         case .sightings: "Sightings"

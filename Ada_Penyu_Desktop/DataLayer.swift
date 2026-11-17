@@ -956,3 +956,263 @@ private extension DashboardSnapshot {
         return DashboardSnapshot(months: normalized, species: species)
     }
 }
+
+final class DemoTurtleRepository: TurtleRepository {
+    private var turtles: [Turtle] = DemoFixtures.turtles
+    private var sightings: [Sighting] = DemoFixtures.sightings
+    private var favoriteIDs = Set(["Turtle #004", "Turtle #005"])
+
+    func listIndividuals(query: IndividualQuery) async throws -> Page<Turtle> {
+        var results = turtles.filter { turtle in
+            let searchMatches = query.search.map { value in
+                turtle.displayName.localizedCaseInsensitiveContains(value)
+                    || turtle.id.localizedCaseInsensitiveContains(value)
+                    || turtle.species.rawValue.localizedCaseInsensitiveContains(value)
+                    || turtle.location.localizedCaseInsensitiveContains(value)
+            } ?? true
+            let speciesMatches = query.species.isEmpty || query.species.contains(turtle.species)
+            let conditionMatches = query.condition == nil || turtle.condition == query.condition
+            return searchMatches && speciesMatches && conditionMatches
+        }
+        if query.sort == .lastSeenDescending {
+            let formatter = APIFormatters.display
+            results.sort { lhs, rhs in
+                let lhsDate = formatter.date(from: lhs.lastSeen) ?? .distantPast
+                let rhsDate = formatter.date(from: rhs.lastSeen) ?? .distantPast
+                return lhsDate > rhsDate
+            }
+        } else {
+            results.sort { $0.displayName < $1.displayName }
+        }
+        let start = min(query.page.offset, results.count)
+        let end = min(start + query.page.limit, results.count)
+        return Page(items: results[start..<end].map { withFavorite($0) }, total: results.count, request: query.page)
+    }
+
+    func listFavorites() async throws -> [Turtle] {
+        turtles.filter { favoriteIDs.contains($0.id) }.map(withFavorite)
+    }
+
+    func setFavorite(turtleID: String, isFavorite: Bool) async throws -> Bool {
+        if isFavorite { favoriteIDs.insert(turtleID) } else { favoriteIDs.remove(turtleID) }
+        return isFavorite
+    }
+
+    func dashboard(query: DashboardQuery) async throws -> DashboardSnapshot {
+        let calendar = Calendar.current
+        let monthKeys = (0..<12).compactMap { index -> String? in
+            guard let date = calendar.date(byAdding: .month, value: -11 + index, to: Date()) else { return nil }
+            return String(format: "%04d-%02d", calendar.component(.year, from: date), calendar.component(.month, from: date))
+        }
+        let scopedSightings = query.species.map { species in sightings.filter { $0.species == species } } ?? sightings
+        let scopedTurtles = query.species.map { species in turtles.filter { $0.species == species } } ?? turtles
+        let sightingCounts = Dictionary(grouping: scopedSightings, by: { monthKey(for: $0.date) }).mapValues(\.count)
+        let newIndividualCounts = Dictionary(grouping: scopedTurtles, by: { monthKey(for: $0.firstRecorded) }).mapValues(\.count)
+        let months = monthKeys.map { key in
+            DashboardSnapshot.Month(
+                month: key,
+                sightings: sightingCounts[key] ?? 0,
+                newIndividuals: newIndividualCounts[key] ?? 0
+            )
+        }
+        let species = TurtleSpecies.allCases.filter { $0 != .unknown }.map { species in
+            SpeciesSummary(
+                id: species.apiValue,
+                species: species,
+                individuals: turtles.filter { $0.species == species }.count,
+                sightings: turtles.filter { $0.species == species }.reduce(0) { $0 + $1.sightings }
+            )
+        }
+        return DashboardSnapshot(months: months, species: species)
+    }
+
+    func mapSightings(query: MapQuery) async throws -> [Sighting] {
+        sightings.filter { sighting in
+            (query.species == nil || query.species == sighting.species) &&
+            (query.condition == nil || query.condition == sighting.condition)
+        }
+    }
+
+    func detail(for turtle: Turtle) async throws -> TurtleDetailData {
+        let sightingLogs = sightings.filter { $0.turtleID == turtle.id }.map {
+            TurtleLogSummary(id: $0.id, date: $0.date, location: $0.location, status: "Sighting", condition: $0.condition, notes: "Foraging near reef edge", coordinate: $0.coordinate)
+        }
+        let measurements = [
+            TurtleMeasurement(id: "measurement-\(turtle.id)", date: turtle.lastSeen, length: 84.2, width: 68.4, weight: 31.6)
+        ]
+        return TurtleDetailData(turtle: withFavorite(turtle), measurements: measurements, logs: sightingLogs)
+    }
+
+    func export(_ request: ExportRequest) async throws -> DownloadedFile {
+        let page = try await listIndividuals(query: request.query)
+        let header = "id,species,location,last_seen,first_recorded,sightings,condition"
+        let rows = page.items.map { "\($0.id),\($0.species.rawValue),\($0.location),\($0.lastSeen),\($0.firstRecorded),\($0.sightings),\($0.condition.rawValue)" }
+        let body = ([header] + rows).joined(separator: "\n") + "\n"
+        return DownloadedFile(data: Data(body.utf8), filename: "turtle-individuals.csv", contentType: "text/csv")
+    }
+
+    func fetchPhotoData(pathOrURL: String) async throws -> Data {
+        if let direct = I3SSampleLibrary.loadImageData(named: pathOrURL) {
+            return direct
+        }
+        let fallbackName = pathOrURL.lowercased().hasSuffix("right") ? "Zizo1_R.jpg" : "Amina1_L.jpg"
+        if let fallback = I3SSampleLibrary.loadImageData(named: fallbackName) {
+            return fallback
+        }
+        throw APIError.invalidResponse
+    }
+
+    func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
+        let items = turtles.prefix(limit).enumerated().map { idx, t -> MatchCandidateItem in
+            let fused = max(0.02, 0.36 - Double(idx) * 0.08)
+            let conf = idx == 0 ? 0.94 : max(0.08, 0.82 - Double(idx) * 0.14)
+            let defaultPhoto = side == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"
+            let candidatePhoto = side == .right ? (t.rightPhotoURL ?? defaultPhoto) : (t.leftPhotoURL ?? defaultPhoto)
+            return MatchCandidateItem(
+                individualID: t.backendID ?? UUID(),
+                name: t.displayName,
+                profileCode: t.profileCode ?? String(format: "000%03d", idx + 1),
+                species: t.species,
+                rank: idx + 1,
+                fusedScore: fused,
+                confidence: conf,
+                confidencePercent: Int((conf * 100).rounded()),
+                globalScore: max(0.25, 0.86 - Double(idx) * 0.07),
+                localMatch: max(18, 28 - idx * 4),
+                matchedPhotoSide: side,
+                photoURL: candidatePhoto,
+                aboveThreshold: idx < 2,
+                lastSeenDate: t.lastSeen,
+                lastSeenLocation: t.location,
+                condition: t.condition
+            )
+        }
+        return MatchSearchOutcome(
+            querySide: side,
+            gallerySize: turtles.count,
+            matchState: "likely_match",
+            candidates: Array(items),
+            isDualPair: false,
+            pairAgreed: nil
+        )
+    }
+
+    func matchPhotoPair(leftData: Data, rightData: Data, limit: Int = 10) async throws -> MatchSearchOutcome {
+        let single = try await matchPhoto(imageData: leftData, side: .left, limit: limit)
+        return MatchSearchOutcome(
+            querySide: .left,
+            gallerySize: single.gallerySize * 2,
+            matchState: "likely_match",
+            candidates: single.candidates,
+            isDualPair: true,
+            pairAgreed: true
+        )
+    }
+
+    func fetchOverlayAnnotations(
+        imageData: Data,
+        side: TurtlePhotoSide,
+        candidateID: UUID,
+        candidateSide: TurtlePhotoSide,
+        maxThreads: Int = 35
+    ) async throws -> [OverlayAnnotationItem] {
+        let querySampleName = side == .right ? "Zizo1_R.jpg" : "Amina3_L.jpg"
+        let matchedTurtle = turtles.first { $0.backendID == candidateID }
+        let candSampleName = candidateSide == .right
+            ? (matchedTurtle?.rightPhotoURL ?? "Zizo2_R.jpg")
+            : (matchedTurtle?.leftPhotoURL ?? "Amina1_L.jpg")
+
+        if let qSample = I3SSampleLibrary.sample(forFilenameOrID: querySampleName),
+           let cSample = I3SSampleLibrary.sample(forFilenameOrID: candSampleName) {
+            let count = min(maxThreads, min(qSample.keypoints.count, cSample.keypoints.count))
+            let qw = Double(max(qSample.imageWidth, 1))
+            let qh = Double(max(qSample.imageHeight, 1))
+            let cw = Double(max(cSample.imageWidth, 1))
+            let ch = Double(max(cSample.imageHeight, 1))
+            return (0..<count).map { idx in
+                let qkp = qSample.keypoints[idx]
+                let ckp = cSample.keypoints[idx]
+                return OverlayAnnotationItem(
+                    featureID: "scale-junction-\(idx + 1)",
+                    label: "Scale #\(idx + 1)",
+                    score: max(0.62, 0.96 - Double(idx) * 0.012),
+                    query: OverlayMatchPoint(x: qkp[0] / qw, y: qkp[1] / qh),
+                    candidate: OverlayMatchPoint(x: ckp[0] / cw, y: ckp[1] / ch)
+                )
+            }
+        }
+        return []
+    }
+
+    private func withFavorite(_ turtle: Turtle) -> Turtle {
+        Turtle(
+            id: turtle.id,
+            species: turtle.species,
+            location: turtle.location,
+            lastSeen: turtle.lastSeen,
+            sightings: turtle.sightings,
+            condition: turtle.condition,
+            firstRecorded: turtle.firstRecorded,
+            isFavorite: favoriteIDs.contains(turtle.id),
+            coordinate: turtle.coordinate,
+            backendID: turtle.backendID,
+            leftPhotoURL: turtle.leftPhotoURL,
+            rightPhotoURL: turtle.rightPhotoURL,
+            name: turtle.name,
+            profileCode: turtle.profileCode
+        )
+    }
+
+    private func monthKey(for displayDate: String) -> String {
+        guard let date = APIFormatters.display.date(from: displayDate) else { return "unknown" }
+        let components = Calendar.current.dateComponents([.year, .month], from: date)
+        return String(format: "%04d-%02d", components.year ?? 0, components.month ?? 0)
+    }
+}
+
+enum DemoFixtures {
+    static let turtles: [Turtle] = [
+        Turtle(id: "Turtle #001", species: .hawksbill, location: "Kuta Beach", lastSeen: "17 Aug 2026", sightings: 5, condition: .injured, firstRecorded: "01 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7180, longitude: 115.1690), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000001"), leftPhotoURL: "Amina1_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Amina", profileCode: "000001"),
+        Turtle(id: "Turtle #002", species: .green, location: "Nusa Dua reef", lastSeen: "12 Aug 2026", sightings: 8, condition: .healthy, firstRecorded: "12 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7960, longitude: 115.2280), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000002"), leftPhotoURL: "Aikane1_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Aikane", profileCode: "000002"),
+        Turtle(id: "Turtle #003", species: .oliveRidley, location: "Serangan Island", lastSeen: "09 Aug 2026", sightings: 4, condition: .scarred, firstRecorded: "21 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7240, longitude: 115.2500), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000003"), leftPhotoURL: "Ghost1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Ghost", profileCode: "000003"),
+        Turtle(id: "Turtle #004", species: .green, location: "Sanur flats", lastSeen: "02 Aug 2026", sightings: 3, condition: .scarred, firstRecorded: "07 May 2026", isFavorite: true, coordinate: TurtleCoordinate(latitude: -8.6870, longitude: 115.2620), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000004"), leftPhotoURL: "Hoku1_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Hoku", profileCode: "000004"),
+        Turtle(id: "Turtle #005", species: .leatherback, location: "Pantai Timur", lastSeen: "28 Jul 2026", sightings: 1, condition: .healthy, firstRecorded: "16 Jun 2026", isFavorite: true, coordinate: TurtleCoordinate(latitude: -8.7800, longitude: 115.2500), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000005"), leftPhotoURL: "Amina2_L.jpg", rightPhotoURL: nil, name: "Zizo", profileCode: "000005"),
+        Turtle(id: "Turtle #006", species: .loggerhead, location: "Jimbaran Bay", lastSeen: "24 Jul 2026", sightings: 6, condition: .healthy, firstRecorded: "18 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7850, longitude: 115.1580), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000006"), leftPhotoURL: nil, rightPhotoURL: "Zizo1_R.jpg", name: "Koa", profileCode: "000006"),
+        Turtle(id: "Turtle #007", species: .hawksbill, location: "Legian Beach", lastSeen: "19 Jul 2026", sightings: 7, condition: .injured, firstRecorded: "02 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7040, longitude: 115.1660), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000007"), leftPhotoURL: "Ghost2_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Nalu", profileCode: "000007"),
+        Turtle(id: "Turtle #008", species: .green, location: "Tuban Beach", lastSeen: "12 Jul 2026", sightings: 9, condition: .healthy, firstRecorded: "11 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.7360, longitude: 115.1670), backendID: UUID(uuidString: "00000000-0000-4000-8000-000000000008"), leftPhotoURL: "Hoku2_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Moana", profileCode: "000008"),
+    ]
+
+    static let sightings: [Sighting] = {
+        var result: [Sighting] = []
+        for (index, turtle) in turtles.enumerated() {
+            let coord = turtle.coordinate ?? TurtleCoordinate(latitude: -8.72, longitude: 115.20)
+            result.append(
+                Sighting(
+                    name: turtle.displayName,
+                    id: "demo-sighting-\(index + 1)",
+                    turtleID: turtle.id,
+                    species: turtle.species,
+                    location: turtle.location,
+                    date: turtle.lastSeen,
+                    condition: turtle.condition,
+                    coordinate: coord
+                )
+            )
+            if turtle.sightings > 1 {
+                result.append(
+                    Sighting(
+                        name: turtle.displayName,
+                        id: "demo-sighting-prev-\(index + 1)",
+                        turtleID: turtle.id,
+                        species: turtle.species,
+                        location: turtle.location,
+                        date: turtle.firstRecorded,
+                        condition: turtle.condition,
+                        coordinate: coord
+                    )
+                )
+            }
+        }
+        return result
+    }()
+}

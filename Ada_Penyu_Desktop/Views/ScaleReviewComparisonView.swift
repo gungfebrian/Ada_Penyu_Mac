@@ -6,6 +6,8 @@ struct ScaleReviewComparisonView: View {
     let queryImage: NSImage?
     let galleryImage: NSImage?
     @ObservedObject var store: ScaleReviewStore
+    var querySampleName: String? = nil
+    var gallerySampleName: String? = nil
     @State private var showsNumbers = true
     @State private var queryColor = Color.cyan
     @State private var galleryColor = AdaColors.orange
@@ -16,7 +18,7 @@ struct ScaleReviewComparisonView: View {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Numbered scale review").font(.system(size: 13, weight: .semibold))
-                    Text("1  Mark head region     2  Propose or draw scales     3  Confirm each scale")
+                    Text("Click any numbered scale on the photo or list to inspect, confirm, reject, or redraw.")
                         .font(.system(size: 11)).foregroundStyle(AdaColors.secondaryInk)
                 }
                 Spacer()
@@ -24,8 +26,22 @@ struct ScaleReviewComparisonView: View {
                 Button("Export workspace reviews…", action: exportReview).disabled(store.documents.isEmpty)
             }.font(.system(size: 11)).controlSize(.small).padding(12).background(AdaColors.card)
             HStack(spacing: 1) {
-                ScalePhotoReviewPane(image: queryImage, title: "QUERY", store: store, showsNumbers: showsNumbers, tint: $queryColor)
-                ScalePhotoReviewPane(image: galleryImage, title: "GALLERY", store: store, showsNumbers: showsNumbers, tint: $galleryColor)
+                ScalePhotoReviewPane(
+                    image: queryImage,
+                    title: "QUERY",
+                    sampleName: querySampleName,
+                    store: store,
+                    showsNumbers: showsNumbers,
+                    tint: $queryColor
+                )
+                ScalePhotoReviewPane(
+                    image: galleryImage,
+                    title: "GALLERY",
+                    sampleName: gallerySampleName,
+                    store: store,
+                    showsNumbers: showsNumbers,
+                    tint: $galleryColor
+                )
             }.frame(maxWidth: .infinity, maxHeight: .infinity).background(AdaColors.line)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Counts include confirmed scales only. Proposals can include eyes, glare or merged scales. Numbers are local to each photo; matching numbers do not establish correspondence.")
@@ -59,11 +75,12 @@ struct ScaleReviewComparisonView: View {
 private struct ScalePhotoReviewPane: View {
     let image: NSImage?
     let title: String
+    var sampleName: String? = nil
     @ObservedObject var store: ScaleReviewStore
     let showsNumbers: Bool
     @Binding var tint: Color
     private enum EditMode: String, CaseIterable { case inspect = "Review", head = "Head ROI", draw = "Draw scale" }
-    @State private var mode: EditMode = .head
+    @State private var mode: EditMode = .inspect
     @State private var hash: String?
     @State private var raster: (pixels: [Float], width: Int, height: Int)?
     @State private var draft: [ScalePoint] = []
@@ -72,7 +89,7 @@ private struct ScalePhotoReviewPane: View {
     @State private var redrawLease: UUID?
     @State private var pendingROI: ScaleRect?
     @State private var confirmROIChange = false
-    @State private var message = "Drag a rectangle around the visible head scales."
+    @State private var message = "Select a numbered scale on the photo or list below to confirm, reject, or redraw."
     @State private var threshold = 0.08
     @State private var processing = false
     @State private var requestID = UUID()
@@ -99,6 +116,7 @@ private struct ScalePhotoReviewPane: View {
                     Menu("\(Int(zoom * 100))%") {
                         ForEach([1.0, 1.5, 2.0], id: \.self) { value in Button("\(Int(value * 100))%") { zoom = value } }
                     }.frame(width: 72)
+                    Button("Load Mock Scales", action: seedMockScales)
                 }
                 HStack(spacing: 6) {
                     Text("Edges")
@@ -197,8 +215,32 @@ private struct ScalePhotoReviewPane: View {
         guard let image, let data = image.tiffRepresentation, let raster = ContourRasterizer.luminance(from: image, maxDimension: 900) else { return }
         let photoHash = ScaleReviewStore.photoHash(data)
         self.raster = raster; hash = photoHash
-        store.ensurePhoto(hash: photoHash, width: image.cgImage(forProposedRect: nil, context: nil, hints: nil)?.width ?? raster.width, height: image.cgImage(forProposedRect: nil, context: nil, hints: nil)?.height ?? raster.height)
-        mode = document?.headROI == nil ? .head : .inspect
+        let pxW = image.cgImage(forProposedRect: nil, context: nil, hints: nil)?.width ?? raster.width
+        let pxH = image.cgImage(forProposedRect: nil, context: nil, hints: nil)?.height ?? raster.height
+        store.ensurePhoto(hash: photoHash, width: pxW, height: pxH)
+        if document?.headROI == nil, document?.scales.isEmpty != false {
+            seedMockScales()
+        } else {
+            mode = document?.headROI == nil ? .head : .inspect
+            selected = document?.scales.first?.id
+        }
+    }
+
+    private func seedMockScales() {
+        guard let hash else { return }
+        let matchedSample: I3SSampleEntry? = {
+            if let sampleName, let s = I3SSampleLibrary.sample(forFilenameOrID: sampleName) {
+                return s
+            }
+            if let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                return I3SSampleLibrary.samples.first { $0.imageWidth == cg.width && $0.imageHeight == cg.height }
+            }
+            return I3SSampleLibrary.samples.first
+        }()
+        store.seedMockAnnotations(for: hash, sample: matchedSample)
+        mode = .inspect
+        selected = store.documents[hash]?.scales.first?.id
+        message = "Loaded pre-annotated postocular scales. Click any scale number to confirm, reject, or redraw."
     }
     private func fittedRect(size: CGSize) -> CGRect {
         guard let image, image.size.width > 0, image.size.height > 0 else { return .zero }

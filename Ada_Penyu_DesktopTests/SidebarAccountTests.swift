@@ -49,6 +49,39 @@ final class SidebarAccountTests: XCTestCase {
     }
 
     @MainActor
+    func testCollapsedSidebarFitsWithinCollapsedRailWidth() {
+        let collapsedSidebar = SidebarView(
+            selection: .constant(.dashboard),
+            selectedCondition: .constant(nil),
+            favoriteCount: 2,
+            selectedSpecies: nil,
+            onSelectSpecies: { _ in },
+            accountName: "Amina Saleh",
+            accountEmail: "amina@example.com",
+            accountOrganization: "Sea Turtle Group",
+            isCollapsed: true
+        )
+        let host = NSHostingView(rootView: collapsedSidebar)
+        host.frame = NSRect(x: 0, y: 0, width: 120, height: 720)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 120, height: 720),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -2000, y: -2000))
+        window.orderFrontRegardless()
+        host.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+
+        let account = findViews(named: "SidebarAccountMenuHost", in: host)
+        XCTAssertEqual(account.count, 1, viewTree(host))
+        XCTAssertLessThanOrEqual(account[0].frame.width, AdaLayout.collapsedSidebarWidth, viewTree(host))
+        XCTAssertGreaterThanOrEqual(account[0].frame.height, 44, viewTree(host))
+    }
+
+    @MainActor
     private var accountSidebar: some View {
         SidebarView(
             selection: .constant(.dashboard),

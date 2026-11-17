@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -45,6 +46,17 @@ struct ContentView: View {
         return { store.signOut() }
     }
 
+    private func setSidebarCollapsed(_ collapsed: Bool) {
+        guard isSidebarCollapsed != collapsed else { return }
+        withAnimation(AdaSidebarStyle.animation) {
+            isSidebarCollapsed = collapsed
+        }
+    }
+
+    private func toggleSidebar() {
+        setSidebarCollapsed(!isSidebarCollapsed)
+    }
+
     private var workspace: some View {
         ZStack {
             HStack(spacing: 0) {
@@ -63,13 +75,15 @@ struct ContentView: View {
                     accountOrganization: store.accountOrganization,
                     onSignOut: signOutAction,
                     isCollapsed: isSidebarCollapsed,
-                    onToggleSidebar: { isSidebarCollapsed.toggle() }
+                    onToggleSidebar: toggleSidebar,
+                    onExpandSidebar: { setSidebarCollapsed(false) }
                 )
 
                 VStack(spacing: 0) {
                     WorkspaceHeader(store: store, title: pageTitle,
                         onExport: { exportQueryOverride = nil; showingExport = true },
-                        onToggleSidebar: { isSidebarCollapsed.toggle() })
+                        isSidebarCollapsed: isSidebarCollapsed,
+                        onToggleSidebar: toggleSidebar)
 
                     ZStack {
                         AdaColors.canvas
@@ -93,6 +107,13 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    RightPaneAutoMinimizeObserver(
+                        isSidebarCollapsed: isSidebarCollapsed,
+                        isBlocked: showingExport,
+                        onMinimize: { setSidebarCollapsed(true) }
+                    )
+                )
                 .background(AdaColors.canvas)
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 40, bottomLeadingRadius: 40, bottomTrailingRadius: 0, topTrailingRadius: 0))
             }
@@ -161,7 +182,7 @@ struct ContentView: View {
     private var pageView: some View {
         switch store.activeSection {
         case .dashboard:
-            DashboardView(snapshot: store.dashboard, turtles: store.turtles, recentSightings: store.sightings,
+            DashboardView(store: store, snapshot: store.dashboard, turtles: store.turtles, recentSightings: store.sightings,
                 chartMode: $store.chartMode, chartSpecies: $store.chartSpecies,
                 onExport: { showingExport = true }, onSelect: store.select,
                 onBrowseTurtles: { store.activeSection = .individuals },
@@ -181,12 +202,17 @@ struct ContentView: View {
                 offset: store.individualsOffset, isLoading: store.isIndividualsLoading,
                 onPage: { page in Task { await store.loadIndividualsPage(page) } })
         case .sightings:
-            SightingsListView(sightings: store.sightings) { sighting in
+            SightingsListView(
+                sightings: store.sightings,
+                onOpenNotSureReview: { scenario in
+                    store.openNotSureReview(scenario: scenario)
+                }
+            ) { sighting in
                 selectedSightingID = sighting.id
                 store.select(store.turtles.first { $0.id == sighting.turtleID } ?? sighting.turtleReference)
             }
         case .scientistReview:
-            ScientistReviewWorkspaceView()
+            ScientistReviewWorkspaceView(store: store)
         case .identification:
             I3SWorkspaceView(store: store)
         case .favorites:
@@ -346,5 +372,170 @@ private struct ModalPrimaryButtonStyle: ButtonStyle {
 private struct ModalSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk).padding(.horizontal, 15).frame(height: 30).background(Color.black.opacity(configuration.isPressed ? 0.08 : 0.045)).clipShape(Capsule())
+    }
+}
+
+/// Passively watches clicks inside the right workspace pane so pressing anywhere on
+/// the right screen smoothly minimizes an expanded left sidebar without blocking
+/// buttons, scrolling, maps, or excluding the header sidebar toggle button.
+@MainActor
+private struct RightPaneAutoMinimizeObserver: NSViewRepresentable {
+    let isSidebarCollapsed: Bool
+    let isBlocked: Bool
+    let onMinimize: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        context.coordinator.anchorView = view
+        sync(context.coordinator)
+        context.coordinator.installMonitorIfNeeded()
+        return view
+    }
+
+    func updateNSView(_ nsView: AnchorView, context: Context) {
+        context.coordinator.anchorView = nsView
+        sync(context.coordinator)
+    }
+
+    static func dismantleNSView(_ nsView: AnchorView, coordinator: Coordinator) {
+        coordinator.removeMonitor()
+    }
+
+    private func sync(_ coordinator: Coordinator) {
+        coordinator.isSidebarCollapsed = isSidebarCollapsed
+        coordinator.isBlocked = isBlocked
+        coordinator.onMinimize = onMinimize
+    }
+
+    final class AnchorView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    @MainActor
+    final class Coordinator {
+        weak var anchorView: AnchorView?
+        var isSidebarCollapsed = false
+        var isBlocked = false
+        var onMinimize: () -> Void = {}
+        nonisolated(unsafe) private var monitor: Any?
+        private var pendingPress: (windowNumber: Int, downOrigin: NSPoint)?
+
+        deinit {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
+
+        func installMonitorIfNeeded() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+                guard Thread.isMainThread else { return event }
+                let isMouseDown = event.type == .leftMouseDown
+                let isMouseUp = event.type == .leftMouseUp
+                let locationInWindow = event.locationInWindow
+                let eventWindowNumber = event.windowNumber
+                MainActor.assumeIsolated {
+                    self?.handleMouseEvent(
+                        isMouseDown: isMouseDown,
+                        isMouseUp: isMouseUp,
+                        locationInWindow: locationInWindow,
+                        eventWindowNumber: eventWindowNumber
+                    )
+                }
+                return event
+            }
+        }
+
+        func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+            pendingPress = nil
+        }
+
+        private func isInRightPane(_ locationInWindow: NSPoint, window: NSWindow) -> Bool {
+            guard let view = anchorView, view.window === window, !view.isHiddenOrHasHiddenAncestor else {
+                return false
+            }
+            let rightRect = view.convert(view.bounds, to: nil)
+            guard rightRect.contains(locationInWindow) else { return false }
+            if let marker = SidebarToggleExclusionRegistry.windowMarkers.object(forKey: window),
+               marker.window === window {
+                let markerRect = marker.convert(marker.bounds, to: nil)
+                if markerRect.contains(locationInWindow) {
+                    return false
+                }
+            }
+            return true
+        }
+
+        private func handleMouseEvent(
+            isMouseDown: Bool,
+            isMouseUp: Bool,
+            locationInWindow: NSPoint,
+            eventWindowNumber: Int
+        ) {
+            guard let view = anchorView,
+                  let window = view.window,
+                  window.windowNumber == eventWindowNumber,
+                  !isSidebarCollapsed,
+                  !isBlocked,
+                  window.attachedSheet == nil else {
+                if isMouseDown {
+                    pendingPress = nil
+                }
+                return
+            }
+
+            if isMouseDown {
+                guard isInRightPane(locationInWindow, window: window) else {
+                    pendingPress = nil
+                    return
+                }
+                let downOrigin = window.frame.origin
+                let windowNumber = window.windowNumber
+                pendingPress = (windowNumber, downOrigin)
+
+                // Fallback for AppKit controls (Map/Menu/Slider) that consume leftMouseUp inside a tracking loop
+                DispatchQueue.main.async { [weak self, weak window] in
+                    guard let self, let window,
+                          let press = self.pendingPress,
+                          press.windowNumber == window.windowNumber,
+                          (NSEvent.pressedMouseButtons & 1) == 0 else { return }
+                    self.pendingPress = nil
+                    self.triggerMinimizeIfValid(in: window, downOrigin: press.downOrigin)
+                }
+            } else if isMouseUp {
+                guard let press = pendingPress, press.windowNumber == window.windowNumber else {
+                    return
+                }
+                pendingPress = nil
+                guard isInRightPane(locationInWindow, window: window) else {
+                    return
+                }
+                let downOrigin = press.downOrigin
+                DispatchQueue.main.async { [weak self, weak window] in
+                    guard let self, let window else { return }
+                    self.triggerMinimizeIfValid(in: window, downOrigin: downOrigin)
+                }
+            }
+        }
+
+        private func triggerMinimizeIfValid(in window: NSWindow, downOrigin: NSPoint) {
+            guard !isSidebarCollapsed,
+                  !isBlocked,
+                  let view = anchorView,
+                  view.window === window,
+                  window.attachedSheet == nil else { return }
+
+            let dx = abs(window.frame.origin.x - downOrigin.x)
+            let dy = abs(window.frame.origin.y - downOrigin.y)
+            guard dx <= 2 && dy <= 2 else { return }
+
+            onMinimize()
+        }
     }
 }

@@ -520,6 +520,7 @@ final class ScientistReviewViewModel: ObservableObject {
 // MARK: - Main Scientist Review Workspace View (1440 × 900 Target)
 
 struct ScientistReviewWorkspaceView: View {
+    var store: AppStore? = nil
     @StateObject private var vm = ScientistReviewViewModel()
     @StateObject private var scaleReviews = ScaleReviewStore()
     @State private var contourSettings = ContourSettings(enabled: true)
@@ -551,12 +552,31 @@ struct ScientistReviewWorkspaceView: View {
                 .background(AdaColors.sidebar)
         }
         .background(AdaColors.canvas)
+        .onAppear {
+            syncRequestedReviewState()
+        }
+        .onChange(of: store?.reviewNavigationTrigger) { _, _ in
+            syncRequestedReviewState()
+        }
         .sheet(isPresented: $vm.isConfirmSameTurtlePresented) {
             confirmSameTurtleSheet
         }
         .sheet(isPresented: $vm.isUnsureSheetPresented) {
             saveUnsureSheet
         }
+    }
+
+    private func syncRequestedReviewState() {
+        if let store {
+            if vm.activeScenario != store.requestedReviewScenario {
+                vm.switchScenario(store.requestedReviewScenario)
+            }
+            vm.layoutMode = store.requestedReviewLayoutMode
+        }
+        // Automatically show mock scale & head ROI annotations when opening Not Sure Review
+        vm.showScaleOutlines = true
+        vm.showHeadRegionOutline = true
+        vm.showCrossPhotoThreads = true
     }
 
     // MARK: - Top Scenario Switcher & Simulation Notice
@@ -572,7 +592,14 @@ struct ScientistReviewWorkspaceView: View {
             Text("Candidate scores, annotations and decisions are simulated. Decisions stay in memory; no encounter is saved to the backend. Photo contours are computed from the bundled photographs.")
                 .font(.system(size: 11)).foregroundStyle(AdaColors.secondaryInk)
             HStack {
-                Picker("Scenario", selection: Binding(get: { vm.activeScenario }, set: { vm.switchScenario($0) })) {
+                Picker("Scenario", selection: Binding(
+                    get: { vm.activeScenario },
+                    set: { next in
+                        vm.switchScenario(next)
+                        vm.showScaleOutlines = true
+                        vm.showHeadRegionOutline = true
+                    }
+                )) {
                     ForEach(ReviewScenarioID.allCases) { scenario in Text(scenario.shortTitle).tag(scenario) }
                 }.frame(maxWidth: 250)
                 Picker("View", selection: $vm.layoutMode) {
@@ -580,6 +607,17 @@ struct ScientistReviewWorkspaceView: View {
                 }.frame(maxWidth: 210)
                 Button("Number scales") { vm.layoutMode = .scales }
                     .controlSize(.small).tint(AdaColors.accent)
+                Button("Show All Mock Overlays") {
+                    if vm.layoutMode == .scales || vm.layoutMode == .contours {
+                        vm.layoutMode = .sideBySide
+                    }
+                    vm.showScaleOutlines = true
+                    vm.showHeadRegionOutline = true
+                    vm.showXFeatPoints = true
+                    vm.showI3SBlobOverlay = true
+                    vm.showCrossPhotoThreads = true
+                }
+                .controlSize(.small)
                 Spacer(minLength: 0)
             }.pickerStyle(.menu).font(.system(size: 11))
         }.padding(.horizontal, 16).padding(.vertical, 8).background(AdaColors.card)
@@ -628,6 +666,15 @@ struct ScientistReviewWorkspaceView: View {
                 unselectedBackground: AdaColors.canvas
             ) {
                 vm.showXFeatPoints.toggle()
+            }
+
+            FilterChip(
+                title: "I3S landmarks",
+                isSelected: vm.showI3SBlobOverlay,
+                horizontalPadding: 11,
+                unselectedBackground: AdaColors.canvas
+            ) {
+                vm.showI3SBlobOverlay.toggle()
             }
 
             if vm.layoutMode == .sideBySide && (vm.showScaleOutlines || vm.showXFeatPoints) {
@@ -772,56 +819,59 @@ struct ScientistReviewWorkspaceView: View {
                     Canvas { ctx, size in
                         let halfW = size.width * 0.5
                         let h = size.height
-                        let isSightingRight = vm.sighting.side == .right
-                        let isCandRight = cand.side == .right
+                        let leftSample = vm.sighting.sampleImageName.flatMap { I3SSampleLibrary.sample(forFilenameOrID: $0) }
+                        let rightSample = cand.sampleImageName.flatMap { I3SSampleLibrary.sample(forFilenameOrID: $0) }
 
-                        let mapLeft: (CGFloat, CGFloat) -> CGPoint = { nx, ny in
-                            let rx = isSightingRight ? (1.0 - nx) : nx
-                            let cx = halfW * 0.5 + (rx * halfW - halfW * 0.5) * vm.zoomScale + vm.panOffset.width
-                            let cy = h * 0.5 + (ny * h - h * 0.5) * vm.zoomScale + vm.panOffset.height
-                            return CGPoint(x: cx, y: cy)
-                        }
-                        let mapRight: (CGFloat, CGFloat) -> CGPoint = { nx, ny in
-                            let rx = isCandRight ? (1.0 - nx) : nx
-                            let cx = halfW + halfW * 0.5 + (rx * halfW - halfW * 0.5) * vm.zoomScale + vm.panOffset.width
-                            let cy = h * 0.5 + (ny * h - h * 0.5) * vm.zoomScale + vm.panOffset.height
-                            return CGPoint(x: cx, y: cy)
+                        let mapPanePoint: (I3SSampleEntry?, Int, CGFloat, CGFloat, Bool) -> CGPoint = { sample, kpIndex, fallbackNX, fallbackNY, isRightPane in
+                            let paneOffsetX: CGFloat = isRightPane ? halfW : 0
+                            if let sample, sample.imageWidth > 0, sample.imageHeight > 0, sample.keypoints.indices.contains(kpIndex) {
+                                let imgW = CGFloat(sample.imageWidth)
+                                let imgH = CGFloat(sample.imageHeight)
+                                let scale = max(halfW / imgW, h / imgH)
+                                let originX = (halfW - imgW * scale) * 0.5
+                                let originY = (h - imgH * scale) * 0.5
+                                let kp = sample.keypoints[kpIndex]
+                                let baseX = originX + CGFloat(kp[0]) * scale
+                                let baseY = originY + CGFloat(kp[1]) * scale
+                                let zoomedX = halfW * 0.5 + (baseX - halfW * 0.5) * vm.zoomScale + vm.panOffset.width
+                                let zoomedY = h * 0.5 + (baseY - h * 0.5) * vm.zoomScale + vm.panOffset.height
+                                return CGPoint(x: paneOffsetX + zoomedX, y: zoomedY)
+                            }
+                            let zoomedX = halfW * 0.5 + (fallbackNX * halfW - halfW * 0.5) * vm.zoomScale + vm.panOffset.width
+                            let zoomedY = h * 0.5 + (fallbackNY * h - h * 0.5) * vm.zoomScale + vm.panOffset.height
+                            return CGPoint(x: paneOffsetX + zoomedX, y: zoomedY)
                         }
 
                         if vm.showScaleOutlines {
-                            let jPts: [(CGFloat, CGFloat, Int, Bool)] = [
-                                (0.51, 0.31, 1, true),
-                                (0.51, 0.40, 2, !vm.sighting.hasSpecularGlare),
-                                (0.52, 0.49, 3, cand.id != "cand-surya-1" && !vm.sighting.hasSpecularGlare && cand.topologyState == .isomorphicMatch),
-                                (0.52, 0.59, 4, !vm.sighting.hasSpecularGlare && cand.topologyState == .isomorphicMatch),
-                                (0.61, 0.38, 5, true),
-                                (0.62, 0.52, 6, !vm.sighting.hasSpecularGlare && cand.topologyState == .isomorphicMatch),
+                            let jMeta: [(Int, CGFloat, CGFloat, Bool)] = [
+                                (0, 0.51, 0.31, true),
+                                (1, 0.51, 0.40, !vm.sighting.hasSpecularGlare),
+                                (2, 0.52, 0.49, cand.id != "cand-surya-1" && !vm.sighting.hasSpecularGlare && cand.topologyState == .isomorphicMatch),
+                                (3, 0.52, 0.59, !vm.sighting.hasSpecularGlare && cand.topologyState == .isomorphicMatch),
+                                (4, 0.61, 0.38, true),
+                                (5, 0.62, 0.52, !vm.sighting.hasSpecularGlare && cand.topologyState == .isomorphicMatch),
                             ]
-                            for (jx, jy, _, matches) in jPts {
-                                let p1 = mapLeft(jx, jy)
-                                let p2 = mapRight(jx, jy)
+                            for (kpIdx, fx, fy, matches) in jMeta {
+                                let p1 = mapPanePoint(leftSample, kpIdx, fx, fy, false)
+                                let p2 = mapPanePoint(rightSample, kpIdx, fx, fy, true)
                                 var path = Path()
                                 path.move(to: p1)
                                 path.addLine(to: p2)
                                 let col: Color = vm.sighting.hasSpecularGlare && !matches ? .orange : (matches ? .green : .red)
                                 ctx.stroke(
                                     path,
-                                    with: .color(col.opacity(0.65)),
-                                    style: StrokeStyle(lineWidth: matches ? 1.6 : 2.2, dash: matches ? [] : [6, 4])
+                                    with: .color(col.opacity(0.75)),
+                                    style: StrokeStyle(lineWidth: matches ? 1.8 : 2.4, dash: matches ? [] : [6, 4])
                                 )
                             }
                         } else if vm.showXFeatPoints {
-                            let xfeatCoords: [(CGFloat, CGFloat)] = [
-                                (0.28, 0.52), (0.36, 0.38), (0.45, 0.36),
-                                (0.47, 0.46), (0.56, 0.44), (0.56, 0.56),
-                            ]
-                            for (xx, xy) in xfeatCoords {
-                                let p1 = mapLeft(xx, xy)
-                                let p2 = mapRight(xx, xy)
+                            for kpIdx in 0..<8 {
+                                let p1 = mapPanePoint(leftSample, kpIdx, 0.45, 0.45, false)
+                                let p2 = mapPanePoint(rightSample, kpIdx, 0.45, 0.45, true)
                                 var path = Path()
                                 path.move(to: p1)
                                 path.addLine(to: p2)
-                                ctx.stroke(path, with: .color(Color.purple.opacity(0.60)), lineWidth: 1.4)
+                                ctx.stroke(path, with: .color(Color.cyan.opacity(0.65)), lineWidth: 1.5)
                             }
                         }
                     }
@@ -1528,13 +1578,13 @@ private struct SimulatedTurtlePhotoPane: View {
 
     @State private var dragStartOffset: CGSize? = nil
 
+    private var matchedSampleEntry: I3SSampleEntry? {
+        guard let sampleImageName else { return nil }
+        return I3SSampleLibrary.sample(forFilenameOrID: sampleImageName)
+    }
+
     private var loadedSampleImage: NSImage? {
-        guard showRealPhoto, let sampleImageName else { return nil }
-        let trimmed = (sampleImageName as NSString).lastPathComponent
-        guard let sample = I3SSampleLibrary.samples.first(where: {
-            $0.imageFile.caseInsensitiveCompare(trimmed) == .orderedSame
-                || $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
-        }) else { return nil }
+        guard showRealPhoto, let sample = matchedSampleEntry else { return nil }
         return I3SSampleLibrary.loadImage(for: sample)
     }
 
@@ -1639,6 +1689,17 @@ private struct SimulatedTurtlePhotoPane: View {
         }
         let mapY: (CGFloat) -> CGFloat = { normY in normY * h }
 
+        // Pixel-accurate mapping for bundled real photographs using their .fgp calibration
+        let sample = matchedSampleEntry
+        let imgW = CGFloat(sample?.imageWidth ?? 1000)
+        let imgH = CGFloat(sample?.imageHeight ?? 750)
+        let fillScale = max(w / max(imgW, 1), h / max(imgH, 1))
+        let fillOriginX = (w - imgW * fillScale) * 0.5
+        let fillOriginY = (h - imgH * fillScale) * 0.5
+        let mapSamplePixel: (Double, Double) -> CGPoint = { px, py in
+            CGPoint(x: fillOriginX + CGFloat(px) * fillScale, y: fillOriginY + CGFloat(py) * fillScale)
+        }
+
         if !overRealPhoto {
             // Head silhouette
             var headPath = Path()
@@ -1658,67 +1719,88 @@ private struct SimulatedTurtlePhotoPane: View {
             context.stroke(Path(ellipseIn: eyeRect), with: .color(Color.white.opacity(0.65)), lineWidth: 2)
         }
 
-        // Postocular & central temporal scale polygons
+        // Postocular & central temporal scale polygons mapped to real .fgp cheek scales
         if !overRealPhoto || showScaleOutlines {
-            let polygons: [[(CGFloat, CGFloat)]] = [
-                [(0.42, 0.32), (0.51, 0.31), (0.51, 0.40), (0.43, 0.41)],
-                [(0.43, 0.41), (0.51, 0.40), (0.52, 0.49), (0.43, 0.50)],
-                [(0.43, 0.50), (0.52, 0.49), (0.52, 0.59), (0.44, 0.58)],
-                [(0.51, 0.40), (0.61, 0.38), (0.62, 0.52), (0.52, 0.49)],
-                [(0.52, 0.49), (0.62, 0.52), (0.60, 0.62), (0.52, 0.59)],
-            ]
-
-            for poly in polygons {
-                var p = Path()
-                for (idx, pt) in poly.enumerated() {
-                    let c = CGPoint(x: mapX(pt.0), y: mapY(pt.1))
-                    if idx == 0 { p.move(to: c) } else { p.addLine(to: c) }
+            if overRealPhoto, let sample, !sample.keypoints.isEmpty {
+                for kp in sample.keypoints.prefix(14) where kp.count >= 3 {
+                    let center = mapSamplePixel(kp[0], kp[1])
+                    let r = max(8, CGFloat(kp[2]) * 0.48 * fillScale)
+                    var poly = Path()
+                    for i in 0..<6 {
+                        let angle = CGFloat(i) * (.pi / 3.0) + 0.25
+                        let pt = CGPoint(x: center.x + cos(angle) * r, y: center.y + sin(angle) * (r * 0.88))
+                        if i == 0 { poly.move(to: pt) } else { poly.addLine(to: pt) }
+                    }
+                    poly.closeSubpath()
+                    context.fill(poly, with: .color(Color.mint.opacity(0.14)))
+                    context.stroke(poly, with: .color(Color.mint.opacity(0.92)), lineWidth: 2.0)
                 }
-                p.closeSubpath()
-                if !overRealPhoto {
+            } else {
+                let polygons: [[(CGFloat, CGFloat)]] = [
+                    [(0.42, 0.32), (0.51, 0.31), (0.51, 0.40), (0.43, 0.41)],
+                    [(0.43, 0.41), (0.51, 0.40), (0.52, 0.49), (0.43, 0.50)],
+                    [(0.43, 0.50), (0.52, 0.49), (0.52, 0.59), (0.44, 0.58)],
+                    [(0.51, 0.40), (0.61, 0.38), (0.62, 0.52), (0.52, 0.49)],
+                    [(0.52, 0.49), (0.62, 0.52), (0.60, 0.62), (0.52, 0.59)],
+                ]
+                for poly in polygons {
+                    var p = Path()
+                    for (idx, pt) in poly.enumerated() {
+                        let c = CGPoint(x: mapX(pt.0), y: mapY(pt.1))
+                        if idx == 0 { p.move(to: c) } else { p.addLine(to: c) }
+                    }
+                    p.closeSubpath()
                     context.fill(p, with: .color(Color(red: 0.11, green: 0.18, blue: 0.14)))
-                } else {
-                    context.fill(p, with: .color(Color.mint.opacity(0.10)))
+                    context.stroke(p, with: .color(Color.mint), lineWidth: 2.4)
                 }
-                context.stroke(
-                    p,
-                    with: .color(showScaleOutlines ? Color.mint : Color.white.opacity(0.55)),
-                    lineWidth: showScaleOutlines ? 2.8 : 2.0
-                )
             }
         }
 
-        // Specular glare patch in Scenario 2 sighting
-        if hasSpecularGlare && !overRealPhoto {
-            let glareCenter = CGPoint(x: mapX(0.53), y: mapY(0.49))
-            let glareRect = CGRect(x: glareCenter.x - 68, y: glareCenter.y - 52, width: 136, height: 104)
-            context.fill(Path(ellipseIn: glareRect), with: .color(Color.white.opacity(0.88)))
-            if showScaleOutlines {
-                context.stroke(
-                    Path(ellipseIn: glareRect.insetBy(dx: -6, dy: -6)),
-                    with: .color(Color.yellow),
-                    style: StrokeStyle(lineWidth: 2.2, dash: [6, 4])
-                )
-            }
+        // Specular glare highlight in Scenario 2 sighting
+        if hasSpecularGlare && showScaleOutlines {
+            let glareCenter: CGPoint = {
+                if overRealPhoto, let sample, sample.keypoints.count > 2 {
+                    return mapSamplePixel(sample.keypoints[2][0], sample.keypoints[2][1])
+                }
+                return CGPoint(x: mapX(0.53), y: mapY(0.49))
+            }()
+            let glareRect = CGRect(x: glareCenter.x - 58, y: glareCenter.y - 44, width: 116, height: 88)
+            context.fill(Path(ellipseIn: glareRect), with: .color(Color.yellow.opacity(0.18)))
+            context.stroke(
+                Path(ellipseIn: glareRect),
+                with: .color(Color.yellow),
+                style: StrokeStyle(lineWidth: 2.2, dash: [6, 4])
+            )
         }
 
-        // Numbered Scale Junctions (1–6)
+        // Numbered Scale Junctions (1–6) anchored on the actual cheek scales
         if showScaleOutlines {
-            let junctions: [(CGFloat, CGFloat, Int, Bool)] = [
-                (0.51, 0.31, 1, true),
-                (0.51, 0.40, 2, !hasSpecularGlare),
-                (0.52, 0.49, 3, !isLookalikeSplitJ3 && !hasSpecularGlare),
-                (0.52, 0.59, 4, !hasSpecularGlare),
-                (0.61, 0.38, 5, true),
-                (0.62, 0.52, 6, !hasSpecularGlare),
+            let junctionStatuses: [(Int, Bool)] = [
+                (1, true),
+                (2, !hasSpecularGlare),
+                (3, !isLookalikeSplitJ3 && !hasSpecularGlare),
+                (4, !hasSpecularGlare),
+                (5, true),
+                (6, !hasSpecularGlare),
             ]
-            for (jx, jy, num, isMatch) in junctions {
-                let pt = CGPoint(x: mapX(jx), y: mapY(jy))
-                let r: CGFloat = 9
+            for (idx, (num, isMatch)) in junctionStatuses.enumerated() {
+                let pt: CGPoint = {
+                    if overRealPhoto, let sample, sample.keypoints.indices.contains(idx) {
+                        let kp = sample.keypoints[idx]
+                        return mapSamplePixel(kp[0], kp[1])
+                    }
+                    let fallbacks: [(CGFloat, CGFloat)] = [
+                        (0.51, 0.31), (0.51, 0.40), (0.52, 0.49),
+                        (0.52, 0.59), (0.61, 0.38), (0.62, 0.52),
+                    ]
+                    let fb = fallbacks[idx]
+                    return CGPoint(x: mapX(fb.0), y: mapY(fb.1))
+                }()
+                let r: CGFloat = 10
                 let rect = CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2)
                 let fillCol: Color = hasSpecularGlare && !isMatch ? .orange : (isMatch ? .green : .red)
                 context.fill(Path(ellipseIn: rect), with: .color(fillCol))
-                context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.5)
+                context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.8)
                 context.draw(
                     Text("\(num)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white),
                     at: pt
@@ -1726,38 +1808,77 @@ private struct SimulatedTurtlePhotoPane: View {
             }
         }
 
-        // Head Region Outline (Crop Box)
+        // Head Region Outline (Real .fgp Cheek ROI Polygon)
         if showHeadCrop {
-            let cropRect = CGRect(x: w * 0.18, y: h * 0.18, width: w * 0.64, height: h * 0.64)
-            context.stroke(
-                Path(roundedRect: cropRect, cornerRadius: 10),
-                with: .color(Color.cyan),
-                style: StrokeStyle(lineWidth: 2.0, dash: [8, 5])
-            )
-        }
-
-        // XFeat Correspondences
-        if showXFeatPoints {
-            let xfeatCoords: [(CGFloat, CGFloat)] = [
-                (0.28, 0.52), (0.36, 0.38), (0.45, 0.36),
-                (0.47, 0.46), (0.56, 0.44), (0.56, 0.56),
-            ]
-            for (xx, xy) in xfeatCoords {
-                let pt = CGPoint(x: mapX(xx), y: mapY(xy))
-                let rect = CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)
-                context.fill(Path(ellipseIn: rect), with: .color(Color.purple.opacity(0.45)))
-                context.stroke(Path(ellipseIn: rect), with: .color(Color.purple), lineWidth: 2)
+            if overRealPhoto, let sample, sample.roi.count >= 3 {
+                var roiPath = Path()
+                for (idx, pair) in sample.roi.enumerated() where pair.count >= 2 {
+                    let pt = mapSamplePixel(pair[0], pair[1])
+                    if idx == 0 { roiPath.move(to: pt) } else { roiPath.addLine(to: pt) }
+                }
+                roiPath.closeSubpath()
+                context.fill(roiPath, with: .color(Color.cyan.opacity(0.08)))
+                context.stroke(
+                    roiPath,
+                    with: .color(Color.cyan),
+                    style: StrokeStyle(lineWidth: 2.2, dash: [8, 5])
+                )
+            } else {
+                let cropRect = CGRect(x: w * 0.18, y: h * 0.18, width: w * 0.64, height: h * 0.64)
+                context.stroke(
+                    Path(roundedRect: cropRect, cornerRadius: 10),
+                    with: .color(Color.cyan),
+                    style: StrokeStyle(lineWidth: 2.0, dash: [8, 5])
+                )
             }
         }
 
-        // I3S 3-Landmark & Blob Overlay
+        // XFeat Correspondences anchored to actual cheek keypoints
+        if showXFeatPoints {
+            if overRealPhoto, let sample, !sample.keypoints.isEmpty {
+                for kp in sample.keypoints.prefix(12) where kp.count >= 2 {
+                    let pt = mapSamplePixel(kp[0], kp[1])
+                    let rect = CGRect(x: pt.x - 5.5, y: pt.y - 5.5, width: 11, height: 11)
+                    context.fill(Path(ellipseIn: rect), with: .color(Color.cyan.opacity(0.55)))
+                    context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.5)
+                }
+            } else {
+                let xfeatCoords: [(CGFloat, CGFloat)] = [
+                    (0.28, 0.52), (0.36, 0.38), (0.45, 0.36),
+                    (0.47, 0.46), (0.56, 0.44), (0.56, 0.56),
+                ]
+                for (xx, xy) in xfeatCoords {
+                    let pt = CGPoint(x: mapX(xx), y: mapY(xy))
+                    let rect = CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)
+                    context.fill(Path(ellipseIn: rect), with: .color(Color.purple.opacity(0.45)))
+                    context.stroke(Path(ellipseIn: rect), with: .color(Color.purple), lineWidth: 2)
+                }
+            }
+        }
+
+        // I3S 3-Landmark & 35-Blob Overlay anchored to exact .fgp calibration
         if showI3SBlobs {
-            let landmarks: [(CGFloat, CGFloat)] = [(0.23, 0.56), (0.31, 0.42), (0.61, 0.30)]
-            for (lx, ly) in landmarks {
-                let pt = CGPoint(x: mapX(lx), y: mapY(ly))
-                let rect = CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)
-                context.fill(Path(ellipseIn: rect), with: .color(Color.blue))
-                context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.5)
+            if overRealPhoto, let sample {
+                for kp in sample.keypoints where kp.count >= 3 {
+                    let pt = mapSamplePixel(kp[0], kp[1])
+                    let r = max(4, CGFloat(kp[2]) * 0.42 * fillScale)
+                    let rect = CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2)
+                    context.stroke(Path(ellipseIn: rect), with: .color(Color.red.opacity(0.85)), lineWidth: 1.4)
+                }
+                for ref in [sample.ref1, sample.ref2, sample.ref3] where ref.count >= 2 {
+                    let pt = mapSamplePixel(ref[0], ref[1])
+                    let rect = CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)
+                    context.fill(Path(ellipseIn: rect), with: .color(Color.blue))
+                    context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.8)
+                }
+            } else {
+                let landmarks: [(CGFloat, CGFloat)] = [(0.23, 0.56), (0.31, 0.42), (0.61, 0.30)]
+                for (lx, ly) in landmarks {
+                    let pt = CGPoint(x: mapX(lx), y: mapY(ly))
+                    let rect = CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)
+                    context.fill(Path(ellipseIn: rect), with: .color(Color.blue))
+                    context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.5)
+                }
             }
         }
     }
@@ -1789,7 +1910,13 @@ private struct ScientistScalePhotos: View {
     @State private var gallery: NSImage?
     private var key: String { "\(queryName ?? "")|\(galleryName ?? "")" }
     var body: some View {
-        ScaleReviewComparisonView(queryImage: query, galleryImage: gallery, store: store)
+        ScaleReviewComparisonView(
+            queryImage: query,
+            galleryImage: gallery,
+            store: store,
+            querySampleName: queryName,
+            gallerySampleName: galleryName
+        )
             .task(id: key) {
                 query = queryName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
                 gallery = galleryName.flatMap { I3SSampleLibrary.loadImage(named: $0) }

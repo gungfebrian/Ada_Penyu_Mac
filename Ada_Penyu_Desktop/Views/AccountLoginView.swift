@@ -22,7 +22,11 @@ private enum FigCraftLoginTokens {
 }
 
 struct AccountLoginView: View {
+    /// Set this to `false` later to completely remove the quick demo bypass from the login screen.
+    static let enableQuickDemoBypass = true
+
     @ObservedObject var store: AppStore
+    @AppStorage("ada.quickDemoBypassHidden") private var isQuickDemoHidden = false
     @State private var email = ""
     @State private var password = ""
     @State private var rememberMe = false
@@ -49,9 +53,13 @@ struct AccountLoginView: View {
                     }
 
                     ScrollView {
-                        VStack(spacing: 24) {
+                        VStack(spacing: 20) {
                             if !isSplitLayout {
                                 compactBrandHeader
+                            }
+
+                            if Self.enableQuickDemoBypass {
+                                quickDemoBypassBanner
                             }
 
                             loginCard
@@ -326,6 +334,114 @@ struct AccountLoginView: View {
                 .fill(FigCraftLoginTokens.surface)
                 .shadow(color: Color.black.opacity(0.04), radius: 16, y: 6)
         )
+    }
+
+    @ViewBuilder
+    private var quickDemoBypassBanner: some View {
+        if isQuickDemoHidden {
+            HStack {
+                Spacer()
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        isQuickDemoHidden = false
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 9))
+                        Text("Show Demo Shortcut")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(FigCraftLoginTokens.surface))
+                }
+                .buttonStyle(.plain)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Button {
+                        password = ""
+                        store.enterDemoWorkspace()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Quick Demo Mode (No Login)")
+                                .font(.system(size: 14, weight: .semibold))
+                            Spacer()
+                            Text("⌘D")
+                                .font(.system(size: 11, weight: .semibold))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Color.white.opacity(0.18), in: Capsule())
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(Capsule().fill(AdaColors.green))
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("d", modifiers: [.command])
+                    .accessibilityLabel("Quick Demo Mode")
+
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            isQuickDemoHidden = true
+                        }
+                    } label: {
+                        Image(systemName: "eye.slash")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(FigCraftLoginTokens.background))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Hide demo button (can be re-shown anytime)")
+                    .accessibilityLabel("Hide demo button")
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        Text("Jump in as:")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(FigCraftLoginTokens.supportingInk)
+
+                        ForEach(DemoDashboardPersona.allCases) { persona in
+                            Button {
+                                password = ""
+                                store.enterDemoWorkspace(persona: persona)
+                            } label: {
+                                Text(persona.displayName)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(FigCraftLoginTokens.primary)
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 25)
+                                    .background(
+                                        Capsule()
+                                            .fill(FigCraftLoginTokens.background)
+                                            .overlay(
+                                                Capsule().stroke(FigCraftLoginTokens.secondaryBorder, lineWidth: 1)
+                                            )
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(FigCraftLoginTokens.surface)
+                    .shadow(color: Color.black.opacity(0.05), radius: 12, y: 4)
+            )
+        }
     }
 
     private var welcomePanel: some View {
