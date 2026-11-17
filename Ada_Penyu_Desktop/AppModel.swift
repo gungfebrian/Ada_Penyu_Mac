@@ -8,6 +8,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case identification
     case favorites
     case sightings
+    case settings
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .identification: "I3S Pattern ID"
         case .favorites: "Favorites"
         case .sightings: "Sightings"
+        case .settings: "Settings"
         }
     }
 
@@ -32,6 +34,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .identification: "viewfinder.circle"
         case .favorites: "heart"
         case .sightings: "binoculars"
+        case .settings: "gearshape"
         }
     }
 }

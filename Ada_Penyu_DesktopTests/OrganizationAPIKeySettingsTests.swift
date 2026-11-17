@@ -169,6 +169,19 @@ final class OrganizationAPIKeySettingsTests: XCTestCase {
         XCTAssertTrue(store.organizationKeySettings.accessMessage?.contains("demo") == true)
     }
 
+    func testContextChangesReloadPageButTokenRefreshKeepsUnsavedSecret() async throws {
+        let (model, client) = try await makeSettings()
+        await model.enter()
+        await model.rotate()
+        let originalVersion = model.contextVersion
+        model.configure(client: client, user: client.account, isDemo: false)
+        XCTAssertEqual(model.contextVersion, originalVersion)
+        XCTAssertNotNil(model.newSecret)
+        model.configure(client: client, user: nil, isDemo: false)
+        XCTAssertNotEqual(model.contextVersion, originalVersion)
+        XCTAssertNil(model.newSecret)
+    }
+
     private func makeSettings(clipboard: ExpiringSecretClipboard? = nil) async throws -> (OrganizationAPIKeySettings, APIClient) {
         BackendStub.handler = { request in APIFixtures.auth(request) ?? keySettingsResponse(request) }
         let client = makeKeyTestClient()

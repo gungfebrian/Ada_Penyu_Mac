@@ -6,7 +6,11 @@ import UniformTypeIdentifiers
 @MainActor
 final class AppStore: ObservableObject {
     let organizationKeySettings: OrganizationAPIKeySettings
-    @Published var activeSection: AppSection = .dashboard
+    @Published private var currentSection: AppSection = .dashboard
+    var activeSection: AppSection {
+        get { currentSection }
+        set { requestNavigation(to: newValue) }
+    }
     @Published var searchText = "" {
         didSet { scheduleIndividualsReload() }
     }
@@ -91,6 +95,7 @@ final class AppStore: ObservableObject {
     private var dashboardRequest = 0
     private var allRequest = 0
     private var photoCache: [String: NSImage] = [:]
+    private var keySettingsObservation: AnyCancellable?
     private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
     init(
@@ -105,6 +110,9 @@ final class AppStore: ObservableObject {
         self.apiBaseURLString = client.baseURL.absoluteString
         self.hasInjectedRepository = repository != nil
         self.repository = repository ?? RemoteTurtleRepository(client: client)
+        keySettingsObservation = organizationKeySettings.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         observeSession()
         updateAccount()
     }
@@ -117,6 +125,22 @@ final class AppStore: ObservableObject {
             self?.lastError = message
         }
         client.authorization?.onContextFailure = { [weak self] error in self?.lastError = error.localizedDescription }
+    }
+
+    func requestNavigation(to section: AppSection) {
+        guard section != currentSection else { return }
+        if currentSection == .settings {
+            guard organizationKeySettings.requestLeave(to: section) else { return }
+            organizationKeySettings.leave()
+        }
+        dismissDetail()
+        currentSection = section
+    }
+
+    func discardKeyAndNavigate(to destination: AppSection? = nil) {
+        guard let destination = destination ?? organizationKeySettings.pendingDestination else { return }
+        organizationKeySettings.acknowledgeSaved()
+        requestNavigation(to: destination)
     }
 
     var currentDashboardAccountKey: String {

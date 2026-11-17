@@ -51,6 +51,7 @@ final class OrganizationAPIKeySettings: ObservableObject {
     @Published private(set) var operation: Change?
     @Published private(set) var errorMessage: String?
     @Published private(set) var pendingDestination: AppSection?
+    @Published private(set) var contextVersion = UUID()
     @Published private var permissionDenied = false
     @Published private var isDemo = false
     @Published private var isOwner = false
@@ -96,6 +97,7 @@ final class OrganizationAPIKeySettings: ObservableObject {
         self.isDemo = isDemo
         isOwner = user?.role == .owner && user?.organisationID != nil
         permissionDenied = false
+        contextVersion = UUID()
     }
 
     func enter() async {

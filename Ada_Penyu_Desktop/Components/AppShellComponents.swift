@@ -27,6 +27,7 @@ struct SidebarView: View {
     var onSignOut: (() -> Void)? = nil
 
     var isCollapsed = false
+    var isNavigationLocked = false
     var onToggleSidebar: () -> Void = {}
     var onExpandSidebar: (() -> Void)? = nil
 
@@ -43,10 +44,11 @@ struct SidebarView: View {
             windowChrome
             brandRow
             VStack(spacing: 8) {
-                ForEach([AppSection.dashboard, .map, .individuals, .scientistReview]) { section in
+                ForEach([AppSection.dashboard, .map, .individuals, .scientistReview, .settings]) { section in
                     navigationRow(section)
                 }
             }
+            .disabled(isNavigationLocked)
             .padding(.top, 28)
 
             // Clicking open space in the sidebar toggles/expands smoothly while preserving top chrome window dragging.
@@ -97,6 +99,7 @@ struct SidebarView: View {
             }
             .help("Sightings, favorites, and identification workspaces")
             .accessibilityLabel("More workspaces")
+            .disabled(isNavigationLocked)
             .padding(.horizontal, 12)
 
             userMenu
