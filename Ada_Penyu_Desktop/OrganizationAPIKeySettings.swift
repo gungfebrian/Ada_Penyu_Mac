@@ -20,9 +20,11 @@ final class ExpiringSecretClipboard {
         pasteboard.clearContents()
         guard pasteboard.setString(secret, forType: .string) else { ownedChangeCount = nil; return false }
         ownedChangeCount = pasteboard.changeCount
+        let capturedChangeCount = ownedChangeCount
         let lifetime = lifetime
         expiry = Task { [weak self] in
             do { try await Task.sleep(for: lifetime) } catch { return }
+            guard !Task.isCancelled, self?.ownedChangeCount == capturedChangeCount else { return }
             self?.clearIfOwned()
         }
         return true
@@ -61,6 +63,8 @@ final class OrganizationAPIKeySettings: ObservableObject {
     private var context: Context?
     private var revision = UUID()
     private var isVisible = false
+    private let implicitSurfaceID = UUID()
+    private var surfaces: Set<UUID> = []
     private var readTask: Task<OrganizationAPIKeyMetadata, Error>?
     private var changeTask: Task<IssuedOrganizationAPIKey?, Error>?
 
@@ -100,7 +104,8 @@ final class OrganizationAPIKeySettings: ObservableObject {
         contextVersion = UUID()
     }
 
-    func enter() async {
+    func enter(surfaceID: UUID? = nil) async {
+        surfaces.insert(surfaceID ?? implicitSurfaceID)
         if !isVisible { permissionDenied = false }
         isVisible = true
         if metadata == nil { await load() }
@@ -193,7 +198,12 @@ final class OrganizationAPIKeySettings: ObservableObject {
 
     func cancelNavigation() { pendingDestination = nil }
 
-    func leave() {
+    func leave(surfaceID: UUID? = nil) {
+        if let surfaceID {
+            surfaces.remove(surfaceID)
+            guard surfaces.isEmpty else { return }
+        }
+        surfaces.removeAll()
         revision = UUID()
         isVisible = false
         readTask?.cancel()

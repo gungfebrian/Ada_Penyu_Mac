@@ -4,6 +4,7 @@ struct SettingsView: View {
     @ObservedObject var store: AppStore
     @ObservedObject var model: OrganizationAPIKeySettings
     @State private var confirmation: KeyConfirmation?
+    @State private var surfaceID = UUID()
 
     private enum KeyConfirmation: String, Identifiable {
         case rotate, revoke
@@ -30,8 +31,8 @@ struct SettingsView: View {
             .padding(.horizontal, AdaLayout.pagePadding)
             .padding(.bottom, 32)
         }
-        .task(id: model.contextVersion) { await model.enter() }
-        .onDisappear { model.leave() }
+        .task(id: model.contextVersion) { await model.enter(surfaceID: surfaceID) }
+        .onDisappear { model.leave(surfaceID: surfaceID) }
         .alert(item: Binding(get: { model.pendingDestination }, set: { if $0 == nil { model.cancelNavigation() } })) { destination in
             Alert(
                 title: Text("Leave without saving your API key?"),

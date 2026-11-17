@@ -156,6 +156,22 @@ final class OrganizationAPIKeySettingsTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "my-new-copy")
     }
 
+    func testAnAlreadyElapsedClipboardTimerCannotClearANewerCopy() async throws {
+        let pasteboard = NSPasteboard(name: .init("key-tests-\(UUID())"))
+        defer { pasteboard.releaseGlobally() }
+        let clipboard = ExpiringSecretClipboard(pasteboard: pasteboard, lifetime: .milliseconds(50))
+        XCTAssertTrue(clipboard.copy("first-test-secret"))
+        // Let the timer begin sleeping, then simulate a busy main actor while it expires.
+        try await Task.sleep(for: .milliseconds(10))
+        blockMainActorForExpiredTimer()
+        XCTAssertTrue(clipboard.copy("newer-test-secret"))
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertEqual(pasteboard.string(forType: .string), "newer-test-secret")
+        clipboard.clearIfOwned()
+    }
+
+    private func blockMainActorForExpiredTimer() { Thread.sleep(forTimeInterval: 0.08) }
+
     func testAppStoreSignOutAndDemoEntryClearLiveKeyState() async throws {
         let (_, client) = try await makeSettings()
         let store = AppStore(client: client)
@@ -180,6 +196,35 @@ final class OrganizationAPIKeySettingsTests: XCTestCase {
         model.configure(client: client, user: nil, isDemo: false)
         XCTAssertNotEqual(model.contextVersion, originalVersion)
         XCTAssertNil(model.newSecret)
+    }
+
+    func testClosingOneSettingsWindowKeepsTheOtherWindowsUnsavedSecret() async throws {
+        let (model, _) = try await makeSettings()
+        let first = UUID(), second = UUID()
+        await model.enter(surfaceID: first)
+        await model.enter(surfaceID: second)
+        await model.rotate()
+        model.leave(surfaceID: first)
+        XCTAssertEqual(model.newSecret, "test-only-secret")
+        XCTAssertFalse(model.requestLeave(to: .map))
+        model.leave(surfaceID: second)
+        XCTAssertNil(model.newSecret)
+    }
+
+    func testClosingOneSettingsWindowDoesNotCancelAnotherWindowsMutation() async throws {
+        let (model, _) = try await makeSettings()
+        let first = UUID(), second = UUID()
+        await model.enter(surfaceID: first)
+        await model.enter(surfaceID: second)
+        BackendStub.responseDelay = { $0.httpMethod == "POST" ? 0.1 : 0 }
+        let issuing = Task { await model.rotate() }
+        await Task.yield()
+        XCTAssertTrue(model.isChanging)
+        model.leave(surfaceID: first)
+        XCTAssertTrue(model.isChanging)
+        await issuing.value
+        XCTAssertEqual(model.newSecret, "test-only-secret")
+        model.leave()
     }
 
     private func makeSettings(clipboard: ExpiringSecretClipboard? = nil) async throws -> (OrganizationAPIKeySettings, APIClient) {
