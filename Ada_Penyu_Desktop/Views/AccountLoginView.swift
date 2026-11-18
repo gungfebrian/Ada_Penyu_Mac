@@ -311,11 +311,13 @@ struct AccountLoginView: View {
             .frame(maxWidth: 360, alignment: .leading)
 
             Spacer()
+
+            carapaceFooter
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 44)
         .padding(.top, 52)
-        .padding(.bottom, 44)
+        .padding(.bottom, 36)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background {
             ZStack {
@@ -332,6 +334,34 @@ struct AccountLoginView: View {
             .accessibilityHidden(true)
         }
         .clipped()
+    }
+
+    private var carapaceFooter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                ForEach([
+                    "SpeciesIcons/species-green",
+                    "SpeciesIcons/species-hawksbill",
+                    "SpeciesIcons/species-olive",
+                    "SpeciesIcons/species-loggerhead",
+                    "SpeciesIcons/species-leatherback",
+                    "SpeciesIcons/species-flatback"
+                ], id: \.self) { asset in
+                    Image(asset)
+                        .resizable()
+                        .renderingMode(.template)
+                        .scaledToFit()
+                        .frame(width: 16, height: 22)
+                        .foregroundStyle(.white.opacity(0.56))
+                }
+            }
+
+            Text("AdaPenyu · Since 2026")
+                .font(.system(size: 11.5, weight: .medium))
+                .tracking(0.3)
+                .foregroundStyle(.white.opacity(0.52))
+        }
+        .accessibilityHidden(true)
     }
 
     private func brandLockup(color: Color) -> some View {
