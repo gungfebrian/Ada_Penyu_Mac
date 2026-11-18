@@ -1899,9 +1899,10 @@ struct SightingMapPreview: View {
     var body: some View {
         Map(initialPosition: .region(region), interactionModes: []) {
             ForEach(previewPins) { sighting in
-                Annotation(sighting.displayName, coordinate: .init(latitude: sighting.coordinate.latitude, longitude: sighting.coordinate.longitude)) {
-                    TurtleMapPin(isSelected: false).scaleEffect(0.6)
+                Annotation(sighting.displayName, coordinate: .init(latitude: sighting.coordinate.latitude, longitude: sighting.coordinate.longitude), anchor: .bottom) {
+                    TurtleMapPin(state: .other).scaleEffect(0.68, anchor: .bottom)
                 }
+                .annotationTitles(.hidden)
             }
         }
         .id("\(sightings.count)-\(sightings.first?.id ?? "empty")")

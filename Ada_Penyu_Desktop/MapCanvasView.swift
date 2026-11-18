@@ -59,7 +59,7 @@ struct MapPageView: View {
 
             if showsCountries {
                 ForEach(countryGroups) { country in
-                    Annotation(country.label, coordinate: country.anchor, anchor: .center) {
+                    Annotation(country.label, coordinate: country.anchor, anchor: .bottom) {
                         Button { zoomToCountry(country) } label: {
                             MapCountryMarker(label: country.label, sightings: country.sightings.count)
                         }
@@ -76,7 +76,7 @@ struct MapPageView: View {
                 if let sighting = representative(for: location) {
                     Annotation(sighting.location, coordinate: location.mapCoordinate, anchor: .bottom) {
                         Button { selectedSightingID = sighting.id } label: {
-                            FigCraftSightingPin(
+                            TurtleMapPin(
                                 state: pinState(for: sighting),
                                 count: Set(location.sightings.map(\.turtleID)).count
                             )
@@ -340,7 +340,7 @@ struct MapPageView: View {
             ?? location.sightings.first
     }
 
-    private func pinState(for sighting: Sighting) -> FigCraftSightingPin.State {
+    private func pinState(for sighting: Sighting) -> TurtleMapPin.PinState {
         if sighting.id == selectedSightingID { return .selected }
         return sighting.turtleID == selected?.turtleID ? .linked : .other
     }
@@ -422,74 +422,25 @@ struct MapPageView: View {
     }
 }
 
-private struct FigCraftSightingPin: View {
-    enum State { case selected, linked, other }
-    let state: State
-    let count: Int
-
-    private var fill: Color {
-        switch state {
-        case .selected: AdaColors.navy
-        case .linked: AdaColors.secondaryInk
-        case .other: .white
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: -4) {
-            Circle()
-                .fill(fill)
-                .frame(width: 39, height: 39)
-                .overlay {
-                    Image("TurtleMapPinIcon")
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 23, height: 23)
-                        .foregroundStyle(state == .other ? AdaColors.navy : .white)
-                }
-                .overlay(alignment: .topTrailing) {
-                    if count > 1 {
-                        Text(count.formatted()).font(.system(size: 9, weight: .semibold))
-                            .padding(3)
-                            .background(AdaColors.canvas, in: Circle())
-                            .foregroundStyle(AdaColors.navy)
-                            .offset(x: 4, y: -4)
-                    }
-                }
-
-            PinPointerTriangle()
-                .fill(fill)
-                .frame(width: 18, height: 13)
-        }
-        .frame(width: 46)
-        .contentShape(Rectangle())
-        .shadow(color: .black.opacity(0.24), radius: 3, y: 2)
-    }
-}
-
 private struct MapCountryMarker: View {
     let label: String
     let sightings: Int
 
     var body: some View {
-        HStack(spacing: 7) {
-            Text(sightings.formatted())
-                .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                .foregroundStyle(.white)
-                .padding(.horizontal, 7)
-                .frame(minWidth: 24, minHeight: 24)
-                .background(AdaColors.navy, in: Capsule())
+        VStack(spacing: 4) {
+            TurtleMapPin(state: .selected, count: sightings)
+                .scaleEffect(0.88, anchor: .bottom)
+
             Text(label)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(AdaColors.navy)
                 .lineLimit(1)
-                .padding(.trailing, 6)
+                .padding(.horizontal, 9)
+                .frame(height: 22)
+                .background(AdaColors.card, in: Capsule())
+                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                .shadow(color: .black.opacity(0.16), radius: 4, y: 1.5)
         }
-        .padding(4)
-        .frame(minHeight: 34)
-        .background(AdaColors.card, in: Capsule())
-        .contentShape(Capsule())
-        .shadow(color: .black.opacity(0.19), radius: 5, y: 2)
+        .contentShape(Rectangle())
     }
 }
