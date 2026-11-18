@@ -318,9 +318,9 @@ final class AppStore: ObservableObject {
         demoPersona = persona
         isEditingDashboardWidgets = false
         clearPrivateState(keepDemoMode: true)
-        let dataset: DemoTurtleRepository.Dataset = persona == .superAsiaNetwork ? .panAsiaSuperAccount : .baliBaseline
+        let dataset = persona.demoDataset
         repository = DemoTurtleRepository(dataset: dataset)
-        if persona == .superAsiaNetwork {
+        if persona == .superAsiaNetwork || persona == .worldSuperNetwork {
             selectedMapPeriod = .allTime
         }
         updateAccount()
@@ -332,14 +332,13 @@ final class AppStore: ObservableObject {
     }
 
     func selectDemoPersona(_ persona: DemoDashboardPersona) {
-        let datasetChanged = (demoPersona == .superAsiaNetwork) != (persona == .superAsiaNetwork)
+        let datasetChanged = demoPersona.demoDataset != persona.demoDataset
         demoPersona = persona
         isEditingDashboardWidgets = false
         if datasetChanged && isDemoBypassActive {
             clearPrivateState(keepDemoMode: true)
-            let dataset: DemoTurtleRepository.Dataset = persona == .superAsiaNetwork ? .panAsiaSuperAccount : .baliBaseline
-            repository = DemoTurtleRepository(dataset: dataset)
-            if persona == .superAsiaNetwork {
+            repository = DemoTurtleRepository(dataset: persona.demoDataset)
+            if persona == .superAsiaNetwork || persona == .worldSuperNetwork {
                 selectedMapPeriod = .allTime
             }
             updateAccount()
@@ -572,7 +571,7 @@ final class AppStore: ObservableObject {
         isReviewPracticePresented = false
         isLoading = false
         lastError = nil
-        let demoDataset: DemoTurtleRepository.Dataset = demoPersona == .superAsiaNetwork ? .panAsiaSuperAccount : .baliBaseline
+        let demoDataset = demoPersona.demoDataset
         repository = isDemoBypassActive ? DemoTurtleRepository(dataset: demoDataset) : RemoteTurtleRepository(client: client)
     }
 

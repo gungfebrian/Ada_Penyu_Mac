@@ -157,7 +157,7 @@ struct PatternContourStudioView: View {
             Divider().overlay(Color.white.opacity(0.08))
 
             ZStack {
-                Color(red: 13 / 255, green: 26 / 255, blue: 40 / 255)
+                AdaColors.navy
 
                 switch mode {
                 case .oneVsThree:
@@ -170,7 +170,7 @@ struct PatternContourStudioView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            Divider().overlay(Color.white.opacity(0.08))
+            Divider().overlay(AdaColors.line)
             calculatorStrip
         }
         .task(id: extractionSignature) {
@@ -181,43 +181,25 @@ struct PatternContourStudioView: View {
         }
     }
 
-    // MARK: - Single Slim Control Strip (Zero Paragraph Clutter)
+    // MARK: - Single Slim FigCraft Control Strip (Zero Native Segmented Pickers)
 
     private var compactToolbar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                Picker("Mode", selection: $mode) {
-                    ForEach(PatternStudioMode.allCases) { m in
-                        Text(m.rawValue).tag(m)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 224)
+            HStack(spacing: 8) {
+                figCraftSegmented(PatternStudioMode.allCases, selection: $mode) { $0.rawValue }
 
                 if mode == .oneVsThree {
-                    Picker("Grid", selection: $arrangement) {
-                        ForEach(PatternOneVsThreeArrangement.allCases) { arr in
-                            Text(arr.rawValue).tag(arr)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 138)
+                    figCraftSegmented(PatternOneVsThreeArrangement.allCases, selection: $arrangement) { $0.rawValue }
                 }
 
-                Picker("Style", selection: $displayStyle) {
-                    ForEach(PatternContourDisplayStyle.allCases) { s in
-                        Text(s.rawValue).tag(s)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 196)
-                .help("Scale Mesh traces the polygonal sutures between scales; Ink traces dark spots")
+                figCraftSegmented(PatternContourDisplayStyle.allCases, selection: $displayStyle) { $0.rawValue }
+                    .help("Scale Mesh traces polygonal sutures between scales; Ink traces dark spots")
 
                 Divider().frame(height: 18)
 
-                chipToggle("ROI Mask", icon: "viewfinder", isOn: $patternOnlyMask)
+                chipToggle("ROI", icon: "viewfinder", isOn: $patternOnlyMask)
                 chipToggle("Lines", icon: "scribble.variable", isOn: $linesOnly)
-                chipToggle("#", icon: "number", isOn: $showNumbers)
+                chipToggle("Nums", icon: "number", isOn: $showNumbers)
 
                 if mode == .oneToOne {
                     chipToggle("Threads", icon: "point.topleft.down.to.point.bottomright.curvepath", isOn: $showMatchThreads)
@@ -323,6 +305,32 @@ struct PatternContourStudioView: View {
             .padding(.vertical, 7)
         }
         .background(AdaColors.card)
+    }
+
+    private func figCraftSegmented<Option: Identifiable & Hashable>(
+        _ options: [Option],
+        selection: Binding<Option>,
+        label: @escaping (Option) -> String
+    ) -> some View {
+        HStack(spacing: 2) {
+            ForEach(options) { option in
+                let active = selection.wrappedValue == option
+                Button {
+                    selection.wrappedValue = option
+                } label: {
+                    Text(label(option))
+                        .font(.system(size: 11, weight: active ? .semibold : .medium))
+                        .foregroundStyle(active ? .white : AdaColors.secondaryInk)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(active ? AdaColors.navy : Color.clear, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(AdaColors.canvas, in: Capsule())
     }
 
     private func chipToggle(_ label: String, icon: String, isOn: Binding<Bool>) -> some View {

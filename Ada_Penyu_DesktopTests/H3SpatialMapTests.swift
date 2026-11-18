@@ -133,6 +133,26 @@ final class H3SpatialMapTests: XCTestCase {
         XCTAssertEqual(japan.localizedName(for: .id), "Jepang")
     }
 
+    func testWorldSuperAccountAggregatesThousandsOfGlobalSightingsIntoH3Res1CellsAcrossContinents() async throws {
+        let repo = DemoTurtleRepository(dataset: .worldSuperAccount)
+        let sightings = try await repo.mapSightings(query: MapQuery(period: .allTime, species: nil, condition: nil, page: PageRequest(limit: 5000)))
+        let uniqueTurtles = Set(sightings.map(\.turtleID))
+
+        XCTAssertGreaterThanOrEqual(uniqueTurtles.count, 400)
+        XCTAssertGreaterThanOrEqual(sightings.count, 1_500)
+
+        let worldRegion = MKCoordinateRegion(center: .init(latitude: 8, longitude: 30), span: .init(latitudeDelta: 110, longitudeDelta: 220))
+        XCTAssertEqual(H3SpatialIndex.resolution(for: worldRegion), 1)
+
+        let res1Cells = H3SpatialIndex.aggregate(sightings: sightings, resolution: 1)
+        XCTAssertGreaterThanOrEqual(res1Cells.count, 15)
+        XCTAssertLessThan(res1Cells.count, 80, "H3 Res 1 should cleanly compress thousands of world sightings into legible global hexagons")
+        XCTAssertEqual(res1Cells.reduce(0) { $0 + $1.sightingCount }, sightings.count)
+
+        let countries = H3SpatialIndex.resolvedCountryCounts(for: sightings)
+        XCTAssertGreaterThanOrEqual(countries.filter { !$0.isoCode.isEmpty }.count, 22)
+    }
+
     private func makeSighting(id: String, turtleID: String, species: TurtleSpecies, lat: Double, lon: Double) -> Sighting {
         Sighting(
             name: turtleID,

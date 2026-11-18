@@ -108,8 +108,8 @@ struct MapPageView: View {
                         MapPolygon(coordinates: cell.boundary)
                             .foregroundStyle(h3FillColor(for: cell, selected: isSelected))
                             .stroke(
-                                isSelected ? Color.white : AdaColors.navy.opacity(0.68),
-                                lineWidth: isSelected ? 2.5 : 1.25
+                                isSelected ? Color.white : Color.white.opacity(0.68),
+                                lineWidth: isSelected ? 2.6 : 1.15
                             )
 
                         Annotation(cell.countryDisplayName(for: activeLanguage), coordinate: cell.center, anchor: .center) {
@@ -276,9 +276,44 @@ struct MapPageView: View {
 
     private func h3FillColor(for cell: H3CellAggregate, selected: Bool) -> Color {
         if selected {
-            return AdaColors.navy.opacity(0.64)
+            return AdaColors.navy.opacity(0.74)
         }
-        return AdaColors.navy.opacity(0.18 + 0.40 * cell.densityRatio)
+        // Calibrated 4-step FigCraft ocean-navy choropleth scale for sharp legibility on MapKit water tiles
+        switch cell.densityRatio {
+        case ..<0.32:
+            return AdaColors.accent.opacity(0.24)
+        case 0.32..<0.56:
+            return Color(red: 36 / 255, green: 94 / 255, blue: 142 / 255).opacity(0.38)
+        case 0.56..<0.80:
+            return AdaColors.brandBlue.opacity(0.52)
+        default:
+            return AdaColors.navy.opacity(0.66)
+        }
+    }
+
+    private struct MapRegionPreset: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let icon: String
+        let region: MKCoordinateRegion
+    }
+
+    private var globalRegionPresets: [MapRegionPreset] {
+        [
+            .init(id: "world", title: "World", subtitle: "H3 Res 1 · All oceans", icon: "globe.americas",
+                  region: MKCoordinateRegion(center: .init(latitude: 6, longitude: 40), span: .init(latitudeDelta: 115, longitudeDelta: 220))),
+            .init(id: "indonesia", title: "Indonesia", subtitle: "H3 Res 3–4 · Coral Triangle", icon: "water.waves",
+                  region: MKCoordinateRegion(center: .init(latitude: -3.2, longitude: 118.0), span: .init(latitudeDelta: 15, longitudeDelta: 30))),
+            .init(id: "bali", title: "Bali & Nusa Penida", subtitle: "Detailed penyu pins", icon: "mappin.and.ellipse",
+                  region: MKCoordinateRegion(center: .init(latitude: -8.72, longitude: 115.32), span: .init(latitudeDelta: 0.42, longitudeDelta: 0.55))),
+            .init(id: "indianOcean", title: "India & Indian Ocean", subtitle: "H3 Res 2–3 · Reefs & atolls", icon: "globe.asia.australia",
+                  region: MKCoordinateRegion(center: .init(latitude: 6.5, longitude: 68.0), span: .init(latitudeDelta: 34, longitudeDelta: 48))),
+            .init(id: "americas", title: "Americas & Caribbean", subtitle: "H3 Res 2–3 · Atlantic & Pacific", icon: "globe.americas",
+                  region: MKCoordinateRegion(center: .init(latitude: 14.0, longitude: -80.0), span: .init(latitudeDelta: 36, longitudeDelta: 52))),
+            .init(id: "mediterranean", title: "Atlantic & Mediterranean", subtitle: "H3 Res 2–3 · Nesting shores", icon: "globe.europe.africa",
+                  region: MKCoordinateRegion(center: .init(latitude: 29.0, longitude: 5.0), span: .init(latitudeDelta: 28, longitudeDelta: 54))),
+        ]
     }
 
     // MARK: - Top-Left Controls
@@ -295,8 +330,8 @@ struct MapPageView: View {
                         Text("H3 R\(res)")
                             .font(.system(size: 10, weight: .bold, design: .monospaced))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 7)
-                            .frame(height: 20)
+                            .padding(.horizontal, 8)
+                            .frame(height: 21)
                             .background(AdaColors.navy, in: Capsule())
                     }
                 }
@@ -305,12 +340,40 @@ struct MapPageView: View {
                     .foregroundStyle(AdaColors.secondaryInk)
                     .lineLimit(2)
             }
-            .frame(width: 318, alignment: .leading)
-            .adaCard(padding: 15, radius: 16)
+            .frame(width: 326, alignment: .leading)
+            .adaCard(padding: 16, radius: 18)
             .shadow(color: AdaColors.navy.opacity(0.08), radius: 10, y: 3)
 
             HStack(spacing: 8) {
                 modeToggle
+
+                if resolvedCountryCount >= 4 {
+                    ActionDropdown(
+                        items: globalRegionPresets.map { preset in
+                            DropdownAction(
+                                title: preset.title,
+                                subtitle: preset.subtitle,
+                                icon: preset.icon,
+                                selected: false,
+                                action: {
+                                    selectedH3Index = nil
+                                    selectedSightingID = nil
+                                    if preset.id == "world" {
+                                        fitAll()
+                                    } else {
+                                        move(to: preset.region)
+                                    }
+                                }
+                            )
+                        },
+                        header: "Jump to region",
+                        placement: .belowLeading,
+                        minWidth: 236
+                    ) {
+                        ContextPill(title: "Regions", icon: "globe", chevron: true)
+                    }
+                    .fixedSize()
+                }
 
                 if selectedH3Index != nil || selectedSightingID != nil {
                     Button("Clear") {
@@ -555,11 +618,11 @@ struct MapPageView: View {
             .buttonStyle(AdaPillButtonStyle())
         }
         .foregroundStyle(AdaColors.ink)
-        .padding(18)
-        .frame(width: 318)
-        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(AdaColors.line, lineWidth: 1))
-        .shadow(color: AdaColors.navy.opacity(0.14), radius: 16, y: 6)
+        .padding(20)
+        .frame(width: 324)
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(AdaColors.line, lineWidth: 1))
+        .shadow(color: AdaColors.navy.opacity(0.14), radius: 18, y: 6)
     }
 
     private func metricTile(title: String, value: String, accent: Bool) -> some View {
@@ -702,10 +765,15 @@ struct MapPageView: View {
                     }
                     HStack(spacing: 3) {
                         Text("Low").font(.system(size: 9.5)).foregroundStyle(AdaColors.secondaryInk)
-                        ForEach([0.22, 0.36, 0.50, 0.64], id: \.self) { alpha in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(AdaColors.navy.opacity(alpha))
-                                .frame(width: 11, height: 8)
+                        ForEach(Array([
+                            AdaColors.accent.opacity(0.32),
+                            Color(red: 36 / 255, green: 94 / 255, blue: 142 / 255).opacity(0.46),
+                            AdaColors.brandBlue.opacity(0.62),
+                            AdaColors.navy.opacity(0.76)
+                        ].enumerated()), id: \.offset) { _, swatch in
+                            RoundedRectangle(cornerRadius: 2.5)
+                                .fill(swatch)
+                                .frame(width: 12, height: 8)
                         }
                         Text("High").font(.system(size: 9.5)).foregroundStyle(AdaColors.secondaryInk)
                     }
@@ -872,15 +940,9 @@ private struct H3CellBadge: View {
                 .frame(minWidth: 20)
                 .frame(height: 18)
                 .background(isSelected ? .white : AdaColors.navy, in: Capsule())
-
-            if cell.sightingCount > cell.uniqueTurtleCount {
-                Text("(\(cell.sightingCount))")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(isSelected ? .white.opacity(0.85) : AdaColors.secondaryInk)
-            }
         }
         .padding(.leading, countryLabel == nil ? 6 : 8)
-        .padding(.trailing, 5)
+        .padding(.trailing, 4)
         .frame(height: 26)
         .background(isSelected ? AdaColors.navy : AdaColors.card, in: Capsule())
         .overlay(

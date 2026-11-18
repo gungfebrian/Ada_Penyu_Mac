@@ -32,22 +32,6 @@ struct ContentView: View {
             selectedSightingID = nil
             focusedMapTurtleID = nil
         }
-        .sheet(isPresented: $store.isReviewPracticePresented) {
-            VStack(spacing: 0) {
-                HStack {
-                    Label("Practice review", systemImage: "graduationcap")
-                        .font(.headline)
-                    Text("Sample cases and simulated decisions").foregroundStyle(AdaColors.secondaryInk)
-                    Spacer()
-                    Button("Done") { store.isReviewPracticePresented = false }
-                        .keyboardShortcut(.cancelAction)
-                }
-                .padding(16)
-                .background(AdaColors.card)
-                ScientistReviewWorkspaceView(store: store)
-            }
-            .frame(minWidth: 920, minHeight: 600)
-        }
         #if DEBUG
         .sheet(isPresented: $store.isAuthSheetPresented) { BackendSettingsSheet(store: store) }
         #endif
@@ -162,14 +146,85 @@ struct ContentView: View {
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
+
+            if store.isReviewPracticePresented {
+                VStack(spacing: 0) {
+                    HStack(spacing: 14) {
+                        Button {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                store.isReviewPracticePresented = false
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                Text("Back")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                            }
+                            .foregroundStyle(AdaColors.navy)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
+                            .background(AdaColors.card, in: Capsule())
+                            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Text("Practice Review")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(AdaColors.ink)
+
+                        Text("Sample")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(AdaColors.navy)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
+                            .background(AdaColors.navy.opacity(0.08), in: Capsule())
+
+                        Spacer(minLength: 0)
+
+                        Button {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                store.isReviewPracticePresented = false
+                            }
+                        } label: {
+                            Text("Done")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 18)
+                                .frame(height: 34)
+                                .background(AdaColors.navy, in: Capsule())
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut(.cancelAction)
+                    }
+                    .padding(.leading, 84) // clears macOS window traffic lights cleanly in full-window mode
+                    .padding(.trailing, 24)
+                    .padding(.top, 14)
+                    .padding(.bottom, 12)
+                    .background(AdaColors.canvas)
+
+                    ScientistReviewWorkspaceView(store: store)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AdaColors.canvas)
+                .ignoresSafeArea(.container, edges: .top)
+                .transition(.opacity)
+                .zIndex(20)
+            }
         }
         .background(AdaColors.navy)
         .onChange(of: store.activeSection) { _, _ in selectedSightingID = nil; store.dismissDetail() }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
         .animation(.easeOut(duration: 0.16), value: showingExport)
+        .animation(.easeOut(duration: 0.16), value: store.isReviewPracticePresented)
         .animation(.easeOut(duration: 0.18), value: store.selectedTurtle?.id)
         .onExitCommand {
-            if showingExport {
+            if store.isReviewPracticePresented {
+                store.isReviewPracticePresented = false
+            } else if showingExport {
                 showingExport = false
                 exportQueryOverride = nil
             } else if store.selectedTurtle != nil {

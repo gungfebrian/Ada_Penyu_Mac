@@ -232,12 +232,12 @@ struct AccountLoginView: View {
             }
             HStack(spacing: 8) {
                 Button {
-                    openDemo(.superAsiaNetwork)
+                    openDemo(.worldSuperNetwork)
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "globe.asia.australia")
+                        Image(systemName: "globe.americas")
                             .accessibilityHidden(true)
-                        Text("Asia Super Demo")
+                        Text("World Super Demo")
                         Spacer(minLength: 6)
                         Text("⌘D")
                             .font(.system(size: 11))

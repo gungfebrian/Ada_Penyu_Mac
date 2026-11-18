@@ -287,6 +287,7 @@ enum DashboardRolePreset: String, CaseIterable, Identifiable, Codable, Hashable 
 /// Allows switching between distinct account hierarchy roles in Demo mode
 /// so each account's personalized widget workspace can be demonstrated and persisted independently.
 enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable {
+    case worldSuperNetwork = "world_super_network"
     case demoResearcher = "demo_researcher"
     case superAsiaNetwork = "super_asia_network"
     case ecologistAmina = "ecologist_amina"
@@ -297,6 +298,7 @@ enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable
 
     var displayName: String {
         switch self {
+        case .worldSuperNetwork: "World Super Account"
         case .demoResearcher: "Demo Owner"
         case .superAsiaNetwork: "Asia Super Account"
         case .ecologistAmina: "Dr. Amina Saleh"
@@ -307,6 +309,7 @@ enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable
 
     var roleLabel: String {
         switch self {
+        case .worldSuperNetwork: "Tier 1 · Global Ocean Network"
         case .demoResearcher: "Tier 1 · Organization Owner"
         case .superAsiaNetwork: "Tier 1 · SE Asia & India Network"
         case .ecologistAmina: "Tier 2 · Marine Scientist"
@@ -317,6 +320,7 @@ enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable
 
     var email: String {
         switch self {
+        case .worldSuperNetwork: "world-super@seaturtle.org"
         case .demoResearcher: "owner@seaturtle.org"
         case .superAsiaNetwork: "asia-super@seaturtle.org"
         case .ecologistAmina: "amina@seaturtle.org"
@@ -327,6 +331,7 @@ enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable
 
     var organizationName: String {
         switch self {
+        case .worldSuperNetwork: "Global Sea Turtle Network"
         case .superAsiaNetwork: "Indo-Pacific Turtle Network"
         default: "Sea Turtle Group"
         }
@@ -334,10 +339,18 @@ enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable
 
     var defaultPreset: DashboardRolePreset {
         switch self {
-        case .demoResearcher, .superAsiaNetwork: .generalOverview
+        case .worldSuperNetwork, .demoResearcher, .superAsiaNetwork: .generalOverview
         case .ecologistAmina: .populationEcology
         case .rangerWayan: .fieldRanger
         case .vetPutu: .healthTriage
+        }
+    }
+
+    var demoDataset: DemoTurtleRepository.Dataset {
+        switch self {
+        case .worldSuperNetwork: .worldSuperAccount
+        case .superAsiaNetwork: .panAsiaSuperAccount
+        default: .baliBaseline
         }
     }
 

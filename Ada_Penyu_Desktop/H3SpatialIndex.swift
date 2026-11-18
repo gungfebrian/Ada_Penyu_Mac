@@ -61,7 +61,8 @@ struct H3CellAggregate: Identifiable {
     var drillInRegion: MKCoordinateRegion {
         let targetSpan: Double
         switch resolution {
-        case ...2: targetSpan = 14.0
+        case ...1: targetSpan = 28.0
+        case 2: targetSpan = 14.0
         case 3: targetSpan = 6.2
         case 4: targetSpan = 2.6
         case 5: targetSpan = 0.95
@@ -170,8 +171,9 @@ enum H3SpatialIndex {
         let effectiveSpan = max(region.span.latitudeDelta, region.span.longitudeDelta * cosLat * 0.72)
 
         switch effectiveSpan {
-        case 22.0...: return 2     // Continent / Indo-Pacific (~86,800 km²)
-        case 10.0..<22.0: return 3 // Multi-country / SE Asia (~12,390 km²)
+        case 52.0...: return 1     // Global / World view (~607,000 km²)
+        case 22.0..<52.0: return 2 // Continent / Ocean Basin (~86,800 km²)
+        case 10.0..<22.0: return 3 // Multi-country / Region (~12,390 km²)
         case 4.5..<10.0: return 4  // National / Archipelago (~1,770 km²)
         case 1.8..<4.5: return 5   // Island / Province (~252 km²)
         case 0.55..<1.8: return 6  // Coastal / Reef zone (~36 km²)
@@ -182,7 +184,8 @@ enum H3SpatialIndex {
     /// Approximate average hexagon area label for legend display.
     nonisolated static func nominalScaleLabel(for resolution: Int) -> String {
         switch resolution {
-        case ...2: "~86,800 km²"
+        case ...1: "~607,000 km²"
+        case 2: "~86,800 km²"
         case 3: "~12,390 km²"
         case 4: "~1,770 km²"
         case 5: "~252 km²"

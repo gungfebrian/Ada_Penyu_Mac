@@ -530,33 +530,43 @@ struct ScientistReviewWorkspaceView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Left + Center Comparison Area
-            VStack(spacing: 0) {
+        HStack(spacing: 16) {
+            // Main Comparison Workspace
+            VStack(spacing: 12) {
                 scenarioAndSimulationBar
-                Divider().overlay(AdaColors.line)
+
                 if !isStudioPrimaryMode {
                     comparisonAidsToolbar
-                    Divider().overlay(AdaColors.line)
                 }
+
                 dualComparisonCanvases
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(AdaColors.line, lineWidth: 1)
+                    )
+
                 if !isStudioPrimaryMode {
-                    Divider().overlay(AdaColors.line)
                     evidenceDrawerSection
                 }
-                Divider().overlay(AdaColors.line)
+
                 decisionActionBar
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            Divider().overlay(AdaColors.line)
-
-            // Slim Right Candidate Inspector
+            // Right Candidate Rail (FigCraft card)
             bundledInspector
-                .frame(width: 252)
-                .background(AdaColors.canvas)
+                .frame(width: 280)
+                .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(AdaColors.line, lineWidth: 1)
+                )
         }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 20)
+        .padding(.top, 4)
         .background(AdaColors.canvas)
         .onAppear {
             syncRequestedReviewState()
@@ -583,121 +593,141 @@ struct ScientistReviewWorkspaceView: View {
         vm.showCrossPhotoThreads = true
     }
 
-    // MARK: - Compact Case & View Switcher Bar
+    // MARK: - Clean FigCraft Case & View Switcher Bar
 
     private var scenarioAndSimulationBar: some View {
-        HStack(spacing: 10) {
-            Picker("Sample case", selection: Binding(get: { vm.activeScenario }, set: { scenario in
-                vm.switchScenario(scenario)
-                vm.showScaleOutlines = true
-                vm.showHeadRegionOutline = true
-            })) {
+        HStack(spacing: 12) {
+            // Case pills (zero native Picker)
+            HStack(spacing: 4) {
                 ForEach(ReviewScenarioID.allCases) { scenario in
-                    Text(scenario.shortTitle).tag(scenario)
+                    let active = vm.activeScenario == scenario
+                    Button {
+                        vm.switchScenario(scenario)
+                        vm.showScaleOutlines = true
+                        vm.showHeadRegionOutline = true
+                    } label: {
+                        Text(scenario == .rankOneJunctionMismatch ? "Case 1 · Lookalike" : "Case 2 · Glare")
+                            .font(.system(size: 12, weight: active ? .semibold : .medium))
+                            .foregroundStyle(active ? .white : AdaColors.ink)
+                            .padding(.horizontal, 12)
+                            .frame(height: 30)
+                            .background(active ? AdaColors.navy : Color.clear, in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .frame(maxWidth: 300)
+            .padding(3)
+            .background(AdaColors.canvas, in: Capsule())
 
-            Picker("View", selection: $vm.layoutMode) {
-                Text("Pattern 1 vs 3").tag(ScientistComparisonLayoutMode.contours)
-                Text("Scale Manual").tag(ScientistComparisonLayoutMode.scales)
-                Text("1:1 Photos").tag(ScientistComparisonLayoutMode.sideBySide)
-                Text("Multi-Grid").tag(ScientistComparisonLayoutMode.multiCandidateGrid)
-                Text("Blend").tag(ScientistComparisonLayoutMode.superimposeBlend)
+            Spacer(minLength: 8)
+
+            // View mode pills (clean FigCraft segmented control)
+            HStack(spacing: 3) {
+                viewModePill("1 vs 3", mode: .contours)
+                viewModePill("1 : 1", mode: .sideBySide)
+                viewModePill("Scales", mode: .scales)
+                viewModePill("Blend", mode: .superimposeBlend)
             }
-            .frame(maxWidth: 180)
+            .padding(3)
+            .background(AdaColors.canvas, in: Capsule())
 
-            Spacer(minLength: 0)
             Button {
                 vm.resetDemo()
                 vm.layoutMode = .contours
                 studioMode = .oneVsThree
                 vm.isEvidenceDrawerExpanded = false
             } label: {
-                Label("Reset practice", systemImage: "arrow.counterclockwise")
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Reset")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(AdaColors.ink)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(AdaColors.canvas, in: Capsule())
+                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                .contentShape(Capsule())
             }
-            .controlSize(.small)
+            .buttonStyle(.plain)
         }
-        .font(.system(size: 11))
         .padding(.horizontal, 14)
-        .frame(height: 42)
-        .background(AdaColors.card)
+        .padding(.vertical, 8)
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AdaColors.line, lineWidth: 1)
+        )
     }
 
-    // MARK: - Comparison Aids & Synchronized Zoom Toolbar
+    private func viewModePill(_ title: String, mode: ScientistComparisonLayoutMode) -> some View {
+        let active = vm.layoutMode == mode
+        return Button {
+            vm.layoutMode = mode
+        } label: {
+            Text(title)
+                .font(.system(size: 12, weight: active ? .semibold : .medium))
+                .foregroundStyle(active ? .white : AdaColors.secondaryInk)
+                .padding(.horizontal, 11)
+                .frame(height: 30)
+                .background(active ? AdaColors.navy : Color.clear, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Simplified FigCraft Comparison Controls
 
     private var comparisonAidsToolbar: some View {
-        ScrollView(.horizontal) {
         HStack(spacing: 8) {
-            Text("Comparison Aids:")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(AdaColors.secondaryInk)
-
             FilterChip(
-                title: "Original photos",
+                title: "Original",
                 isSelected: vm.isShowingCleanOriginalPhotos,
-                horizontalPadding: 11,
+                horizontalPadding: 12,
                 unselectedBackground: AdaColors.canvas
             ) {
                 vm.resetOverlaysToOriginalPhotos()
             }
 
             FilterChip(
-                title: "Schematic outlines",
+                title: "Scales",
                 isSelected: vm.showScaleOutlines,
-                horizontalPadding: 11,
+                horizontalPadding: 12,
                 unselectedBackground: AdaColors.canvas
             ) {
                 vm.showScaleOutlines.toggle()
             }
 
             FilterChip(
-                title: "Head region outline",
+                title: "Head ROI",
                 isSelected: vm.showHeadRegionOutline,
-                horizontalPadding: 11,
+                horizontalPadding: 12,
                 unselectedBackground: AdaColors.canvas
             ) {
                 vm.showHeadRegionOutline.toggle()
             }
 
             FilterChip(
-                title: "Demo keypoints",
-                isSelected: vm.showXFeatPoints,
-                horizontalPadding: 11,
+                title: "Points",
+                isSelected: vm.showXFeatPoints || vm.showI3SBlobOverlay,
+                horizontalPadding: 12,
                 unselectedBackground: AdaColors.canvas
             ) {
-                vm.showXFeatPoints.toggle()
+                let next = !(vm.showXFeatPoints || vm.showI3SBlobOverlay)
+                vm.showXFeatPoints = next
+                vm.showI3SBlobOverlay = next
             }
 
-            FilterChip(
-                title: "I3S landmarks",
-                isSelected: vm.showI3SBlobOverlay,
-                horizontalPadding: 11,
-                unselectedBackground: AdaColors.canvas
-            ) {
-                vm.showI3SBlobOverlay.toggle()
-            }
-
-            if vm.layoutMode == .sideBySide && (vm.showScaleOutlines || vm.showXFeatPoints) {
-                Toggle("Match threads", isOn: $vm.showCrossPhotoThreads)
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(AdaColors.secondaryInk)
-            }
-
-            Spacer()
-
-            Toggle("Sync zoom & pan", isOn: $vm.syncZoomAndPan)
-                .toggleStyle(.checkbox)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(AdaColors.secondaryInk)
+            Spacer(minLength: 8)
 
             HStack(spacing: 4) {
                 Button {
                     vm.zoomScale = max(1.0, vm.zoomScale - 0.25)
                     if vm.zoomScale == 1.0 { vm.panOffset = .zero }
                 } label: {
-                    Image(systemName: "minus.magnifyingglass")
+                    Image(systemName: "minus")
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 24, height: 24)
                 }
@@ -715,33 +745,37 @@ struct ScientistReviewWorkspaceView: View {
                 Button {
                     vm.zoomScale = min(3.0, vm.zoomScale + 0.25)
                 } label: {
-                    Image(systemName: "plus.magnifyingglass")
+                    Image(systemName: "plus")
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
             }
+            .foregroundStyle(AdaColors.ink)
             .padding(.horizontal, 6)
-            .frame(height: 26)
+            .frame(height: 28)
             .background(AdaColors.canvas, in: Capsule())
 
             Button {
                 vm.focusPostocularRegion()
             } label: {
-                Text("Focus Scales (185%)")
-                    .font(.system(size: 11, weight: .medium))
+                Text("Focus")
+                    .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(AdaColors.navy)
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(AdaColors.accentSoft, in: Capsule())
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(AdaColors.canvas, in: Capsule())
+                    .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(AdaColors.card)
-    }
-
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AdaColors.line, lineWidth: 1)
+        )
     }
 
     // MARK: - Comparison Canvases (1:1 Side-by-Side | Multi-Candidate Grid | Superimpose Blend)
@@ -774,7 +808,7 @@ struct ScientistReviewWorkspaceView: View {
                 superimposeComparisonCanvas
             }
         }
-        .background(Color.black.opacity(0.92))
+        .background(isStudioPrimaryMode ? AdaColors.card : AdaColors.navy)
     }
 
     private var sideBySideComparisonCanvas: some View {
@@ -870,11 +904,11 @@ struct ScientistReviewWorkspaceView: View {
                                 var path = Path()
                                 path.move(to: p1)
                                 path.addLine(to: p2)
-                                let col: Color = vm.sighting.hasSpecularGlare && !matches ? .orange : (matches ? .green : .red)
+                                let col: Color = vm.sighting.hasSpecularGlare && !matches ? AdaColors.orange : (matches ? AdaColors.green : AdaColors.red)
                                 ctx.stroke(
                                     path,
-                                    with: .color(col.opacity(0.75)),
-                                    style: StrokeStyle(lineWidth: matches ? 1.8 : 2.4, dash: matches ? [] : [6, 4])
+                                    with: .color(col.opacity(0.82)),
+                                    style: StrokeStyle(lineWidth: matches ? 1.8 : 2.2, dash: matches ? [] : [6, 4])
                                 )
                             }
                         } else if vm.showXFeatPoints {
@@ -884,7 +918,7 @@ struct ScientistReviewWorkspaceView: View {
                                 var path = Path()
                                 path.move(to: p1)
                                 path.addLine(to: p2)
-                                ctx.stroke(path, with: .color(Color.cyan.opacity(0.65)), lineWidth: 1.5)
+                                ctx.stroke(path, with: .color(AdaColors.accent.opacity(0.75)), lineWidth: 1.5)
                             }
                         }
                     }
@@ -1031,41 +1065,39 @@ struct ScientistReviewWorkspaceView: View {
         let cand = vm.selectedCandidate
         return VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text("SUPERIMPOSE / BLINK COMPARE:")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.cyan)
-                Text("0% Sighting (\(vm.sighting.sightingID))")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
+                Text("Blend")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text("Sighting")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.75))
                 Slider(value: $vm.superimposeBlendOpacity, in: 0.0...1.0, step: 0.05)
+                    .tint(.white)
                     .frame(width: 220)
-                Text("100% Candidate (\(cand.displayName))")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
+                Text(cand.displayName)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.75))
 
-                Button("0% Sighting") { vm.superimposeBlendOpacity = 0.0 }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button("50/50 Blend") { vm.superimposeBlendOpacity = 0.5 }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button("100% Candidate") { vm.superimposeBlendOpacity = 1.0 }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 Spacer()
+
+                HStack(spacing: 6) {
+                    blendPresetPill("0%", value: 0.0)
+                    blendPresetPill("50%", value: 0.5)
+                    blendPresetPill("100%", value: 1.0)
+                }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(Color.black.opacity(0.75))
+            .padding(.vertical, 10)
+            .background(AdaColors.navy)
 
             ZStack {
                 SimulatedTurtlePhotoPane(
-                    headerBadge: "BASE: SIGHTING PHOTO",
+                    headerBadge: "SIGHTING",
                     title: vm.sighting.sightingID,
-                    sideLabel: vm.sighting.side.title.uppercased(),
+                    sideLabel: vm.sighting.side.title,
                     sideMatches: true,
                     dateAndLocation: vm.sighting.captureDate,
-                    footerNote: vm.sighting.rangerNote,
+                    footerNote: "",
                     sampleImageName: vm.sighting.sampleImageName,
                     showRealPhoto: vm.showRealTurtlePhotographs,
                     topologyState: vm.sighting.hasSpecularGlare ? .glareOccluded : .isomorphicMatch,
@@ -1082,12 +1114,12 @@ struct ScientistReviewWorkspaceView: View {
                 .opacity(1.0 - vm.superimposeBlendOpacity * 0.85)
 
                 SimulatedTurtlePhotoPane(
-                    headerBadge: "OVERLAY: RANK #\(cand.rank) \(cand.displayName)",
-                    title: "\(cand.displayName) (\(cand.profileCode))",
-                    sideLabel: cand.side.title.uppercased(),
+                    headerBadge: "RANK #\(cand.rank)",
+                    title: cand.displayName,
+                    sideLabel: cand.side.title,
                     sideMatches: cand.sideMatchesSighting,
                     dateAndLocation: cand.captureDate,
-                    footerNote: cand.junctionSummary,
+                    footerNote: "",
                     sampleImageName: cand.sampleImageName,
                     showRealPhoto: vm.showRealTurtlePhotographs,
                     topologyState: cand.topologyState,
@@ -1106,251 +1138,171 @@ struct ScientistReviewWorkspaceView: View {
         }
     }
 
-    // MARK: - Evidence Drawer (Relative Match Score + More Evidence with I3S Pattern)
+    private func blendPresetPill(_ label: String, value: Double) -> some View {
+        let active = abs(vm.superimposeBlendOpacity - value) < 0.04
+        return Button(label) { vm.superimposeBlendOpacity = value }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(active ? AdaColors.navy : .white.opacity(0.85))
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(active ? .white : .white.opacity(0.14), in: Capsule())
+    }
+
+    // MARK: - Minimal Single-Line Score Strip (Replaces Verbose Evidence Wall)
 
     private var evidenceDrawerSection: some View {
         let cand = vm.selectedCandidate
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        vm.isEvidenceDrawerExpanded.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: vm.isEvidenceDrawerExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("Evidence Drawer")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("· Relative match score \(cand.relativeMatchScore)% · \(cand.junctionSummary)")
-                            .font(.system(size: 12))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                    }
+        let statusTint: Color = cand.topologyState == .isomorphicMatch
+            ? AdaColors.green
+            : (cand.topologyState == .glareOccluded ? AdaColors.orange : AdaColors.red)
+
+        return HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Text("Score")
+                    .foregroundStyle(AdaColors.secondaryInk)
+                Text("\(cand.relativeMatchScore)%")
+                    .fontWeight(.semibold)
                     .foregroundStyle(AdaColors.ink)
-                }
-                .buttonStyle(.plain)
+            }
+            .font(.system(size: 12))
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(AdaColors.canvas, in: Capsule())
 
-                Spacer()
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(statusTint)
+                    .frame(width: 7, height: 7)
+                Text(cand.junctionSummary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaColors.ink)
+                    .lineLimit(1)
+            }
 
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        vm.isMoreEvidenceExpanded.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Text("More evidence (I3S Pattern)")
-                            .font(.system(size: 11, weight: .semibold))
-                        Image(systemName: vm.isMoreEvidenceExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .foregroundStyle(AdaColors.navy)
+            Spacer(minLength: 8)
+
+            if let dist = cand.i3sDistance {
+                Text(String(format: "I3S %.2f", dist))
+                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(AdaColors.secondaryInk)
                     .padding(.horizontal, 10)
-                    .frame(height: 24)
-                    .background(AdaColors.card, in: Capsule())
+                    .frame(height: 26)
+                    .background(AdaColors.canvas, in: Capsule())
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AdaColors.line, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Always-Visible FigCraft Decision Bar
+
+    private var decisionActionBar: some View {
+        let cand = vm.selectedCandidate
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text("\(vm.sighting.sightingID) vs #\(cand.rank) \(cand.displayName)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AdaColors.ink)
+                        .lineLimit(1)
+
+                    if let outcome = vm.currentOutcome {
+                        Text(outcome.resolution == .linkedToExisting ? "Confirmed" : "Unsure")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 9)
+                            .frame(height: 21)
+                            .background(outcome.resolution == .linkedToExisting ? AdaColors.green : AdaColors.orange, in: Capsule())
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                vm.prepareUnsureSheet()
+            } label: {
+                Text("Unsure")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(AdaColors.ink)
+                    .padding(.horizontal, 16)
+                    .frame(height: 36)
+                    .background(AdaColors.canvas, in: Capsule())
                     .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
+                    .contentShape(Capsule())
             }
+            .buttonStyle(.plain)
 
-            if vm.isEvidenceDrawerExpanded {
-                HStack(alignment: .top, spacing: 10) {
-                    // 1. Backend Relative Match Score
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Relative match score")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(AdaColors.secondaryInk)
-                            Spacer()
-                            Text("\(cand.relativeMatchScore)%")
-                                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                .foregroundStyle(AdaColors.ink)
-                        }
-                        Text("MiewID cosine \(String(format: "%.2f", cand.miewCosine)). Relative to strongest shortlist rival, not P(same individual).")
-                            .font(.system(size: 11))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                    // 2. Scale Junction Topology Evidence
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Postocular scale junctions")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(AdaColors.secondaryInk)
-                            Spacer()
-                            Text(cand.junctionSummary)
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(
-                                    cand.topologyState == .isomorphicMatch
-                                        ? AdaColors.green
-                                        : (cand.topologyState == .glareOccluded ? AdaColors.orange : AdaColors.red)
-                                )
-                        }
-                        Text(cand.junctionDetail)
-                            .font(.system(size: 11))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                    // 3. XFeat Local Correspondences
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("XFeat correspondences")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(AdaColors.secondaryInk)
-                            Spacer()
-                            Text("\(cand.xfeatMatchedPoints) pts")
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                .foregroundStyle(AdaColors.ink)
-                        }
-                        Text("Illustrative keypoint positions, not computed XFeat correspondences. Toggle 'XFeat points' to inspect the schematic.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
+            Button {
+                vm.rejectSelectedCandidateAndAdvance()
+            } label: {
+                Text("Different")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(AdaColors.red)
+                    .padding(.horizontal, 16)
+                    .frame(height: 36)
+                    .background(AdaColors.red.opacity(0.10), in: Capsule())
+                    .contentShape(Capsule())
             }
+            .buttonStyle(.plain)
 
-            if vm.isMoreEvidenceExpanded {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text("I3S Pattern (v4.02)")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(AdaColors.ink)
-                            Text("Lower means closer patterns")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(AdaColors.orange)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .background(AdaColors.orange.opacity(0.14), in: Capsule())
-                            if let dist = cand.i3sDistance {
-                                Text(String(format: "Distance: %.2f (%d/35 pairs)", dist, cand.i3sMatchedPairs))
-                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(AdaColors.ink)
-                            } else {
-                                Text("Unavailable (Head-side mismatch)")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(AdaColors.red)
-                            }
-                        }
-                        Text("Note: In ADA Penyu's 13-photo replay across 5 green turtles, genuine distances (3.28–15.55) overlapped rival distances (11.16–22.35) when the true turtle was absent.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                    }
-                    Spacer()
-                    Toggle("Show I3S 3-landmark & blobs", isOn: $vm.showI3SBlobOverlay)
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 11, weight: .medium))
+            Button {
+                vm.prepareSameTurtleConfirmation()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Same Turtle")
+                        .font(.system(size: 12.5, weight: .semibold))
                 }
-                .padding(10)
-                .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 18)
+                .frame(height: 36)
+                .background(AdaColors.navy, in: Capsule())
+                .contentShape(Capsule())
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(AdaColors.canvas)
-    }
-
-    // MARK: - Always-Visible Scientist Decision Bar
-
-    private var decisionActionBar: some View {
-        Group {
-            let cand = vm.selectedCandidate
-            HStack(spacing: 10) {
-                Text("\(vm.sighting.sightingID) vs #\(cand.rank) \(cand.displayName)")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AdaColors.ink)
-                    .lineLimit(1)
-
-                if let outcome = vm.currentOutcome {
-                    Text(outcome.resolution == .linkedToExisting ? "Confirmed" : "Saved Unsure")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(outcome.resolution == .linkedToExisting ? AdaColors.green : AdaColors.orange, in: Capsule())
-                }
-
-                Spacer()
-
-                Button {
-                    vm.prepareSameTurtleConfirmation()
-                } label: {
-                    Label("Same Turtle", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .frame(height: 30)
-                        .background(AdaColors.green, in: Capsule())
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    vm.rejectSelectedCandidateAndAdvance()
-                } label: {
-                    Label("Different", systemImage: "xmark.circle.fill")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .frame(height: 30)
-                        .background(AdaColors.red, in: Capsule())
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    vm.prepareUnsureSheet()
-                } label: {
-                    Label("Unsure…", systemImage: "questionmark.circle")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(AdaColors.ink)
-                        .padding(.horizontal, 14)
-                        .frame(height: 30)
-                        .background(AdaColors.canvas, in: Capsule())
-                        .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(AdaColors.card)
-        }
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AdaColors.line, lineWidth: 1)
+        )
     }
 
     private var bundledInspector: some View {
         let queryThumb = vm.sighting.sampleImageName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 if let queryThumb {
                     Image(nsImage: queryThumb)
                         .resizable()
                         .scaledToFill()
                         .frame(width: 48, height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(vm.sighting.sightingID)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(AdaColors.ink)
                         .lineLimit(1)
                     HStack(spacing: 6) {
                         Text(vm.sighting.side.title)
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(AdaColors.navy)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, 8)
+                            .frame(height: 20)
                             .background(AdaColors.canvas, in: Capsule())
                         Text(vm.sighting.location)
-                            .font(.system(size: 10.5))
+                            .font(.system(size: 11))
                             .foregroundStyle(AdaColors.secondaryInk)
                             .lineLimit(1)
                     }
@@ -1358,112 +1310,99 @@ struct ScientistReviewWorkspaceView: View {
                 Spacer(minLength: 0)
             }
             .padding(10)
-            .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
             HStack {
-                Text("Candidates (\(vm.candidates.count))")
-                    .font(.system(size: 12, weight: .bold))
+                Text("Candidates")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(AdaColors.ink)
+                Text("\(vm.candidates.count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                    .padding(.horizontal, 7)
+                    .frame(height: 20)
+                    .background(AdaColors.canvas, in: Capsule())
                 Spacer()
                 Button {
                     if vm.layoutMode == .contours {
                         studioMode = studioMode == .oneVsThree ? .oneToOne : .oneVsThree
-                    } else if vm.layoutMode == .multiCandidateGrid {
-                        vm.layoutMode = .sideBySide
                     } else {
                         vm.layoutMode = .contours
                         studioMode = .oneVsThree
                     }
                 } label: {
-                    Label(
-                        (vm.layoutMode == .contours && studioMode == .oneVsThree)
-                            ? "Focus 1:1"
-                            : "1 vs 3",
-                        systemImage: (vm.layoutMode == .contours && studioMode == .oneVsThree) ? "rectangle.split.2x1" : "square.grid.2x2"
-                    )
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 9)
-                    .frame(height: 22)
-                    .background(AdaColors.navy, in: Capsule())
+                    Text((vm.layoutMode == .contours && studioMode == .oneVsThree) ? "1 : 1" : "1 vs 3")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(AdaColors.navy, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
 
-            ScrollView {
-                VStack(spacing: 7) {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 8) {
                     ForEach(Array(vm.candidates.enumerated()), id: \.element.id) { index, item in
                         let isSelected = index == vm.selectedCandidateIndex
-                        let isInMulti = vm.multiSelectedCandidateIDs.contains(item.id)
                         let candThumb = item.sampleImageName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
                         Button {
                             vm.selectCandidate(at: index)
                         } label: {
-                            HStack(spacing: 8) {
-                                if vm.layoutMode == .multiCandidateGrid {
-                                    Button {
-                                        vm.toggleMultiCandidateSelection(item.id)
-                                    } label: {
-                                        Image(systemName: isInMulti ? "checkmark.square.fill" : "square")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(isInMulti ? AdaColors.accent : AdaColors.tertiaryInk)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-
+                            HStack(spacing: 10) {
                                 if let candThumb {
                                     Image(nsImage: candThumb)
                                         .resizable()
                                         .scaledToFill()
-                                        .frame(width: 42, height: 42)
-                                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                        .frame(width: 44, height: 44)
+                                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                                 }
 
                                 VStack(alignment: .leading, spacing: 3) {
-                                    HStack(spacing: 4) {
+                                    HStack(spacing: 5) {
                                         Text("#\(item.rank)")
-                                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                                            .foregroundStyle(isSelected ? .white : AdaColors.ink)
+                                            .font(.system(size: 10.5, weight: .bold))
+                                            .foregroundStyle(isSelected ? .white : AdaColors.navy)
                                             .padding(.horizontal, 6)
-                                            .padding(.vertical, 1)
+                                            .frame(height: 18)
                                             .background(isSelected ? AdaColors.navy : AdaColors.canvas, in: Capsule())
 
-                                        Text(item.displayName)
-                                            .font(.system(size: 11.5, weight: .bold))
+                                        Text(shortCandidateName(item.displayName))
+                                            .font(.system(size: 12.5, weight: .semibold))
                                             .foregroundStyle(AdaColors.ink)
                                             .lineLimit(1)
 
                                         Spacer()
 
                                         Text("\(item.relativeMatchScore)%")
-                                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
                                             .foregroundStyle(AdaColors.secondaryInk)
                                     }
 
-                                    HStack {
+                                    HStack(spacing: 6) {
                                         Text(item.side.title)
-                                            .font(.system(size: 10, weight: .semibold))
+                                            .font(.system(size: 10.5, weight: .medium))
                                             .foregroundStyle(item.sideMatchesSighting ? AdaColors.secondaryInk : AdaColors.red)
                                         Text("· \(item.captureDate)")
-                                            .font(.system(size: 10))
+                                            .font(.system(size: 10.5))
                                             .foregroundStyle(AdaColors.secondaryInk)
                                             .lineLimit(1)
                                         Spacer()
                                         if item.status != .pending {
-                                            Text(item.status.rawValue)
-                                                .font(.system(size: 10, weight: .semibold))
-                                                .foregroundStyle(item.status == .confirmed ? AdaColors.green : AdaColors.red)
+                                            Circle()
+                                                .fill(item.status == .confirmed ? AdaColors.green : AdaColors.red)
+                                                .frame(width: 7, height: 7)
                                         }
                                     }
                                 }
                             }
-                            .padding(8)
-                            .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .padding(9)
+                            .background(isSelected ? AdaColors.navy.opacity(0.06) : AdaColors.card, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(isSelected ? AdaColors.navy : AdaColors.line, lineWidth: isSelected ? 2 : 1)
+                                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                    .stroke(isSelected ? AdaColors.navy : AdaColors.line, lineWidth: isSelected ? 1.6 : 1)
                             )
-                            .opacity(item.status == .rejected ? 0.60 : 1.0)
+                            .opacity(item.status == .rejected ? 0.52 : 1.0)
                         }
                         .buttonStyle(.plain)
                     }
@@ -1473,116 +1412,111 @@ struct ScientistReviewWorkspaceView: View {
             Button {
                 vm.runWiderSearch()
             } label: {
-                Label(
-                    vm.widerSearchExecuted.contains(vm.activeScenario)
-                        ? "Rank #4 Added"
-                        : "Wider Search (+Rank #4)",
-                    systemImage: "magnifyingglass.circle"
-                )
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(AdaColors.ink)
-                .frame(maxWidth: .infinity)
-                .frame(height: 28)
-                .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(AdaColors.line, lineWidth: 1)
-                )
+                Text(vm.widerSearchExecuted.contains(vm.activeScenario) ? "Rank #4 Added" : "Load More Candidates")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaColors.navy)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background(AdaColors.canvas, in: Capsule())
+                    .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .disabled(vm.widerSearchExecuted.contains(vm.activeScenario))
         }
-        .padding(10)
+        .padding(14)
     }
 
-    // MARK: - Confirmation & Unsure Modals
+    private func shortCandidateName(_ raw: String) -> String {
+        if let range = raw.range(of: "·") {
+            let trimmed = raw[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return raw
+    }
+
+    // MARK: - Simplified FigCraft Confirmation & Unsure Modals
 
     private var confirmSameTurtleSheet: some View {
         let cand = vm.selectedCandidate
-        return VStack(alignment: .leading, spacing: 14) {
-            Text("Demo · simulate identity confirmation")
-                .font(.system(size: 16, weight: .bold))
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("Confirm match")
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(AdaColors.ink)
 
-            Text("Link \(vm.sighting.sightingID) (\(vm.sighting.side.title)) to existing catalog individual \(cand.displayName) (\(cand.profileCode))?")
-                .font(.system(size: 12))
+            Text("Link \(vm.sighting.sightingID) to \(cand.displayName) (\(cand.profileCode))?")
+                .font(.system(size: 13))
                 .foregroundStyle(AdaColors.secondaryInk)
 
             if cand.topologyState != .isomorphicMatch {
-                Text("Warning: \(cand.junctionDetail)")
-                    .font(.system(size: 12, weight: .semibold))
+                Text(cand.junctionSummary)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(AdaColors.red)
                     .padding(10)
-                    .background(AdaColors.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AdaColors.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
-            Toggle("Nominate sighting photo for Gallery Reference admission (Separate decision)", isOn: $vm.nominateForGalleryReference)
-                .font(.system(size: 12, weight: .medium))
+            TextField("Note (optional)", text: $vm.confirmationNotes)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12)
+                .frame(height: 38)
+                .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Verification Note")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AdaColors.secondaryInk)
-                TextField("Scientist verification note", text: $vm.confirmationNotes)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            HStack {
+            HStack(spacing: 10) {
                 Button("Cancel") {
                     vm.isConfirmSameTurtlePresented = false
                 }
+                .buttonStyle(AdaPillButtonStyle(secondary: true))
+
                 Spacer()
-                Button("Simulate confirmation") {
+
+                Button("Confirm") {
                     vm.confirmSameTurtleIdentity()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AdaColors.green)
+                .buttonStyle(AdaPillButtonStyle())
             }
         }
-        .padding(22)
-        .frame(width: 460)
+        .padding(24)
+        .frame(width: 400)
+        .background(AdaColors.card)
     }
 
     private var saveUnsureSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Demo · record unsure in memory")
-                .font(.system(size: 16, weight: .bold))
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Keep as Unsure")
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(AdaColors.ink)
 
-            Text("Preserves \(vm.sighting.sightingID) and review notes with the identity field empty so ambiguous or glare-occluded encounters never corrupt gallery records.")
-                .font(.system(size: 12))
+            Text("Leave \(vm.sighting.sightingID) unassigned for follow-up.")
+                .font(.system(size: 13))
                 .foregroundStyle(AdaColors.secondaryInk)
 
-            Toggle("Request a better photo from ranger", isOn: $vm.requestBetterPhoto)
-                .font(.system(size: 12, weight: .medium))
-
-            Toggle("Request a second scientist review", isOn: $vm.requestSecondReview)
-                .font(.system(size: 12, weight: .medium))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Demo notes · discarded on reset or app exit")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AdaColors.secondaryInk)
-                TextEditor(text: $vm.unsureNotes)
-                    .font(.system(size: 12))
-                    .frame(height: 76)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AdaColors.line, lineWidth: 1))
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Request clearer photo", isOn: $vm.requestBetterPhoto)
+                    .toggleStyle(.checkbox)
+                Toggle("Request second review", isOn: $vm.requestSecondReview)
+                    .toggleStyle(.checkbox)
             }
+            .font(.system(size: 12.5))
+            .foregroundStyle(AdaColors.ink)
 
-            HStack {
+            HStack(spacing: 10) {
                 Button("Cancel") {
                     vm.isUnsureSheetPresented = false
                 }
+                .buttonStyle(AdaPillButtonStyle(secondary: true))
+
                 Spacer()
-                Button("Keep unsure in this demo") {
+
+                Button("Save Unsure") {
                     vm.saveUnsureDecision()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AdaColors.orange)
+                .buttonStyle(AdaPillButtonStyle())
             }
         }
-        .padding(22)
-        .frame(width: 460)
+        .padding(24)
+        .frame(width: 380)
+        .background(AdaColors.card)
     }
 }
 
@@ -1667,51 +1601,37 @@ private struct SimulatedTurtlePhotoPane: View {
                 await extractRealPatternsIfNeeded()
             }
 
-            // Top & Bottom Overlay Chrome
+            // Clean FigCraft Overlay Chrome (minimal text, navy frosted pill)
             VStack {
                 HStack(spacing: 8) {
-                    Text(headerBadge)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.cyan)
                     Text(title)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(sideLabel)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(sideMatches ? Color.green : Color.red)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.12), in: Capsule())
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(sideMatches ? .white : AdaColors.red)
+                        .padding(.horizontal, 8)
+                        .frame(height: 20)
+                        .background(sideMatches ? Color.white.opacity(0.16) : AdaColors.red.opacity(0.22), in: Capsule())
                     Spacer()
                     if !extractedPatterns.isEmpty && showScaleOutlines {
                         Text("\(extractedPatterns.count) scales")
                             .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(Color.mint)
+                            .foregroundStyle(.white.opacity(0.9))
                     } else {
                         Text(dateAndLocation)
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.82))
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
-                .padding(8)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(AdaColors.navy.opacity(0.84), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(10)
 
                 Spacer()
-
-                HStack {
-                    Text(footerNote)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .lineLimit(1)
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.black.opacity(0.68))
             }
         }
         .clipped()
@@ -1815,8 +1735,8 @@ private struct SimulatedTurtlePhotoPane: View {
                 roiPath.closeSubpath()
                 context.stroke(
                     roiPath,
-                    with: .color(Color.cyan.opacity(0.48)),
-                    style: StrokeStyle(lineWidth: 1.3, dash: [6, 4])
+                    with: .color(AdaColors.accent.opacity(0.65)),
+                    style: StrokeStyle(lineWidth: 1.4, dash: [6, 4])
                 )
             }
             for scale in extractedPatterns {
@@ -1827,14 +1747,14 @@ private struct SimulatedTurtlePhotoPane: View {
                     if idx == 0 { poly.move(to: c) } else { poly.addLine(to: c) }
                 }
                 poly.closeSubpath()
-                context.fill(poly, with: .color(Color.mint.opacity(0.14)))
-                context.stroke(poly, with: .color(Color.mint.opacity(0.95)), style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round))
+                context.fill(poly, with: .color(AdaColors.red.opacity(0.14)))
+                context.stroke(poly, with: .color(AdaColors.red.opacity(0.92)), style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
 
                 let center = mapNormalizedPoint(scale.centroid)
                 let pillRect = CGRect(x: center.x - 8, y: center.y - 7, width: 16, height: 14)
-                context.fill(Path(roundedRect: pillRect, cornerRadius: 4), with: .color(Color.black.opacity(0.76)))
+                context.fill(Path(roundedRect: pillRect, cornerRadius: 4), with: .color(AdaColors.navy.opacity(0.86)))
                 context.draw(
-                    Text("\(scale.number)").font(.system(size: 9, weight: .bold, design: .rounded)).foregroundStyle(Color.mint),
+                    Text("\(scale.number)").font(.system(size: 9, weight: .bold, design: .rounded)).foregroundStyle(.white),
                     at: center
                 )
             }
@@ -1875,10 +1795,10 @@ private struct SimulatedTurtlePhotoPane: View {
                 return CGPoint(x: mapX(0.53), y: mapY(0.49))
             }()
             let glareRect = CGRect(x: glareCenter.x - 52, y: glareCenter.y - 38, width: 104, height: 76)
-            context.fill(Path(ellipseIn: glareRect), with: .color(Color.yellow.opacity(0.14)))
+            context.fill(Path(ellipseIn: glareRect), with: .color(AdaColors.orange.opacity(0.18)))
             context.stroke(
                 Path(ellipseIn: glareRect),
-                with: .color(Color.yellow.opacity(0.85)),
+                with: .color(AdaColors.orange.opacity(0.90)),
                 style: StrokeStyle(lineWidth: 1.8, dash: [6, 4])
             )
         }
@@ -1892,29 +1812,29 @@ private struct SimulatedTurtlePhotoPane: View {
                     if idx == 0 { roiPath.move(to: pt) } else { roiPath.addLine(to: pt) }
                 }
                 roiPath.closeSubpath()
-                context.fill(roiPath, with: .color(Color.cyan.opacity(0.08)))
+                context.fill(roiPath, with: .color(AdaColors.accent.opacity(0.08)))
                 context.stroke(
                     roiPath,
-                    with: .color(Color.cyan),
-                    style: StrokeStyle(lineWidth: 2.2, dash: [8, 5])
+                    with: .color(.white.opacity(0.85)),
+                    style: StrokeStyle(lineWidth: 1.8, dash: [8, 5])
                 )
             } else {
                 let cropRect = CGRect(x: w * 0.18, y: h * 0.18, width: w * 0.64, height: h * 0.64)
                 context.stroke(
                     Path(roundedRect: cropRect, cornerRadius: 10),
-                    with: .color(Color.cyan),
-                    style: StrokeStyle(lineWidth: 2.0, dash: [8, 5])
+                    with: .color(.white.opacity(0.85)),
+                    style: StrokeStyle(lineWidth: 1.8, dash: [8, 5])
                 )
             }
         }
 
-        // XFeat Correspondences anchored to actual cheek keypoints
+        // Keypoint correspondences anchored to actual cheek keypoints
         if showXFeatPoints {
             if overRealPhoto, let sample, !sample.keypoints.isEmpty {
                 for kp in sample.keypoints.prefix(12) where kp.count >= 2 {
                     let pt = mapSamplePixel(kp[0], kp[1])
-                    let rect = CGRect(x: pt.x - 5.5, y: pt.y - 5.5, width: 11, height: 11)
-                    context.fill(Path(ellipseIn: rect), with: .color(Color.cyan.opacity(0.55)))
+                    let rect = CGRect(x: pt.x - 5, y: pt.y - 5, width: 10, height: 10)
+                    context.fill(Path(ellipseIn: rect), with: .color(AdaColors.accent.opacity(0.85)))
                     context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.5)
                 }
             } else {
@@ -1924,9 +1844,9 @@ private struct SimulatedTurtlePhotoPane: View {
                 ]
                 for (xx, xy) in xfeatCoords {
                     let pt = CGPoint(x: mapX(xx), y: mapY(xy))
-                    let rect = CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)
-                    context.fill(Path(ellipseIn: rect), with: .color(Color.purple.opacity(0.45)))
-                    context.stroke(Path(ellipseIn: rect), with: .color(Color.purple), lineWidth: 2)
+                    let rect = CGRect(x: pt.x - 5.5, y: pt.y - 5.5, width: 11, height: 11)
+                    context.fill(Path(ellipseIn: rect), with: .color(AdaColors.accent.opacity(0.85)))
+                    context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.5)
                 }
             }
         }
@@ -1938,12 +1858,12 @@ private struct SimulatedTurtlePhotoPane: View {
                     let pt = mapSamplePixel(kp[0], kp[1])
                     let r = max(4, CGFloat(kp[2]) * 0.42 * fillScale)
                     let rect = CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2)
-                    context.stroke(Path(ellipseIn: rect), with: .color(Color.red.opacity(0.85)), lineWidth: 1.4)
+                    context.stroke(Path(ellipseIn: rect), with: .color(AdaColors.red.opacity(0.85)), lineWidth: 1.4)
                 }
                 for ref in [sample.ref1, sample.ref2, sample.ref3] where ref.count >= 2 {
                     let pt = mapSamplePixel(ref[0], ref[1])
                     let rect = CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)
-                    context.fill(Path(ellipseIn: rect), with: .color(Color.blue))
+                    context.fill(Path(ellipseIn: rect), with: .color(AdaColors.navy))
                     context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.8)
                 }
             } else {
@@ -1951,7 +1871,7 @@ private struct SimulatedTurtlePhotoPane: View {
                 for (lx, ly) in landmarks {
                     let pt = CGPoint(x: mapX(lx), y: mapY(ly))
                     let rect = CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)
-                    context.fill(Path(ellipseIn: rect), with: .color(Color.blue))
+                    context.fill(Path(ellipseIn: rect), with: .color(AdaColors.navy))
                     context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.5)
                 }
             }
