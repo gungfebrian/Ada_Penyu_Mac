@@ -23,6 +23,7 @@ struct Ada_Penyu_DesktopApp: App {
                     minHeight: AdaLayout.minimumWindowSize.height
                 )
                 .preferredColorScheme(.light)
+                .environment(\.locale, store.localization.locale)
                 .ignoresSafeArea(.container, edges: .top)
                 .background(WindowConfigurator())
         }
@@ -33,7 +34,7 @@ struct Ada_Penyu_DesktopApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") {
+                Button(store.localization.localized("Settings…")) {
                     store.openSettings()
                 }
                 .keyboardShortcut(",", modifiers: .command)

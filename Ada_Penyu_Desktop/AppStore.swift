@@ -20,6 +20,7 @@ final class AppStore: ObservableObject {
     let organizationKeySettings: OrganizationAPIKeySettings
     let passwordSecurity: PasswordSecurityModel
     let organisationSettings: OrganisationSettingsModel
+    let localization: LocalizationManager
     @Published private var currentSection: AppSection = .dashboard
     @Published var settingsDetail: SettingsDetailRoute? = nil
     @Published var pendingSettingsDetailTarget: SettingsDetailTarget? = nil
@@ -120,25 +121,31 @@ final class AppStore: ObservableObject {
     private var allRequest = 0
     private var photoCache: [String: NSImage] = [:]
     private var keySettingsObservation: AnyCancellable?
+    private var localizationObservation: AnyCancellable?
     private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
     init(
         repository: TurtleRepository? = nil,
         client: APIClient? = nil,
         dashboardLayoutStore: DashboardLayoutStore? = nil,
-        reviewJournal: NotSureReviewJournal? = nil
+        reviewJournal: NotSureReviewJournal? = nil,
+        localization: LocalizationManager? = nil
     ) {
         let client = client ?? APIClient()
         self.client = client
         self.organizationKeySettings = OrganizationAPIKeySettings(client: client)
         self.passwordSecurity = PasswordSecurityModel(client: client)
         self.organisationSettings = OrganisationSettingsModel(client: client)
+        self.localization = localization ?? LocalizationManager()
         self.dashboardLayoutStore = dashboardLayoutStore ?? DashboardLayoutStore()
         self.reviewJournal = reviewJournal ?? NotSureReviewJournal()
         self.apiBaseURLString = client.baseURL.absoluteString
         self.hasInjectedRepository = repository != nil
         self.repository = repository ?? RemoteTurtleRepository(client: client)
         keySettingsObservation = organizationKeySettings.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        localizationObservation = self.localization.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
         observeSession()

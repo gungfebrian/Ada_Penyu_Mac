@@ -21,6 +21,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
+        .environment(\.locale, store.localization.locale)
         .task { await store.bootstrap() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             store.organizationKeySettings.clipboard.clearIfOwned()
@@ -98,6 +99,7 @@ struct ContentView: View {
                     isCollapsed: isSidebarCollapsed,
                     notSurePendingCount: store.pendingNotSureCases.count,
                     isNavigationLocked: store.organizationKeySettings.isChanging,
+                    localization: store.localization,
                     onToggleSidebar: toggleSidebar,
                     onExpandSidebar: { setSidebarCollapsed(false) }
                 )
@@ -191,8 +193,11 @@ struct ContentView: View {
     }
 
     private var pageTitle: String {
-        if store.selectedTurtle != nil { return selectedSightingID == nil ? "Turtle Profile" : "Sighting Details" }
-        return store.activeSection == .scientistReview ? AppSection.individuals.title : store.activeSection.title
+        if store.selectedTurtle != nil {
+            return selectedSightingID == nil ? "Turtle Profile" : "Sighting Details"
+        }
+        let rawTitle = store.activeSection == .scientistReview ? AppSection.individuals.title : store.activeSection.title
+        return store.localization.localized(rawTitle)
     }
 
     private func openMap(turtleID: String?) {

@@ -1,0 +1,135 @@
+/* Navigation & Shell */
+"Overview" = "Overview";
+"Map" = "Map";
+"Sea Turtles" = "Sea Turtles";
+"Not Sure Review" = "Not Sure Review";
+"I3S Pattern ID" = "I3S Pattern ID";
+"Favorites" = "Favorites";
+"Sightings" = "Sightings";
+"Settings" = "Settings";
+"Settings…" = "Settings…";
+"More workspaces" = "More workspaces";
+"Export report" = "Export report";
+"Sign Out" = "Sign Out";
+"Developer API Settings…" = "Developer API Settings…";
+"Collapse sidebar" = "Collapse sidebar";
+"Expand sidebar" = "Expand sidebar";
+"Back" = "Back";
+"Cancel" = "Cancel";
+"Done" = "Done";
+"Retry" = "Retry";
+"Dismiss" = "Dismiss";
+"Save changes" = "Save changes";
+
+/* Login */
+"Sign in" = "Sign in";
+"Signing in…" = "Signing in…";
+"Sign in to AdaPenyu" = "Sign in to AdaPenyu";
+"Use your conservation organisation account to continue." = "Use your conservation organisation account to continue.";
+"Email" = "Email";
+"Enter your email" = "Enter your email";
+"Password" = "Password";
+"Enter your password" = "Enter your password";
+"Keep me signed in on this Mac" = "Keep me signed in on this Mac";
+"Show password" = "Show password";
+"Hide password" = "Hide password";
+"Restoring sign-in…" = "Restoring sign-in…";
+"Password updated. Please sign in with your new password." = "Password updated. Please sign in with your new password.";
+
+/* Settings Overview */
+"Account" = "Account";
+"Password & Security" = "Password & Security";
+"Organisation" = "Organisation";
+"Organisation Profile" = "Organisation Profile";
+"Manage Rangers" = "Manage Rangers";
+"Preferences & Permissions" = "Preferences & Permissions";
+"Language" = "Language";
+"App Permissions" = "App Permissions";
+"Contour Review" = "Contour Review";
+"Defaults for new photo comparisons" = "Defaults for new photo comparisons";
+"Support" = "Support";
+"Software version" = "Software version";
+"Help & Support" = "Help & Support";
+"Developer Options" = "Developer Options";
+"Connect external tools to your organization's data." = "Connect external tools to your organization's data.";
+"Organization API Key" = "Organization API Key";
+"Read-only credentials for external scripts and dashboards" = "Read-only credentials for external scripts and dashboards";
+"Log out" = "Log out";
+"Owner" = "Owner";
+"Ranger" = "Ranger";
+"Demo" = "Demo";
+"Owner only" = "Owner only";
+"Active" = "Active";
+"Invited" = "Invited";
+"Revoked" = "Revoked";
+"Not configured" = "Not configured";
+
+/* Password & Security */
+"Update the password for your AdaPenyu account." = "Update the password for your AdaPenyu account.";
+"Current Password" = "Current Password";
+"Enter current password" = "Enter current password";
+"New Password" = "New Password";
+"Enter new password" = "Enter new password";
+"Your password must be at least 8 characters with a mix of letters, number, and symbols" = "Your password must be at least 8 characters with a mix of letters, number, and symbols";
+"Confirm New Password" = "Confirm New Password";
+"Confirm new password" = "Confirm new password";
+"After changing your password, you will be signed out on this Mac so you can sign in again with your new password." = "After changing your password, you will be signed out on this Mac so you can sign in again with your new password.";
+"Update password" = "Update password";
+
+/* Organisation & Rangers */
+"View and update your organisation's details." = "View and update your organisation's details.";
+"Organisation details for your current account." = "Organisation details for your current account.";
+"Loading organisation profile…" = "Loading organisation profile…";
+"Organisation Name" = "Organisation Name";
+"Enter organisation name" = "Enter organisation name";
+"Organisation Email" = "Organisation Email";
+"Optional contact email" = "Optional contact email";
+"Location" = "Location";
+"Optional location" = "Optional location";
+"Members" = "Members";
+"Not set" = "Not set";
+"Only the organisation owner can edit organisation details." = "Only the organisation owner can edit organisation details.";
+"Search, invite, and manage ranger access for your organisation." = "Search, invite, and manage ranger access for your organisation.";
+"Search rangers" = "Search rangers";
+"Add" = "Add";
+"Add Ranger" = "Add Ranger";
+"Invite a new ranger to join your organisation." = "Invite a new ranger to join your organisation.";
+"Full Name" = "Full Name";
+"Enter ranger name" = "Enter ranger name";
+"Enter ranger email" = "Enter ranger email";
+"Ranger Details" = "Ranger Details";
+"Loading ranger details…" = "Loading ranger details…";
+"Status" = "Status";
+"Resend invitation" = "Resend invitation";
+"Remove Access" = "Remove Access";
+"Load more" = "Load more";
+"No rangers yet" = "No rangers yet";
+"No matching rangers" = "No matching rangers";
+"Use Add to invite a ranger to your organisation." = "Use Add to invite a ranger to your organisation.";
+"Try a different name or email." = "Try a different name or email.";
+
+/* Preferences & Permissions */
+"Choose the display language for AdaPenyu on this Mac." = "Choose the display language for AdaPenyu on this Mac.";
+"Language changes apply immediately and are saved on this Mac." = "Language changes apply immediately and are saved on this Mac.";
+"How AdaPenyu Mac uses macOS sandbox and file permissions." = "How AdaPenyu Mac uses macOS sandbox and file permissions.";
+"Selected Files & Folders" = "Selected Files & Folders";
+"AdaPenyu Mac imports turtle photos and exports reports only for files and folders you explicitly choose through the macOS file picker." = "AdaPenyu Mac imports turtle photos and exports reports only for files and folders you explicitly choose through the macOS file picker.";
+"Open Files & Folders in System Settings" = "Open Files & Folders in System Settings";
+"Network Access" = "Network Access";
+"Used to sign in and sync organisation records with your configured AdaPenyu backend." = "Used to sign in and sync organisation records with your configured AdaPenyu backend.";
+"Phone-Only Permissions Not Used" = "Phone-Only Permissions Not Used";
+"AdaPenyu Mac does not request Camera, Photos Library, Location, or Push Notification permissions." = "AdaPenyu Mac does not request Camera, Photos Library, Location, or Push Notification permissions.";
+
+/* Contour Review */
+"Show scale numbers" = "Show scale numbers";
+"Edge threshold" = "Edge threshold";
+"Overlay opacity" = "Overlay opacity";
+"Line weight" = "Line weight";
+"Reduce noise" = "Reduce noise";
+"Reset Defaults" = "Reset Defaults";
+"These values initialize newly opened photo comparisons in Photo ID and Not Sure. Open comparisons keep their current session settings." = "These values initialize newly opened photo comparisons in Photo ID and Not Sure. Open comparisons keep their current session settings.";
+
+/* Support */
+"Organisation Administrator Support" = "Organisation Administrator Support";
+"For assistance with AdaPenyu or your organisation account, please contact your organisation administrator." = "For assistance with AdaPenyu or your organisation account, please contact your organisation administrator.";
+"Signed-in account" = "Signed-in account";

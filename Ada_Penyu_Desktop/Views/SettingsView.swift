@@ -81,6 +81,26 @@ struct SettingsView: View {
                     }
                 }
 
+                // Preferences & Permissions section
+                SettingsSectionGroup(title: "Preferences & Permissions") {
+                    SettingsNavigationRow(
+                        icon: "globe",
+                        title: "Language",
+                        trailingValue: store.localization.language.displayName,
+                        accessibilityID: "settings.row.language"
+                    ) {
+                        store.requestSettingsDetail(.language)
+                    }
+                    SettingsRowDivider()
+                    SettingsNavigationRow(
+                        icon: "hand.raised",
+                        title: "App Permissions",
+                        accessibilityID: "settings.row.appPermissions"
+                    ) {
+                        store.requestSettingsDetail(.appPermissions)
+                    }
+                }
+
                 // Support section
                 SettingsSectionGroup(title: "Support") {
                     SettingsInfoRow(
@@ -255,6 +275,16 @@ struct SettingsView: View {
             RangerDetailsView(
                 memberID: memberID,
                 model: organisation,
+                onBack: { store.requestSettingsBack() }
+            )
+        case .language:
+            LanguageSettingsView(
+                localization: store.localization,
+                onBack: { store.requestSettingsBack() }
+            )
+        case .appPermissions:
+            AppPermissionsView(
+                store: store,
                 onBack: { store.requestSettingsBack() }
             )
         case .helpSupport:

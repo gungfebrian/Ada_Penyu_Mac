@@ -31,6 +31,7 @@ struct SidebarView: View {
     var isCollapsed = false
     var notSurePendingCount = 0
     var isNavigationLocked = false
+    var localization: LocalizationManager? = nil
     var onToggleSidebar: () -> Void = {}
     var onExpandSidebar: (() -> Void)? = nil
 
@@ -65,19 +66,19 @@ struct SidebarView: View {
                 .accessibilityHidden(true)
 
             ActionDropdown(items: [
-                DropdownAction(title: "Sightings", selected: selection == .sightings, action: {
+                DropdownAction(title: localization?.localized("Sightings") ?? "Sightings", selected: selection == .sightings, action: {
                     selection = .sightings
                     expandIfCollapsed()
                 }),
-                DropdownAction(title: "Favorites (\(favoriteCount))", selected: selection == .favorites, action: {
+                DropdownAction(title: "\(localization?.localized("Favorites") ?? "Favorites") (\(favoriteCount))", selected: selection == .favorites, action: {
                     selection = .favorites
                     expandIfCollapsed()
                 }),
-                DropdownAction(title: "Not Sure Review (\(notSurePendingCount))", selected: selection == .scientistReview, action: {
+                DropdownAction(title: "\(localization?.localized("Not Sure Review") ?? "Not Sure Review") (\(notSurePendingCount))", selected: selection == .scientistReview, action: {
                     selection = .scientistReview
                     expandIfCollapsed()
                 }),
-                DropdownAction(title: "I3S Pattern ID", selected: selection == .identification, action: {
+                DropdownAction(title: localization?.localized("I3S Pattern ID") ?? "I3S Pattern ID", selected: selection == .identification, action: {
                     selection = .identification
                     expandIfCollapsed()
                 })
@@ -136,7 +137,7 @@ struct SidebarView: View {
                         }
                     }
                 if !isCollapsed {
-                    Text(section.title)
+                    Text(LocalizedStringKey(section.title))
                         .font(.system(size: 14))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
@@ -237,7 +238,8 @@ struct SidebarView: View {
                 onOpenProductSettings: onOpenProductSettings,
                 isSettingsNavigationDisabled: isNavigationLocked,
                 onOpenAuthSettings: onOpenAuthSettings,
-                onSignOut: onSignOut
+                onSignOut: onSignOut,
+                localization: localization
             )
             .padding(.horizontal, 12)
             .padding(.top, 10)
@@ -328,6 +330,7 @@ private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
     var isSettingsNavigationDisabled = false
     var onOpenAuthSettings: (() -> Void)?
     var onSignOut: (() -> Void)?
+    var localization: LocalizationManager? = nil
 
     func makeCoordinator() -> SidebarAccountMenuModel { SidebarAccountMenuModel() }
 
@@ -359,6 +362,7 @@ private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
         model.isSettingsNavigationDisabled = isSettingsNavigationDisabled
         model.onOpenAuthSettings = onOpenAuthSettings
         model.onSignOut = onSignOut
+        model.localize = { key in localization?.localized(key) ?? key }
     }
 }
 
@@ -367,6 +371,7 @@ final class SidebarAccountMenuModel: NSObject {
     var isSettingsNavigationDisabled = false
     var onOpenAuthSettings: (() -> Void)?
     var onSignOut: (() -> Void)?
+    var localize: (String) -> String = { $0 }
 
     @objc func openProductSettings(_ sender: NSMenuItem) { onOpenProductSettings?() }
 
@@ -379,7 +384,7 @@ final class SidebarAccountMenuModel: NSObject {
         menu.autoenablesItems = false
 
         if onOpenProductSettings != nil {
-            let item = NSMenuItem(title: "Settings…", action: #selector(openProductSettings(_:)), keyEquivalent: ",")
+            let item = NSMenuItem(title: localize("Settings…"), action: #selector(openProductSettings(_:)), keyEquivalent: ",")
             item.keyEquivalentModifierMask = [.command]
             item.target = self
             item.isEnabled = !isSettingsNavigationDisabled
@@ -390,7 +395,7 @@ final class SidebarAccountMenuModel: NSObject {
         #if DEBUG
         if onOpenAuthSettings != nil {
             if !menu.items.isEmpty { menu.addItem(.separator()) }
-            let item = NSMenuItem(title: "Developer API Settings…", action: #selector(openSettings(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: localize("Developer API Settings…"), action: #selector(openSettings(_:)), keyEquivalent: "")
             item.target = self
             item.image = NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: nil)
             menu.addItem(item)
@@ -399,7 +404,7 @@ final class SidebarAccountMenuModel: NSObject {
 
         if onSignOut != nil {
             if !menu.items.isEmpty { menu.addItem(.separator()) }
-            let item = NSMenuItem(title: "Sign Out", action: #selector(signOut(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: localize("Sign Out"), action: #selector(signOut(_:)), keyEquivalent: "")
             item.target = self
             menu.addItem(item)
         }
