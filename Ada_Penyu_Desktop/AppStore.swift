@@ -3,32 +3,6 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct EscalatedNotSureCandidate: Identifiable {
-    let id: String
-    let rank: Int
-    let name: String
-    let profileCode: String
-    let side: TurtlePhotoSide
-    let sideMatches: Bool
-    let dateText: String
-    let location: String
-    let confidencePercent: Int
-    let image: NSImage?
-    let sampleImageName: String?
-    let fingerprint: I3SFingerprint?
-}
-
-struct EscalatedNotSureCase: Identifiable {
-    let id = UUID()
-    let title: String
-    let side: TurtlePhotoSide
-    let queryImage: NSImage?
-    let queryFingerprint: I3SFingerprint?
-    let queryROI: [ScalePoint]
-    let candidates: [EscalatedNotSureCandidate]
-    let createdAt = Date()
-}
-
 @MainActor
 final class AppStore: ObservableObject {
     let organizationKeySettings: OrganizationAPIKeySettings
@@ -105,7 +79,9 @@ final class AppStore: ObservableObject {
     @Published var requestedReviewScenario: ReviewScenarioID = .rankOneJunctionMismatch
     @Published var requestedReviewLayoutMode: ScientistComparisonLayoutMode = .contours
     @Published var requestedEscalatedCaseID: UUID? = nil
-    @Published var escalatedNotSureCases: [EscalatedNotSureCase] = []
+    @Published private(set) var escalatedNotSureCases: [EscalatedNotSureCase] = []
+    @Published private(set) var notSureQueueError: String?
+    @Published var isReviewPracticePresented = false
     @Published var reviewNavigationTrigger = UUID()
     @Published private(set) var apiBaseURLString: String
     @Published private(set) var isAuthenticated = false
@@ -115,6 +91,8 @@ final class AppStore: ObservableObject {
     private var client: APIClient
     private var repository: TurtleRepository
     private let dashboardLayoutStore: DashboardLayoutStore
+    private let reviewJournal: NotSureReviewJournal
+    private var loadedReviewScope: String?
     private let hasInjectedRepository: Bool
     private var hasBootstrapped = false
     private var searchTask: Task<Void, Never>?
@@ -130,12 +108,14 @@ final class AppStore: ObservableObject {
     init(
         repository: TurtleRepository? = nil,
         client: APIClient? = nil,
-        dashboardLayoutStore: DashboardLayoutStore? = nil
+        dashboardLayoutStore: DashboardLayoutStore? = nil,
+        reviewJournal: NotSureReviewJournal? = nil
     ) {
         let client = client ?? APIClient()
         self.client = client
         self.organizationKeySettings = OrganizationAPIKeySettings(client: client)
-        self.dashboardLayoutStore = dashboardLayoutStore
+        self.dashboardLayoutStore = dashboardLayoutStore ?? DashboardLayoutStore()
+        self.reviewJournal = reviewJournal ?? NotSureReviewJournal()
         self.apiBaseURLString = client.baseURL.absoluteString
         self.hasInjectedRepository = repository != nil
         self.repository = repository ?? RemoteTurtleRepository(client: client)
@@ -205,6 +185,9 @@ final class AppStore: ObservableObject {
             accountRoleLabel = client.account?.role == .ranger ? "Field Patrol Ranger" : "Organization Owner"
         }
         syncDashboardLayoutForCurrentAccount()
+        if loadedReviewScope != notSureReviewScope {
+            reloadNotSureQueue()
+        }
     }
 
     private func syncDashboardLayoutForCurrentAccount() {
@@ -257,25 +240,123 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func openNotSureReview(
-        scenario: ReviewScenarioID = .rankOneJunctionMismatch,
-        layoutMode: ScientistComparisonLayoutMode = .contours
-    ) {
-        selectedTurtle = nil
-        requestedEscalatedCaseID = nil
-        requestedReviewScenario = scenario
-        requestedReviewLayoutMode = layoutMode
+    var pendingNotSureCases: [EscalatedNotSureCase] {
+        escalatedNotSureCases.filter { $0.decision == .pending }
+    }
+
+    private var notSureReviewScope: String? {
+        if isDemoBypassActive { return demoPersona.accountStorageKey }
+        guard let account = client.account, let organization = account.organisationID else { return nil }
+        return "live|\(client.baseURL.absoluteString)|\(organization.uuidString)|\(account.id.uuidString)"
+    }
+
+    func reloadNotSureQueue() {
+        let scope = notSureReviewScope
+        if loadedReviewScope != scope {
+            escalatedNotSureCases = []
+            requestedEscalatedCaseID = nil
+            loadedReviewScope = scope
+        }
+        notSureQueueError = nil
+        guard let scope else { return }
+        do {
+            escalatedNotSureCases = try reviewJournal.load(scope: scope)
+        } catch {
+            notSureQueueError = "Could not load the reviews saved on this Mac. \(error.localizedDescription)"
+        }
+    }
+
+    func openNotSureReview(caseID: UUID? = nil) {
+        dismissDetail()
+        requestedEscalatedCaseID = caseID
         reviewNavigationTrigger = UUID()
         activeSection = .scientistReview
     }
 
-    func escalateToNotSureReview(_ item: EscalatedNotSureCase) {
-        selectedTurtle = nil
-        escalatedNotSureCases.insert(item, at: 0)
-        requestedEscalatedCaseID = item.id
-        requestedReviewLayoutMode = .contours
-        reviewNavigationTrigger = UUID()
-        activeSection = .scientistReview
+    func openNotSureReview(scenario: ReviewScenarioID, layoutMode: ScientistComparisonLayoutMode = .contours) {
+        requestedReviewScenario = scenario
+        requestedReviewLayoutMode = layoutMode
+        openNotSureReview()
+        isReviewPracticePresented = true
+    }
+
+    func escalateToNotSureReview(_ item: EscalatedNotSureCase) throws {
+        guard item.queryImage != nil else { throw NotSureReviewError.invalidPhoto }
+        if let existing = escalatedNotSureCases.first(where: {
+            $0.side == item.side && $0.isExample == item.isExample && $0.queryPhotoData == item.queryPhotoData
+        }) {
+            if existing.decision == .pending {
+                var updated = existing
+                let seen = Set(existing.candidates.map(\.id))
+                updated.candidates.append(contentsOf: item.candidates.filter { !seen.contains($0.id) })
+                try saveNotSureCase(updated)
+            }
+            openNotSureReview(caseID: existing.id)
+            return
+        }
+        try saveNotSureCase(item)
+        openNotSureReview(caseID: item.id)
+    }
+
+    func updateNotSureCase(_ id: UUID, action: NotSureReviewAction) throws {
+        guard var item = escalatedNotSureCases.first(where: { $0.id == id }) else {
+            throw NotSureReviewError.caseUnavailable
+        }
+        try item.apply(action)
+        try saveNotSureCase(item)
+    }
+
+    func findNotSureCandidates(for id: UUID) async throws {
+        guard let item = escalatedNotSureCases.first(where: { $0.id == id }) else {
+            throw NotSureReviewError.caseUnavailable
+        }
+        guard !isDemoBypassActive, !item.isExample, isAuthenticated else {
+            throw NotSureReviewError.searchUnavailable
+        }
+        guard item.decision == .pending else { throw NotSureReviewError.alreadyReviewed }
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        let result = try await matchPhoto(imageData: item.queryPhotoData, side: item.side, limit: 8)
+        var references: [EscalatedNotSureCandidate] = []
+        for candidate in result.candidates where candidate.matchedPhotoSide == item.side {
+            try Task.checkCancellation()
+            guard sessionGeneration == generation, notSureReviewScope == scope else { throw CancellationError() }
+            let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.id.uuidString)/photos/\(item.side.rawValue)"
+            let image = await loadPhoto(for: path)
+            references.append(EscalatedNotSureCandidate(id: candidate.id.uuidString, rank: candidate.rank,
+                name: candidate.name, profileCode: candidate.profileCode ?? "",
+                side: candidate.matchedPhotoSide, sideMatches: true, dateText: candidate.lastSeenDate ?? "",
+                location: candidate.lastSeenLocation ?? "", confidencePercent: candidate.confidencePercent,
+                photo: NotSureReviewPhoto(snapshot: image), sampleImageName: nil, fingerprint: nil, isBundledExample: false))
+        }
+        try Task.checkCancellation()
+        guard sessionGeneration == generation, notSureReviewScope == scope else { throw CancellationError() }
+        guard var updated = escalatedNotSureCases.first(where: { $0.id == id }), updated.decision == .pending else {
+            throw NotSureReviewError.caseUnavailable
+        }
+        // Preserve the exact reference already reviewed, and fill any missing photo from this search.
+        var merged = updated.candidates
+        for reference in references {
+            if let index = merged.firstIndex(where: { $0.id == reference.id }) {
+                if merged[index].image == nil { merged[index] = reference }
+            } else {
+                merged.append(reference)
+            }
+        }
+        updated.candidates = merged
+        try saveNotSureCase(updated)
+    }
+
+    private func saveNotSureCase(_ item: EscalatedNotSureCase) throws {
+        guard let scope = notSureReviewScope, scope == loadedReviewScope else {
+            throw NotSureReviewError.accountUnavailable
+        }
+        try reviewJournal.save(item, scope: scope)
+        if let index = escalatedNotSureCases.firstIndex(where: { $0.id == item.id }) {
+            escalatedNotSureCases[index] = item
+        } else {
+            escalatedNotSureCases.insert(item, at: 0)
+        }
     }
 
     func applyDashboardPreset(_ preset: DashboardRolePreset) {
@@ -368,6 +449,9 @@ final class AppStore: ObservableObject {
         dismissDetail()
         escalatedNotSureCases.removeAll()
         requestedEscalatedCaseID = nil
+        loadedReviewScope = nil
+        notSureQueueError = nil
+        isReviewPracticePresented = false
         isLoading = false
         lastError = nil
         let demoDataset: DemoTurtleRepository.Dataset = demoPersona == .superAsiaNetwork ? .panAsiaSuperAccount : .baliBaseline
@@ -595,8 +679,8 @@ final class AppStore: ObservableObject {
         clearPrivateState()
         isAuthenticated = false
         _ = try await client.login(email: email, password: password, rememberMe: rememberMe)
-        updateAccount()
         clearPrivateState()
+        updateAccount()
         await reloadAll()
     }
 

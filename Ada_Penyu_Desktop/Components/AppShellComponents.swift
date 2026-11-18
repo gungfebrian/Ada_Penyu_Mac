@@ -24,9 +24,11 @@ struct SidebarView: View {
     var accountName = "Researcher"
     var accountEmail = ""
     var accountOrganization = ""
+    var isDemoWorkspace = false
     var onSignOut: (() -> Void)? = nil
 
     var isCollapsed = false
+    var notSurePendingCount = 0
     var isNavigationLocked = false
     var onToggleSidebar: () -> Void = {}
     var onExpandSidebar: (() -> Void)? = nil
@@ -299,7 +301,8 @@ struct SidebarView: View {
     }
 
     private var statusLine: String {
-        accountOrganization.isEmpty ? "Live" : "\(accountOrganization) · Live"
+        let mode = isDemoWorkspace ? "Demo" : "Live"
+        return accountOrganization.isEmpty ? mode : "\(accountOrganization) · \(mode)"
     }
 
     private var accountAccessibilityLabel: String {

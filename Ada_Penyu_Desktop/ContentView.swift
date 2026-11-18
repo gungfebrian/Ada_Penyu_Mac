@@ -31,6 +31,22 @@ struct ContentView: View {
             selectedSightingID = nil
             focusedMapTurtleID = nil
         }
+        .sheet(isPresented: $store.isReviewPracticePresented) {
+            VStack(spacing: 0) {
+                HStack {
+                    Label("Practice review", systemImage: "graduationcap")
+                        .font(.headline)
+                    Text("Sample cases and simulated decisions").foregroundStyle(AdaColors.secondaryInk)
+                    Spacer()
+                    Button("Done") { store.isReviewPracticePresented = false }
+                        .keyboardShortcut(.cancelAction)
+                }
+                .padding(16)
+                .background(AdaColors.card)
+                ScientistReviewWorkspaceView(store: store)
+            }
+            .frame(minWidth: 920, minHeight: 600)
+        }
         #if DEBUG
         .sheet(isPresented: $store.isAuthSheetPresented) { BackendSettingsSheet(store: store) }
         #endif
@@ -76,8 +92,10 @@ struct ContentView: View {
                     accountName: store.accountName,
                     accountEmail: store.authEmail,
                     accountOrganization: store.accountOrganization,
+                    isDemoWorkspace: store.isDemoBypassActive,
                     onSignOut: signOutAction,
                     isCollapsed: isSidebarCollapsed,
+                    notSurePendingCount: store.pendingNotSureCases.count,
                     isNavigationLocked: store.organizationKeySettings.isChanging,
                     onToggleSidebar: toggleSidebar,
                     onExpandSidebar: { setSidebarCollapsed(false) }
@@ -170,7 +188,8 @@ struct ContentView: View {
     }
 
     private var pageTitle: String {
-        store.selectedTurtle == nil ? store.activeSection.title : (selectedSightingID == nil ? "Turtle Profile" : "Sighting Details")
+        if store.selectedTurtle != nil { return selectedSightingID == nil ? "Turtle Profile" : "Sighting Details" }
+        return store.activeSection == .scientistReview ? AppSection.individuals.title : store.activeSection.title
     }
 
     private func openMap(turtleID: String?) {
@@ -201,26 +220,30 @@ struct ContentView: View {
                     store.activeSection = .sightings
                 }, onOpenMap: { openMap(turtleID: nil) })
         case .map:
-            MapPageView(turtles: store.turtles, sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod, selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition, onReload: { Task { await store.reloadMap() } }, onSelect: store.select, focusTurtleID: focusedMapTurtleID)
+            MapPageView(turtles: store.analyticsTurtles.isEmpty ? store.turtles : store.analyticsTurtles,
+                sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod,
+                selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition,
+                onReload: { Task { await store.reloadMap() } }, onSelect: store.select,
+                focusTurtleID: focusedMapTurtleID, onOpenSighting: openSighting)
         case .individuals:
-            IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText,
-                selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
-                onToggleFavorite: store.toggleFavorite, onSelect: store.select,
-                selectedSpecies: $store.selectedSpecies, pageSize: $store.individualsPageSize,
-                offset: store.individualsOffset, isLoading: store.isIndividualsLoading,
-                onPage: { page in Task { await store.loadIndividualsPage(page) } })
-        case .sightings:
-            SightingsListView(
-                sightings: store.sightings,
-                onOpenNotSureReview: { scenario in
-                    store.openNotSureReview(scenario: scenario)
-                }
-            ) { sighting in
-                selectedSightingID = sighting.id
-                store.select(store.turtles.first { $0.id == sighting.turtleID } ?? sighting.turtleReference)
+            VStack(spacing: 0) {
+                catalogTabs
+                IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText,
+                    selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                    onToggleFavorite: store.toggleFavorite, onSelect: store.select,
+                    selectedSpecies: $store.selectedSpecies, pageSize: $store.individualsPageSize,
+                    offset: store.individualsOffset, isLoading: store.isIndividualsLoading,
+                    onPage: { page in Task { await store.loadIndividualsPage(page) } })
             }
+        case .sightings:
+            SightingsListView(sightings: store.sightings, onSelect: openSighting)
         case .scientistReview:
-            ScientistReviewWorkspaceView(store: store)
+            VStack(spacing: 0) {
+                catalogTabs
+                NotSureWorkspaceView(store: store, onOpenPractice: {
+                    store.isReviewPracticePresented = true
+                })
+            }
         case .identification:
             I3SWorkspaceView(store: store)
         case .favorites:
@@ -229,6 +252,45 @@ struct ContentView: View {
             SettingsView(store: store, model: store.organizationKeySettings)
         }
     }
+    private func openSighting(_ sighting: Sighting) {
+        selectedSightingID = sighting.id
+        store.select(store.turtles.first { $0.id == sighting.turtleID }
+            ?? store.analyticsTurtles.first { $0.id == sighting.turtleID }
+            ?? sighting.turtleReference)
+    }
+
+    private var catalogTabs: some View {
+        HStack(spacing: 18) {
+            catalogTab("Individuals", count: store.totalIndividuals, selected: store.activeSection == .individuals) {
+                store.activeSection = .individuals
+            }
+            catalogTab("Not Sure", count: store.pendingNotSureCases.count, selected: store.activeSection == .scientistReview) {
+                store.openNotSureReview()
+            }
+            Spacer()
+        }
+        .padding(.horizontal, AdaLayout.pagePadding)
+        .overlay(alignment: .bottom) { Rectangle().fill(AdaColors.line).frame(height: 1) }
+    }
+
+    private func catalogTab(_ title: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(title).font(.system(size: 13, weight: selected ? .semibold : .medium))
+                Text(count.formatted()).font(.caption.monospacedDigit()).foregroundStyle(AdaColors.secondaryInk)
+            }
+            .foregroundStyle(selected ? AdaColors.navy : AdaColors.secondaryInk)
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if selected { Rectangle().fill(AdaColors.navy).frame(height: 2) }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
 }
 
 private struct ExportSheet: View {

@@ -525,19 +525,8 @@ struct ScientistReviewWorkspaceView: View {
     @StateObject private var scaleReviews = ScaleReviewStore()
 
     @State private var studioMode: PatternStudioMode = .oneVsThree
-    @State private var activeEscalatedCaseID: UUID? = nil
-    @State private var escalatedSelectedCandID: String = ""
-    @State private var escalatedConfirmedCandID: [UUID: String] = [:]
-    @State private var escalatedRejectedCandIDs: [UUID: Set<String>] = [:]
-    @State private var escalatedUnsureSavedIDs: Set<UUID> = []
-
-    private var activeEscalatedCase: EscalatedNotSureCase? {
-        guard let id = activeEscalatedCaseID else { return nil }
-        return store?.escalatedNotSureCases.first(where: { $0.id == id })
-    }
-
     private var isStudioPrimaryMode: Bool {
-        activeEscalatedCase != nil || vm.layoutMode == .contours || vm.layoutMode == .scales
+        vm.layoutMode == .contours || vm.layoutMode == .scales
     }
 
     var body: some View {
@@ -564,7 +553,7 @@ struct ScientistReviewWorkspaceView: View {
             Divider().overlay(AdaColors.line)
 
             // Slim Right Candidate Inspector
-            slimCandidateInspector
+            bundledInspector
                 .frame(width: 252)
                 .background(AdaColors.canvas)
         }
@@ -585,23 +574,8 @@ struct ScientistReviewWorkspaceView: View {
 
     private func syncRequestedReviewState() {
         if let store {
-            if let reqID = store.requestedEscalatedCaseID,
-               let escalated = store.escalatedNotSureCases.first(where: { $0.id == reqID }) {
-                activeEscalatedCaseID = escalated.id
-                escalatedSelectedCandID = escalated.candidates.first?.id ?? ""
-                studioMode = .oneVsThree
-                vm.layoutMode = .contours
-                store.requestedEscalatedCaseID = nil
-            } else {
-                activeEscalatedCaseID = nil
-                if vm.activeScenario != store.requestedReviewScenario {
-                    vm.switchScenario(store.requestedReviewScenario)
-                }
-                vm.layoutMode = store.requestedReviewLayoutMode
-                if vm.layoutMode == .contours {
-                    studioMode = .oneVsThree
-                }
-            }
+            if vm.activeScenario != store.requestedReviewScenario { vm.switchScenario(store.requestedReviewScenario) }
+            vm.layoutMode = store.requestedReviewLayoutMode
         }
         vm.isEvidenceDrawerExpanded = false
         vm.showScaleOutlines = true
@@ -611,91 +585,38 @@ struct ScientistReviewWorkspaceView: View {
 
     // MARK: - Compact Case & View Switcher Bar
 
-    private var caseSelectionBinding: Binding<String> {
-        Binding(
-            get: {
-                if let esc = activeEscalatedCase {
-                    return "esc:\(esc.id.uuidString)"
-                }
-                return "demo:\(vm.activeScenario.rawValue)"
-            },
-            set: { next in
-                if next.hasPrefix("esc:"),
-                   let uuid = UUID(uuidString: String(next.dropFirst(4))),
-                   let escalated = store?.escalatedNotSureCases.first(where: { $0.id == uuid }) {
-                    activeEscalatedCaseID = escalated.id
-                    escalatedSelectedCandID = escalated.candidates.first?.id ?? ""
-                    studioMode = .oneVsThree
-                } else if next.hasPrefix("demo:"),
-                          let scenario = ReviewScenarioID(rawValue: String(next.dropFirst(5))) {
-                    activeEscalatedCaseID = nil
-                    vm.switchScenario(scenario)
-                    vm.showScaleOutlines = true
-                    vm.showHeadRegionOutline = true
-                }
-            }
-        )
-    }
-
     private var scenarioAndSimulationBar: some View {
         HStack(spacing: 10) {
-            Label("Not Sure Review", systemImage: "questionmark.circle")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(AdaColors.navy)
-
-            Picker("Case", selection: caseSelectionBinding) {
-                if let escalated = store?.escalatedNotSureCases, !escalated.isEmpty {
-                    Section("From I3S Queue") {
-                        ForEach(escalated) { item in
-                            Text("I3S · \(item.title)").tag("esc:\(item.id.uuidString)")
-                        }
-                    }
-                }
-                Section("Review Cases") {
-                    ForEach(ReviewScenarioID.allCases) { scenario in
-                        Text(scenario.shortTitle).tag("demo:\(scenario.rawValue)")
-                    }
+            Picker("Sample case", selection: Binding(get: { vm.activeScenario }, set: { scenario in
+                vm.switchScenario(scenario)
+                vm.showScaleOutlines = true
+                vm.showHeadRegionOutline = true
+            })) {
+                ForEach(ReviewScenarioID.allCases) { scenario in
+                    Text(scenario.shortTitle).tag(scenario)
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(maxWidth: 260)
+            .frame(maxWidth: 300)
 
-            if activeEscalatedCase != nil {
-                Picker("Studio Mode", selection: $studioMode) {
-                    ForEach(PatternStudioMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 220)
-            } else {
-                Picker("View", selection: $vm.layoutMode) {
-                    Text("Pattern 1 vs 3").tag(ScientistComparisonLayoutMode.contours)
-                    Text("Scale Manual").tag(ScientistComparisonLayoutMode.scales)
-                    Text("1:1 Photos").tag(ScientistComparisonLayoutMode.sideBySide)
-                    Text("Multi-Grid").tag(ScientistComparisonLayoutMode.multiCandidateGrid)
-                    Text("Blend").tag(ScientistComparisonLayoutMode.superimposeBlend)
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: 155)
+            Picker("View", selection: $vm.layoutMode) {
+                Text("Pattern 1 vs 3").tag(ScientistComparisonLayoutMode.contours)
+                Text("Scale Manual").tag(ScientistComparisonLayoutMode.scales)
+                Text("1:1 Photos").tag(ScientistComparisonLayoutMode.sideBySide)
+                Text("Multi-Grid").tag(ScientistComparisonLayoutMode.multiCandidateGrid)
+                Text("Blend").tag(ScientistComparisonLayoutMode.superimposeBlend)
             }
+            .frame(maxWidth: 180)
 
             Spacer(minLength: 0)
-
-            if activeEscalatedCase == nil {
-                Button {
-                    vm.resetDemo()
-                    vm.layoutMode = .contours
-                    studioMode = .oneVsThree
-                    vm.isEvidenceDrawerExpanded = false
-                } label: {
-                    Label("Reset", systemImage: "arrow.counterclockwise")
-                }
-                .controlSize(.small)
+            Button {
+                vm.resetDemo()
+                vm.layoutMode = .contours
+                studioMode = .oneVsThree
+                vm.isEvidenceDrawerExpanded = false
+            } label: {
+                Label("Reset practice", systemImage: "arrow.counterclockwise")
             }
+            .controlSize(.small)
         }
         .font(.system(size: 11))
         .padding(.horizontal, 14)
@@ -827,101 +748,33 @@ struct ScientistReviewWorkspaceView: View {
 
     private var dualComparisonCanvases: some View {
         Group {
-            if let escalated = activeEscalatedCase {
-                escalatedPatternStudio(for: escalated)
-            } else {
-                switch vm.layoutMode {
-                case .scales:
-                    ScientistScalePhotos(queryName: vm.sighting.sampleImageName, galleryName: vm.selectedCandidate.sampleImageName, store: scaleReviews)
-                case .contours:
-                    ScientistPatternStudioContainer(
-                        sighting: vm.sighting,
-                        candidates: vm.candidates,
-                        selectedCandidateIndex: $vm.selectedCandidateIndex,
-                        studioMode: $studioMode,
-                        onConfirmCandidate: { idx in
-                            vm.selectCandidate(at: idx)
-                            vm.prepareSameTurtleConfirmation()
-                        },
-                        onRejectCandidate: { idx in
-                            vm.selectCandidate(at: idx)
-                            vm.rejectSelectedCandidateAndAdvance()
-                        }
-                    )
-                case .sideBySide:
-                    sideBySideComparisonCanvas
-                case .multiCandidateGrid:
-                    multiCandidateComparisonCanvas
-                case .superimposeBlend:
-                    superimposeComparisonCanvas
-                }
+            switch vm.layoutMode {
+            case .scales:
+                ScientistScalePhotos(queryName: vm.sighting.sampleImageName, galleryName: vm.selectedCandidate.sampleImageName, store: scaleReviews)
+            case .contours:
+                ScientistPatternStudioContainer(
+                    sighting: vm.sighting,
+                    candidates: vm.candidates,
+                    selectedCandidateIndex: $vm.selectedCandidateIndex,
+                    studioMode: $studioMode,
+                    onConfirmCandidate: { idx in
+                        vm.selectCandidate(at: idx)
+                        vm.prepareSameTurtleConfirmation()
+                    },
+                    onRejectCandidate: { idx in
+                        vm.selectCandidate(at: idx)
+                        vm.rejectSelectedCandidateAndAdvance()
+                    }
+                )
+            case .sideBySide:
+                sideBySideComparisonCanvas
+            case .multiCandidateGrid:
+                multiCandidateComparisonCanvas
+            case .superimposeBlend:
+                superimposeComparisonCanvas
             }
         }
         .background(Color.black.opacity(0.92))
-    }
-
-    private func escalatedPatternStudio(for escalated: EscalatedNotSureCase) -> some View {
-        let queryTarget = PatternComparisonTarget(
-            id: "esc-q-\(escalated.id.uuidString)",
-            rank: 0,
-            title: escalated.title,
-            subtitle: "\(escalated.side.title) Query",
-            side: escalated.side,
-            sideMatches: true,
-            image: escalated.queryImage,
-            sampleEntry: nil,
-            fingerprint: escalated.queryFingerprint,
-            customROI: escalated.queryROI.count >= 3 ? escalated.queryROI : nil
-        )
-        let candidateTargets: [PatternComparisonTarget] = escalated.candidates.map { cand in
-            let sample = cand.sampleImageName.flatMap { I3SSampleLibrary.sample(forFilenameOrID: $0) }
-            let resolvedImg = cand.image ?? sample.flatMap { I3SSampleLibrary.loadImage(for: $0) }
-            return PatternComparisonTarget(
-                id: cand.id,
-                rank: cand.rank,
-                title: cand.name,
-                subtitle: "\(cand.profileCode) · \(cand.confidencePercent)%",
-                side: cand.side,
-                sideMatches: cand.sideMatches,
-                image: resolvedImg,
-                sampleEntry: sample,
-                fingerprint: cand.fingerprint,
-                customROI: nil
-            )
-        }
-        let selectedBinding = Binding<String>(
-            get: {
-                if candidateTargets.contains(where: { $0.id == escalatedSelectedCandID }) {
-                    return escalatedSelectedCandID
-                }
-                return candidateTargets.first?.id ?? ""
-            },
-            set: { escalatedSelectedCandID = $0 }
-        )
-        return PatternContourStudioView(
-            query: queryTarget,
-            candidates: candidateTargets,
-            selectedCandidateID: selectedBinding,
-            mode: $studioMode,
-            onSelectCandidateID: { escalatedSelectedCandID = $0 },
-            onConfirmCandidate: { target in
-                escalatedSelectedCandID = target.id
-                escalatedConfirmedCandID[escalated.id] = target.id
-            },
-            onRejectCandidate: { target in
-                var set = escalatedRejectedCandIDs[escalated.id] ?? []
-                set.insert(target.id)
-                escalatedRejectedCandIDs[escalated.id] = set
-                advanceEscalatedCandidate(in: escalated)
-            }
-        )
-    }
-
-    private func advanceEscalatedCandidate(in escalated: EscalatedNotSureCase) {
-        let rejected = escalatedRejectedCandIDs[escalated.id] ?? []
-        if let next = escalated.candidates.first(where: { !rejected.contains($0.id) }) {
-            escalatedSelectedCandID = next.id
-        }
     }
 
     private var sideBySideComparisonCanvas: some View {
@@ -1412,108 +1265,26 @@ struct ScientistReviewWorkspaceView: View {
 
     private var decisionActionBar: some View {
         Group {
-            if let escalated = activeEscalatedCase {
-                escalatedDecisionActionBar(for: escalated)
-            } else {
-                let cand = vm.selectedCandidate
-                HStack(spacing: 10) {
-                    Text("\(vm.sighting.sightingID) vs #\(cand.rank) \(cand.displayName)")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(AdaColors.ink)
-                        .lineLimit(1)
-
-                    if let outcome = vm.currentOutcome {
-                        Text(outcome.resolution == .linkedToExisting ? "Confirmed" : "Saved Unsure")
-                            .font(.system(size: 10.5, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(outcome.resolution == .linkedToExisting ? AdaColors.green : AdaColors.orange, in: Capsule())
-                    }
-
-                    Spacer()
-
-                    Button {
-                        vm.prepareSameTurtleConfirmation()
-                    } label: {
-                        Label("Same Turtle", systemImage: "checkmark.circle.fill")
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 14)
-                            .frame(height: 30)
-                            .background(AdaColors.green, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        vm.rejectSelectedCandidateAndAdvance()
-                    } label: {
-                        Label("Different", systemImage: "xmark.circle.fill")
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 14)
-                            .frame(height: 30)
-                            .background(AdaColors.red, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        vm.prepareUnsureSheet()
-                    } label: {
-                        Label("Unsure…", systemImage: "questionmark.circle")
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(AdaColors.ink)
-                            .padding(.horizontal, 14)
-                            .frame(height: 30)
-                            .background(AdaColors.canvas, in: Capsule())
-                            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(AdaColors.card)
-            }
-        }
-    }
-
-    private func escalatedDecisionActionBar(for escalated: EscalatedNotSureCase) -> some View {
-        let selected = escalated.candidates.first(where: { $0.id == escalatedSelectedCandID }) ?? escalated.candidates.first
-        let confirmedID = escalatedConfirmedCandID[escalated.id]
-        let isUnsure = escalatedUnsureSavedIDs.contains(escalated.id)
-        return HStack(spacing: 10) {
-            if let selected {
-                Text("\(escalated.title) vs #\(selected.rank) \(selected.name)")
+            let cand = vm.selectedCandidate
+            HStack(spacing: 10) {
+                Text("\(vm.sighting.sightingID) vs #\(cand.rank) \(cand.displayName)")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(AdaColors.ink)
                     .lineLimit(1)
-            } else {
-                Text(escalated.title)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AdaColors.ink)
-            }
 
-            if confirmedID != nil {
-                Text("Match Confirmed")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(AdaColors.green, in: Capsule())
-            } else if isUnsure {
-                Text("Held in Unsure")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(AdaColors.ink)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(AdaColors.orange.opacity(0.8), in: Capsule())
-            }
+                if let outcome = vm.currentOutcome {
+                    Text(outcome.resolution == .linkedToExisting ? "Confirmed" : "Saved Unsure")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(outcome.resolution == .linkedToExisting ? AdaColors.green : AdaColors.orange, in: Capsule())
+                }
 
-            Spacer()
+                Spacer()
 
-            if let selected {
                 Button {
-                    escalatedConfirmedCandID[escalated.id] = selected.id
+                    vm.prepareSameTurtleConfirmation()
                 } label: {
                     Label("Same Turtle", systemImage: "checkmark.circle.fill")
                         .font(.system(size: 11.5, weight: .semibold))
@@ -1525,10 +1296,7 @@ struct ScientistReviewWorkspaceView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    var set = escalatedRejectedCandIDs[escalated.id] ?? []
-                    set.insert(selected.id)
-                    escalatedRejectedCandIDs[escalated.id] = set
-                    advanceEscalatedCandidate(in: escalated)
+                    vm.rejectSelectedCandidateAndAdvance()
                 } label: {
                     Label("Different", systemImage: "xmark.circle.fill")
                         .font(.system(size: 11.5, weight: .semibold))
@@ -1538,152 +1306,24 @@ struct ScientistReviewWorkspaceView: View {
                         .background(AdaColors.red, in: Capsule())
                 }
                 .buttonStyle(.plain)
-            }
 
-            Button {
-                escalatedUnsureSavedIDs.insert(escalated.id)
-            } label: {
-                Label("Keep Unsure", systemImage: "questionmark.circle")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(AdaColors.ink)
-                    .padding(.horizontal, 14)
-                    .frame(height: 30)
-                    .background(AdaColors.canvas, in: Capsule())
-                    .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(AdaColors.card)
-    }
-
-    // MARK: - Slim Right Candidate Inspector
-
-    private var slimCandidateInspector: some View {
-        Group {
-            if let escalated = activeEscalatedCase {
-                escalatedInspector(for: escalated)
-            } else {
-                bundledInspector
-            }
-        }
-    }
-
-    private func escalatedInspector(for escalated: EscalatedNotSureCase) -> some View {
-        let rejected = escalatedRejectedCandIDs[escalated.id] ?? []
-        let confirmed = escalatedConfirmedCandID[escalated.id]
-        let activeID = escalated.candidates.contains(where: { $0.id == escalatedSelectedCandID })
-            ? escalatedSelectedCandID
-            : (escalated.candidates.first?.id ?? "")
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                if let qImg = escalated.queryImage {
-                    Image(nsImage: qImg)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 48, height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(escalated.title)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(AdaColors.ink)
-                        .lineLimit(1)
-                    Text(escalated.side.title)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(AdaColors.navy)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(AdaColors.card, in: Capsule())
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-            HStack {
-                Text("Candidates (\(escalated.candidates.count))")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AdaColors.ink)
-                Spacer()
                 Button {
-                    studioMode = studioMode == .oneVsThree ? .oneToOne : .oneVsThree
+                    vm.prepareUnsureSheet()
                 } label: {
-                    Text(studioMode == .oneVsThree ? "Focus 1:1" : "1 vs 3")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 9)
-                        .frame(height: 22)
-                        .background(AdaColors.navy, in: Capsule())
+                    Label("Unsure…", systemImage: "questionmark.circle")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(AdaColors.ink)
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                        .background(AdaColors.canvas, in: Capsule())
+                        .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
             }
-
-            ScrollView {
-                VStack(spacing: 8) {
-                    ForEach(escalated.candidates) { item in
-                        let isSelected = item.id == activeID
-                        let isRejected = rejected.contains(item.id)
-                        let isConfirmed = confirmed == item.id
-                        let thumb = item.image ?? item.sampleImageName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
-                        Button {
-                            escalatedSelectedCandID = item.id
-                        } label: {
-                            HStack(spacing: 8) {
-                                if let thumb {
-                                    Image(nsImage: thumb)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 44, height: 44)
-                                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                                }
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack(spacing: 4) {
-                                        Text("#\(item.rank)")
-                                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                                            .foregroundStyle(isSelected ? .white : AdaColors.ink)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 1)
-                                            .background(isSelected ? AdaColors.navy : AdaColors.canvas, in: Capsule())
-                                        Text(item.name)
-                                            .font(.system(size: 12, weight: .bold))
-                                            .foregroundStyle(AdaColors.ink)
-                                            .lineLimit(1)
-                                        Spacer()
-                                        Text("\(item.confidencePercent)%")
-                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                            .foregroundStyle(AdaColors.secondaryInk)
-                                    }
-                                    HStack {
-                                        Text("\(item.side.title) · \(item.dateText)")
-                                            .font(.system(size: 10.5))
-                                            .foregroundStyle(AdaColors.secondaryInk)
-                                            .lineLimit(1)
-                                        Spacer()
-                                        if isConfirmed {
-                                            Text("Same").font(.system(size: 10, weight: .bold)).foregroundStyle(AdaColors.green)
-                                        } else if isRejected {
-                                            Text("Diff").font(.system(size: 10, weight: .bold)).foregroundStyle(AdaColors.red)
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(8)
-                            .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(isSelected ? AdaColors.navy : AdaColors.line, lineWidth: isSelected ? 2 : 1)
-                            )
-                            .opacity(isRejected ? 0.55 : 1.0)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(AdaColors.card)
         }
-        .padding(10)
     }
 
     private var bundledInspector: some View {

@@ -454,18 +454,8 @@ private struct DashboardWidgetGrid: View {
                     onShowSightings: onShowSightings
                 )
             case .notSureQueue:
-                FigCraftNotSureQueueWidget(
-                    escalatedCases: store.escalatedNotSureCases,
-                    onOpenScenario: { scenario, mode in
-                        store.openNotSureReview(scenario: scenario, layoutMode: mode)
-                    },
-                    onOpenEscalatedCase: { esc in
-                        store.requestedEscalatedCaseID = esc.id
-                        store.requestedReviewLayoutMode = .contours
-                        store.reviewNavigationTrigger = UUID()
-                        store.activeSection = .scientistReview
-                    }
-                )
+                FigCraftNotSureQueueWidget(cases: store.pendingNotSureCases,
+                    queueError: store.notSureQueueError, onOpen: store.openNotSureReview(caseID:))
             case .sightingsTrend:
                 FigCraftTrendWidget(snapshot: snapshot)
             case .geographicMap:
@@ -1105,143 +1095,47 @@ private struct FigCraftHotspotsWidget: View {
 }
 
 private struct FigCraftNotSureQueueWidget: View {
-    var escalatedCases: [EscalatedNotSureCase] = []
-    let onOpenScenario: (ReviewScenarioID, ScientistComparisonLayoutMode) -> Void
-    var onOpenEscalatedCase: ((EscalatedNotSureCase) -> Void)? = nil
-
-    private struct NotSureQueueRowItem: Identifiable {
-        let id: String
-        let title: String
-        let subtitle: String
-        let badge: String
-        let sampleImageName: String?
-        let customImage: NSImage?
-        let scenario: ReviewScenarioID?
-        let escalated: EscalatedNotSureCase?
-        let layoutMode: ScientistComparisonLayoutMode
-    }
-
-    private var rows: [NotSureQueueRowItem] {
-        var list: [NotSureQueueRowItem] = escalatedCases.prefix(2).map { esc in
-            NotSureQueueRowItem(
-                id: "esc-\(esc.id.uuidString)",
-                title: "\(esc.title) · \(esc.side.title)",
-                subtitle: "Escalated from I3S · \(esc.candidates.count) candidates",
-                badge: "Scale Mesh",
-                sampleImageName: nil,
-                customImage: esc.queryImage,
-                scenario: nil,
-                escalated: esc,
-                layoutMode: .contours
-            )
-        }
-        let defaults: [NotSureQueueRowItem] = [
-            NotSureQueueRowItem(
-                id: "SGT-2026-1109",
-                title: "SGT-2026-1109 · Green turtle (L)",
-                subtitle: "Crystal Bay · Rank #1 vs #2 (84% vs 79%)",
-                badge: "1 vs 3 Mesh",
-                sampleImageName: "Amina3_L.jpg",
-                customImage: nil,
-                scenario: .rankOneJunctionMismatch,
-                escalated: nil,
-                layoutMode: .contours
-            ),
-            NotSureQueueRowItem(
-                id: "SGT-2026-1110",
-                title: "SGT-2026-1110 · Hawksbill (R)",
-                subtitle: "Jemeluk Wall · Specular glare review",
-                badge: "Glare Review",
-                sampleImageName: "Zizo1_R.jpg",
-                customImage: nil,
-                scenario: .glareOcclusionUnsure,
-                escalated: nil,
-                layoutMode: .contours
-            ),
-            NotSureQueueRowItem(
-                id: "SCALE-REVIEW-001",
-                title: "Turtle #001 · Amina",
-                subtitle: "Kuta Beach · Suture mesh verification",
-                badge: "Scales",
-                sampleImageName: "Amina1_L.jpg",
-                customImage: nil,
-                scenario: .rankOneJunctionMismatch,
-                escalated: nil,
-                layoutMode: .scales
-            ),
-        ]
-        list.append(contentsOf: defaults)
-        return Array(list.prefix(3))
-    }
+    let cases: [EscalatedNotSureCase]
+    let queueError: String?
+    let onOpen: (UUID?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
-                SectionTitle(
-                    "Not Sure review queue",
-                    subtitle: "Flagged for pattern & scale mesh check"
-                )
+                SectionTitle("Not Sure review queue", subtitle: "\(cases.count) pending on this Mac")
                 Spacer()
-                Button("Open review  →") {
-                    if let firstEsc = escalatedCases.first {
-                        onOpenEscalatedCase?(firstEsc)
-                    } else {
-                        onOpenScenario(.rankOneJunctionMismatch, .contours)
-                    }
-                }
-                .buttonStyle(AdaPillButtonStyle())
+                Button("Open queue") { onOpen(nil) }
+                    .buttonStyle(AdaPillButtonStyle())
             }
 
-            VStack(spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    if index > 0 {
-                        Divider()
-                    }
+            if let queueError {
+                Text(queueError).font(.callout).foregroundStyle(AdaColors.secondaryInk)
+            } else if cases.isEmpty {
+                Label("Photos sent from Photo ID will appear here.", systemImage: "tray")
+                    .font(.callout).foregroundStyle(AdaColors.secondaryInk)
+                    .padding(.vertical, 18)
+            } else {
+                ForEach(cases.prefix(3)) { item in
                     Button {
-                        if let esc = row.escalated {
-                            onOpenEscalatedCase?(esc)
-                        } else if let scenario = row.scenario {
-                            onOpenScenario(scenario, row.layoutMode)
-                        }
+                        onOpen(item.id)
                     } label: {
                         HStack(spacing: 12) {
-                            if let image = row.customImage ?? row.sampleImageName.flatMap({ I3SSampleLibrary.loadImage(named: $0) }) {
-                                Image(nsImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 34, height: 34)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            if let image = item.queryImage {
+                                Image(nsImage: image).resizable().scaledToFill()
+                                    .frame(width: 38, height: 38).clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
                             } else {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(AdaColors.canvas)
-                                    .frame(width: 34, height: 34)
+                                Image(systemName: "photo").frame(width: 38, height: 38)
                             }
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(row.title)
-                                    .font(.system(size: 11.5, weight: .semibold))
-                                    .foregroundStyle(AdaColors.ink)
-                                    .lineLimit(1)
-                                Text(row.subtitle)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(AdaColors.secondaryInk)
-                                    .lineLimit(1)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.title).font(.callout.weight(.semibold)).lineLimit(1)
+                                Text(item.isExample ? "Sample review" : item.side.title)
+                                    .font(.caption).foregroundStyle(AdaColors.secondaryInk)
                             }
-
                             Spacer(minLength: 8)
-
-                            Text(row.badge)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(AdaColors.navy)
-                                .padding(.horizontal, 10)
-                                .frame(height: 22)
-                                .background(AdaColors.canvas, in: Capsule())
-
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(AdaColors.secondaryInk)
+                            Image(systemName: "chevron.right").font(.caption)
                         }
-                        .padding(.vertical, 9)
+                        .padding(.vertical, 4)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
