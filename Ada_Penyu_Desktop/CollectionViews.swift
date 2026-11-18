@@ -23,10 +23,7 @@ struct IndividualsView: View {
                 HStack(spacing: 28) {
                     Text("Individuals  \(total)").font(.system(size: 13, weight: .semibold))
                         .padding(.vertical, 12).overlay(alignment: .bottom) { Rectangle().fill(AdaColors.navy).frame(height: 2) }
-                    Text("Not Sure").font(.system(size: 13)).foregroundStyle(AdaColors.secondaryInk)
-                        .help("The review queue is not available from the current API.")
                     Spacer()
-                    Text("Review queue unavailable").font(.system(size: 10)).foregroundStyle(AdaColors.secondaryInk)
                 }
                 .overlay(alignment: .bottom) { Rectangle().fill(AdaColors.line).frame(height: 1) }
                 ViewThatFits(in: .horizontal) {
@@ -242,7 +239,7 @@ struct SightingsListView: View {
                         HStack {
                             SectionTitle(
                                 "Pending 'Not Sure' review",
-                                subtitle: "2 ranger encounters marked 'Not Sure' · mock scale & junction annotations ready"
+                                subtitle: "Encounters flagged for pattern & scale mesh check"
                             )
                             Spacer()
                             Button("Open Review Workspace  →") {
@@ -317,10 +314,10 @@ struct SightingsListView: View {
                         .foregroundStyle(AdaColors.ink)
                     Text("Not Sure · \(side)")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(AdaColors.orange)
+                        .foregroundStyle(AdaColors.navy)
                         .padding(.horizontal, 8)
                         .frame(height: 20)
-                        .background(AdaColors.orange.opacity(0.14), in: Capsule())
+                        .background(.white, in: Capsule())
                     Spacer()
                     Image(systemName: "arrow.right")
                         .font(.system(size: 11, weight: .semibold))

@@ -83,7 +83,7 @@ struct DashboardView: View {
                         )
                     }
 
-                    Label("Organization records · summary covers the last 12 months", systemImage: "info.circle")
+                    Label("Organization summary · last 12 months", systemImage: "info.circle")
                         .font(.system(size: 10))
                         .foregroundStyle(AdaColors.secondaryInk)
                 }
@@ -136,7 +136,19 @@ private struct iOSEditModeBar: View {
 
             Spacer()
 
-            Text("Drag widgets to reorder")
+            Button {
+                store.isWidgetPickerPresented = true
+            } label: {
+                Label("Add Widget", systemImage: "plus")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .frame(height: 32)
+                    .background(AdaColors.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Text("Drag cards to reorder")
                 .font(.system(size: 11))
                 .foregroundStyle(AdaColors.secondaryInk)
         }
@@ -345,10 +357,11 @@ private struct DashboardWidgetGrid: View {
                     if containerWidth >= 1000 {
                         HStack(alignment: .top, spacing: 24) {
                             widgetView(for: leftItem)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             widgetView(for: rightItem)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         }
+                        .fixedSize(horizontal: false, vertical: true)
                     } else {
                         VStack(spacing: 24) {
                             widgetView(for: leftItem)
@@ -362,13 +375,13 @@ private struct DashboardWidgetGrid: View {
                             widgetView(for: item)
                                 .frame(maxWidth: .infinity, alignment: .topLeading)
                             SunkenWidgetSlotWell(
-                                height: 245,
+                                height: 268,
                                 label: "Empty Widget Slot",
                                 subtitle: "Click to add a widget next to \(item.kind.title)"
                             ) {
                                 store.isWidgetPickerPresented = true
                             }
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         }
                     } else {
                         widgetView(for: item)
@@ -442,11 +455,15 @@ private struct DashboardWidgetGrid: View {
                 )
             case .notSureQueue:
                 FigCraftNotSureQueueWidget(
+                    escalatedCases: store.escalatedNotSureCases,
                     onOpenScenario: { scenario, mode in
                         store.openNotSureReview(scenario: scenario, layoutMode: mode)
                     },
-                    onOpenIdentification: {
-                        store.activeSection = .identification
+                    onOpenEscalatedCase: { esc in
+                        store.requestedEscalatedCaseID = esc.id
+                        store.requestedReviewLayoutMode = .contours
+                        store.reviewNavigationTrigger = UUID()
+                        store.activeSection = .scientistReview
                     }
                 )
             case .sightingsTrend:
@@ -572,6 +589,7 @@ private struct iOSWidgetContainer<Content: View>: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .scaleEffect(isEditing ? 0.988 : 1.0)
                 .shadow(
                     color: Color.black.opacity(isEditing ? 0.08 : 0.0),
@@ -695,7 +713,7 @@ private struct FigCraftSummaryWidget: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Observed turtles").font(.system(size: 17))
                         Text(metrics.observed.formatted()).font(.system(size: 38, weight: .medium)).monospacedDigit()
-                        Text("Unique individuals in the summary").font(.system(size: 10)).foregroundStyle(.white.opacity(0.7))
+                        Text("Unique individuals in this period").font(.system(size: 10)).foregroundStyle(.white.opacity(0.7))
                         Button("View all turtles  →", action: onBrowseTurtles).buttonStyle(SummaryButtonStyle())
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -708,9 +726,9 @@ private struct FigCraftSummaryWidget: View {
             .background(AdaColors.navy, in: RoundedRectangle(cornerRadius: AdaLayout.cardRadius))
 
             VStack(alignment: .leading, spacing: 10) {
-                Label("Recorded sightings", systemImage: "binoculars").font(.system(size: 16))
+                Label("Confirmed sightings", systemImage: "binoculars").font(.system(size: 16))
                 Text(metrics.sightings.formatted()).font(.system(size: 38, weight: .medium)).monospacedDigit()
-                Text("All records in the summary").font(.system(size: 10)).foregroundStyle(.white.opacity(0.7))
+                Text("All confirmed encounters").font(.system(size: 10)).foregroundStyle(.white.opacity(0.7))
                 Button("View sightings  →", action: onShowSightings).buttonStyle(SummaryButtonStyle())
             }
             .padding(22)
@@ -722,8 +740,8 @@ private struct FigCraftSummaryWidget: View {
 
     private func subsets(_ metrics: DashboardMetrics) -> some View {
         HStack(spacing: 16) {
-            subset(title: "First recorded", value: metrics.firstRecorded.formatted(), subtitle: "Reported new individuals", icon: "calendar")
-            subset(title: "Seen again", value: metrics.seenAgain.map { $0.formatted() } ?? "—", subtitle: "Count unavailable for this period", icon: "arrow.clockwise")
+            subset(title: "First recorded", value: metrics.firstRecorded.formatted(), subtitle: "First record in this period", icon: "calendar")
+            subset(title: "Seen again", value: metrics.seenAgain.map { $0.formatted() } ?? "—", subtitle: "Recorded before this period", icon: "arrow.clockwise")
         }
         .frame(maxWidth: .infinity)
     }
@@ -761,7 +779,7 @@ private struct FigCraftTrendWidget: View {
             SightingsLineChart(months: snapshot.months).frame(height: 150)
             Text("Counts reflect recorded sightings.").font(.system(size: 9)).foregroundStyle(AdaColors.secondaryInk)
         }
-        .frame(maxWidth: .infinity, minHeight: 245, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 268, maxHeight: .infinity, alignment: .topLeading)
         .adaCard(padding: 22)
     }
 }
@@ -773,7 +791,7 @@ private struct FigCraftGeographicWidget: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
-                SectionTitle("Where turtles were observed", subtitle: "Map records · current map filters")
+                SectionTitle("Where turtles were observed", subtitle: "Select a sighting to highlight the same turtle")
                 Spacer(minLength: 8)
                 Button("Open map  →", action: onOpenMap).buttonStyle(AdaPillButtonStyle())
             }
@@ -784,7 +802,7 @@ private struct FigCraftGeographicWidget: View {
                 .font(.system(size: 9))
                 .foregroundStyle(AdaColors.secondaryInk)
         }
-        .frame(maxWidth: .infinity, minHeight: 245, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 268, maxHeight: .infinity, alignment: .topLeading)
         .adaCard(padding: 22)
     }
 }
@@ -807,10 +825,12 @@ private struct FigCraftRecentResightingsWidget: View {
                 ContentUnavailableView("No resightings in this range", systemImage: "tortoise", description: Text("A turtle needs two recorded encounters to appear here."))
                     .frame(maxWidth: .infinity, minHeight: 160)
             } else {
-                HStack {
+                HStack(spacing: 8) {
                     Text("Turtle").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Previous").frame(width: 90, alignment: .leading)
-                    Text("Latest location").frame(width: 110, alignment: .leading)
+                    Text("Species").frame(width: 82, alignment: .leading)
+                    Text("Previous").frame(width: 72, alignment: .leading)
+                    Text("Latest location").frame(width: 105, alignment: .leading)
+                    Text("Latest").frame(width: 72, alignment: .trailing)
                 }
                 .font(.system(size: 10))
                 .foregroundStyle(AdaColors.secondaryInk)
@@ -820,21 +840,38 @@ private struct FigCraftRecentResightingsWidget: View {
                     Button {
                         onSelect(turtles.first { $0.id == row.latest.turtleID } ?? row.latest.turtleReference)
                     } label: {
-                        HStack(spacing: 10) {
-                            TurtlePhoto(paths: turtles.first { $0.id == row.latest.turtleID }?.identityPhotoPaths ?? [], size: 30)
-                            Text(row.latest.displayName).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                            Text(row.previous.date).frame(width: 90, alignment: .leading)
-                            Text(row.latest.location).lineLimit(1).frame(width: 110, alignment: .leading)
+                        HStack(spacing: 8) {
+                            HStack(spacing: 8) {
+                                TurtlePhoto(paths: turtles.first { $0.id == row.latest.turtleID }?.identityPhotoPaths ?? [], size: 28)
+                                Text(row.latest.displayName).lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(row.latest.species.rawValue)
+                                .lineLimit(1)
+                                .foregroundStyle(AdaColors.secondaryInk)
+                                .frame(width: 82, alignment: .leading)
+                            Text(row.previous.date)
+                                .lineLimit(1)
+                                .foregroundStyle(AdaColors.secondaryInk)
+                                .frame(width: 72, alignment: .leading)
+                            Text(row.latest.location)
+                                .lineLimit(1)
+                                .frame(width: 105, alignment: .leading)
+                            Text(row.latest.date)
+                                .lineLimit(1)
+                                .foregroundStyle(AdaColors.secondaryInk)
+                                .frame(width: 72, alignment: .trailing)
                         }
-                        .font(.system(size: 11))
-                        .frame(minHeight: 32)
+                        .font(.system(size: 10.5))
+                        .frame(minHeight: 30)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 245, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 268, maxHeight: .infinity, alignment: .topLeading)
         .adaCard(padding: 22)
     }
 }
@@ -892,7 +929,7 @@ private struct FigCraftSpeciesWidget: View {
                     .font(.system(size: 16, weight: .semibold))
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 245, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 268, maxHeight: .infinity, alignment: .topLeading)
         .adaCard(padding: 22)
     }
 }
@@ -1068,91 +1105,121 @@ private struct FigCraftHotspotsWidget: View {
 }
 
 private struct FigCraftNotSureQueueWidget: View {
+    var escalatedCases: [EscalatedNotSureCase] = []
     let onOpenScenario: (ReviewScenarioID, ScientistComparisonLayoutMode) -> Void
-    let onOpenIdentification: () -> Void
+    var onOpenEscalatedCase: ((EscalatedNotSureCase) -> Void)? = nil
 
     private struct NotSureQueueRowItem: Identifiable {
         let id: String
         let title: String
         let subtitle: String
         let badge: String
-        let badgeTint: Color
-        let sampleImageName: String
-        let scenario: ReviewScenarioID
+        let sampleImageName: String?
+        let customImage: NSImage?
+        let scenario: ReviewScenarioID?
+        let escalated: EscalatedNotSureCase?
         let layoutMode: ScientistComparisonLayoutMode
     }
 
-    private let items: [NotSureQueueRowItem] = [
-        NotSureQueueRowItem(
-            id: "SGT-2026-1109",
-            title: "SGT-2026-1109 · Green turtle (L)",
-            subtitle: "Crystal Bay · Rank #1 vs #2 (84% vs 79%)",
-            badge: "Not Sure · 6 Junctions",
-            badgeTint: AdaColors.orange,
-            sampleImageName: "Amina3_L.jpg",
-            scenario: .rankOneJunctionMismatch,
-            layoutMode: .sideBySide
-        ),
-        NotSureQueueRowItem(
-            id: "SGT-2026-1110",
-            title: "SGT-2026-1110 · Hawksbill (R)",
-            subtitle: "Jemeluk Wall · Specular glare over J2–J4",
-            badge: "Not Sure · Glare",
-            badgeTint: AdaColors.red,
-            sampleImageName: "Zizo1_R.jpg",
-            scenario: .glareOcclusionUnsure,
-            layoutMode: .sideBySide
-        ),
-        NotSureQueueRowItem(
-            id: "SCALE-REVIEW-001",
-            title: "Scale Polygon Review · Turtle #001 (Amina)",
-            subtitle: "Kuta Beach · 12 mock cheek scales (8 confirmed, 4 pending)",
-            badge: "Numbered Scales",
-            badgeTint: AdaColors.navy,
-            sampleImageName: "Amina1_L.jpg",
-            scenario: .rankOneJunctionMismatch,
-            layoutMode: .scales
-        ),
-    ]
+    private var rows: [NotSureQueueRowItem] {
+        var list: [NotSureQueueRowItem] = escalatedCases.prefix(2).map { esc in
+            NotSureQueueRowItem(
+                id: "esc-\(esc.id.uuidString)",
+                title: "\(esc.title) · \(esc.side.title)",
+                subtitle: "Escalated from I3S · \(esc.candidates.count) candidates",
+                badge: "Scale Mesh",
+                sampleImageName: nil,
+                customImage: esc.queryImage,
+                scenario: nil,
+                escalated: esc,
+                layoutMode: .contours
+            )
+        }
+        let defaults: [NotSureQueueRowItem] = [
+            NotSureQueueRowItem(
+                id: "SGT-2026-1109",
+                title: "SGT-2026-1109 · Green turtle (L)",
+                subtitle: "Crystal Bay · Rank #1 vs #2 (84% vs 79%)",
+                badge: "1 vs 3 Mesh",
+                sampleImageName: "Amina3_L.jpg",
+                customImage: nil,
+                scenario: .rankOneJunctionMismatch,
+                escalated: nil,
+                layoutMode: .contours
+            ),
+            NotSureQueueRowItem(
+                id: "SGT-2026-1110",
+                title: "SGT-2026-1110 · Hawksbill (R)",
+                subtitle: "Jemeluk Wall · Specular glare review",
+                badge: "Glare Review",
+                sampleImageName: "Zizo1_R.jpg",
+                customImage: nil,
+                scenario: .glareOcclusionUnsure,
+                escalated: nil,
+                layoutMode: .contours
+            ),
+            NotSureQueueRowItem(
+                id: "SCALE-REVIEW-001",
+                title: "Turtle #001 · Amina",
+                subtitle: "Kuta Beach · Suture mesh verification",
+                badge: "Scales",
+                sampleImageName: "Amina1_L.jpg",
+                customImage: nil,
+                scenario: .rankOneJunctionMismatch,
+                escalated: nil,
+                layoutMode: .scales
+            ),
+        ]
+        list.append(contentsOf: defaults)
+        return Array(list.prefix(3))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 SectionTitle(
                     "Not Sure review queue",
-                    subtitle: "Encounters flagged 'Not Sure' · mock scale & junction annotations ready"
+                    subtitle: "Flagged for pattern & scale mesh check"
                 )
                 Spacer()
                 Button("Open review  →") {
-                    onOpenScenario(.rankOneJunctionMismatch, .sideBySide)
+                    if let firstEsc = escalatedCases.first {
+                        onOpenEscalatedCase?(firstEsc)
+                    } else {
+                        onOpenScenario(.rankOneJunctionMismatch, .contours)
+                    }
                 }
                 .buttonStyle(AdaPillButtonStyle())
             }
 
             VStack(spacing: 0) {
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, row in
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     if index > 0 {
                         Divider()
                     }
                     Button {
-                        onOpenScenario(row.scenario, row.layoutMode)
+                        if let esc = row.escalated {
+                            onOpenEscalatedCase?(esc)
+                        } else if let scenario = row.scenario {
+                            onOpenScenario(scenario, row.layoutMode)
+                        }
                     } label: {
                         HStack(spacing: 12) {
-                            if let image = I3SSampleLibrary.loadImage(named: row.sampleImageName) {
+                            if let image = row.customImage ?? row.sampleImageName.flatMap({ I3SSampleLibrary.loadImage(named: $0) }) {
                                 Image(nsImage: image)
                                     .resizable()
                                     .scaledToFill()
-                                    .frame(width: 38, height: 38)
-                                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                    .frame(width: 34, height: 34)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             } else {
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .fill(AdaColors.canvas)
-                                    .frame(width: 38, height: 38)
+                                    .frame(width: 34, height: 34)
                             }
 
-                            VStack(alignment: .leading, spacing: 3) {
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(row.title)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 11.5, weight: .semibold))
                                     .foregroundStyle(AdaColors.ink)
                                     .lineLimit(1)
                                 Text(row.subtitle)
@@ -1164,11 +1231,11 @@ private struct FigCraftNotSureQueueWidget: View {
                             Spacer(minLength: 8)
 
                             Text(row.badge)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(row.badgeTint)
-                                .padding(.horizontal, 9)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(AdaColors.navy)
+                                .padding(.horizontal, 10)
                                 .frame(height: 22)
-                                .background(row.badgeTint.opacity(0.13), in: Capsule())
+                                .background(AdaColors.canvas, in: Capsule())
 
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 10, weight: .semibold))
@@ -1180,8 +1247,9 @@ private struct FigCraftNotSureQueueWidget: View {
                     .buttonStyle(.plain)
                 }
             }
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, minHeight: 245, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 268, maxHeight: .infinity, alignment: .topLeading)
         .adaCard(padding: 22)
     }
 }
@@ -1194,50 +1262,74 @@ private struct FigCraftPhotoIDWidget: View {
 
     var body: some View {
         let cov = analytics.photoCoverage
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
-                SectionTitle("Photo-ID coverage", subtitle: "Same-side scale verification readiness")
+                SectionTitle("Photo-ID coverage", subtitle: "Same-side facial photo completeness")
                 Spacer()
-                HStack(spacing: 6) {
-                    Button("Scale Review  →", action: onOpenScientistReview).buttonStyle(AdaPillButtonStyle())
-                    Button("I3S", action: onOpenIdentification).buttonStyle(AdaPillButtonStyle(secondary: true))
-                }
+                Button("Review  →", action: onOpenScientistReview)
+                    .buttonStyle(AdaPillButtonStyle())
             }
 
-            HStack(spacing: 12) {
-                PhotoStatTile(title: "Dual-side", value: "\(cov.bothSidesCount)", tint: AdaColors.green)
-                PhotoStatTile(title: "Left only", value: "\(cov.leftOnlyCount)", tint: AdaColors.orange)
-                PhotoStatTile(title: "Right only", value: "\(cov.rightOnlyCount)", tint: AdaColors.orange)
-                PhotoStatTile(title: "Missing", value: "\(cov.missingBothCount)", tint: AdaColors.red)
+            HStack(spacing: 10) {
+                PhotoStatTile(title: "Dual-side", value: "\(cov.bothSidesCount)")
+                PhotoStatTile(title: "Left only", value: "\(cov.leftOnlyCount)")
+                PhotoStatTile(title: "Right only", value: "\(cov.rightOnlyCount)")
+                PhotoStatTile(title: "Missing", value: "\(cov.missingBothCount)")
             }
 
             if cov.incompleteIndividuals.isEmpty {
-                Text("All catalogued individuals have both Left and Right identity photos.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(AdaColors.secondaryInk)
-                    .padding(.top, 8)
+                HStack {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(AdaColors.navy)
+                    Text("All \(cov.totalCount) catalogued turtles have Left & Right photos.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                }
+                .padding(.top, 4)
             } else {
-                ForEach(cov.incompleteIndividuals.prefix(2)) { entry in
-                    Divider()
-                    Button {
-                        onSelectTurtle(entry.turtle)
-                    } label: {
-                        HStack {
-                            Text(entry.turtle.displayName).font(.system(size: 11, weight: .medium)).foregroundStyle(AdaColors.ink)
-                            Spacer()
-                            Text(entry.missingDescription)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(AdaColors.orange)
-                                .padding(.horizontal, 8)
-                                .frame(height: 20)
-                                .background(AdaColors.orange.opacity(0.14), in: Capsule())
+                VStack(spacing: 0) {
+                    ForEach(Array(cov.incompleteIndividuals.prefix(2).enumerated()), id: \.element.id) { idx, entry in
+                        Divider()
+                        Button {
+                            onSelectTurtle(entry.turtle)
+                        } label: {
+                            HStack(spacing: 10) {
+                                TurtlePhoto(paths: entry.turtle.identityPhotoPaths, size: 28)
+                                Text(entry.turtle.displayName)
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .foregroundStyle(AdaColors.ink)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(entry.missingDescription)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(AdaColors.navy)
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 22)
+                                    .background(AdaColors.canvas, in: Capsule())
+                            }
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
+
+            Spacer(minLength: 0)
+            Divider()
+            HStack {
+                Text("Dual-side coverage")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                Spacer()
+                Text("\(cov.bothSidesCount) / \(cov.totalCount) (\(cov.dualSidePercent)%)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AdaColors.navy)
+                    .monospacedDigit()
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 245, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 268, maxHeight: .infinity, alignment: .topLeading)
         .adaCard(padding: 22)
     }
 }
@@ -1245,12 +1337,17 @@ private struct FigCraftPhotoIDWidget: View {
 private struct PhotoStatTile: View {
     let title: String
     let value: String
-    let tint: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(value).font(.system(size: 20, weight: .semibold)).foregroundStyle(tint).monospacedDigit()
-            Text(title).font(.system(size: 10)).foregroundStyle(AdaColors.secondaryInk).lineLimit(1)
+            Text(value)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(AdaColors.navy)
+                .monospacedDigit()
+            Text(title)
+                .font(.system(size: 10))
+                .foregroundStyle(AdaColors.secondaryInk)
+                .lineLimit(1)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1626,18 +1723,18 @@ private struct WidgetLiveMiniaturePreview: View {
         case .notSureQueue:
             VStack(alignment: .leading, spacing: 9) {
                 HStack {
-                    Text("2 Pending")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(AdaColors.orange)
+                    Text("Pending review")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AdaColors.navy)
                         .padding(.horizontal, 8)
                         .frame(height: 20)
-                        .background(AdaColors.orange.opacity(0.14), in: Capsule())
+                        .background(AdaColors.canvas, in: Capsule())
                     Spacer()
-                    Image(systemName: "questionmark.diamond.fill")
+                    Image(systemName: "questionmark.circle")
                         .font(.system(size: 12))
                         .foregroundStyle(AdaColors.navy)
                 }
-                ForEach([("SGT-1109 · Green (L)", "84% vs 79%"), ("SGT-1110 · Hawksbill (R)", "Glare J2–J4")], id: \.0) { title, sub in
+                ForEach([("SGT-1109 · Green (L)", "84% vs 79%"), ("SGT-1110 · Hawksbill (R)", "Glare review")], id: \.0) { title, sub in
                     HStack {
                         Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(AdaColors.ink).lineLimit(1)
                         Spacer()
@@ -1769,9 +1866,9 @@ private struct WidgetLiveMiniaturePreview: View {
 
         case .photoIDReadiness:
             HStack(spacing: 8) {
-                ForEach([("L+R", "\(analytics.photoCoverage.bothSidesCount)", AdaColors.green), ("L", "\(analytics.photoCoverage.leftOnlyCount)", AdaColors.orange), ("R", "\(analytics.photoCoverage.rightOnlyCount)", AdaColors.orange)], id: \.0) { lbl, val, tint in
+                ForEach([("L+R", "\(analytics.photoCoverage.bothSidesCount)"), ("L", "\(analytics.photoCoverage.leftOnlyCount)"), ("R", "\(analytics.photoCoverage.rightOnlyCount)")], id: \.0) { lbl, val in
                     VStack(spacing: 4) {
-                        Text(val).font(.system(size: 22, weight: .bold)).foregroundStyle(tint)
+                        Text(val).font(.system(size: 22, weight: .bold)).foregroundStyle(AdaColors.navy)
                         Text(lbl).font(.system(size: 10, weight: .medium)).foregroundStyle(AdaColors.secondaryInk)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1849,11 +1946,23 @@ private struct SightingsLineChart: View {
                         CGPoint(x: size.width * CGFloat(index) / CGFloat(max(values.count - 1, 1)), y: size.height - value / maximum * (size.height - 14))
                     }
                     guard let first = points.first, let last = points.last else { return }
-                    var line = Path(); line.move(to: first)
-                    for point in points.dropFirst() { line.addLine(to: point) }
+                    var line = Path()
+                    line.move(to: first)
+                    if points.count >= 2 {
+                        // Smooth Catmull-Rom spline matching the Picture 2 curve aesthetic
+                        for i in 0..<(points.count - 1) {
+                            let p0 = i > 0 ? points[i - 1] : points[i]
+                            let p1 = points[i]
+                            let p2 = points[i + 1]
+                            let p3 = i + 2 < points.count ? points[i + 2] : p2
+                            let cp1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6.0, y: min(size.height, max(0, p1.y + (p2.y - p0.y) / 6.0)))
+                            let cp2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6.0, y: min(size.height, max(0, p2.y - (p3.y - p1.y) / 6.0)))
+                            line.addCurve(to: p2, control1: cp1, control2: cp2)
+                        }
+                    }
                     var area = line; area.addLine(to: .init(x: last.x, y: size.height)); area.addLine(to: .init(x: first.x, y: size.height)); area.closeSubpath()
-                    context.fill(area, with: .linearGradient(Gradient(colors: [AdaColors.navy.opacity(0.15), .clear]), startPoint: .zero, endPoint: .init(x: 0, y: size.height)))
-                    context.stroke(line, with: .color(AdaColors.navy), style: .init(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    context.fill(area, with: .linearGradient(Gradient(colors: [AdaColors.navy.opacity(0.16), .clear]), startPoint: .zero, endPoint: .init(x: 0, y: size.height)))
+                    context.stroke(line, with: .color(AdaColors.navy), style: .init(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
                 }
                 HStack {
                     ForEach(Array(months.enumerated()), id: \.offset) { index, month in
@@ -1877,14 +1986,31 @@ private struct SightingsLineChart: View {
 
 struct SightingMapPreview: View {
     let sightings: [Sighting]
+
+    private var previewPins: [Sighting] {
+        // Keep mini overview map clean across both Bali and pan-Asian Super Account datasets
+        var seenCells = Set<String>()
+        var result: [Sighting] = []
+        let cellSize = region.span.latitudeDelta > 8 ? 4.0 : 0.03
+        for item in sightings {
+            let key = "\(Int((item.coordinate.latitude / cellSize).rounded())):\(Int((item.coordinate.longitude / cellSize).rounded()))"
+            if seenCells.insert(key).inserted {
+                result.append(item)
+            }
+            if result.count >= 16 { break }
+        }
+        return result
+    }
+
     var body: some View {
         Map(initialPosition: .region(region), interactionModes: []) {
-            ForEach(sightings) { sighting in
+            ForEach(previewPins) { sighting in
                 Annotation(sighting.displayName, coordinate: .init(latitude: sighting.coordinate.latitude, longitude: sighting.coordinate.longitude)) {
                     TurtleMapPin(isSelected: false).scaleEffect(0.6)
                 }
             }
         }
+        .id("\(sightings.count)-\(sightings.first?.id ?? "empty")")
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
         .accessibilityLabel("Sighting locations map preview")
     }

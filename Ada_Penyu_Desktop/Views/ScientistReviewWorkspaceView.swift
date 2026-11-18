@@ -523,7 +523,22 @@ struct ScientistReviewWorkspaceView: View {
     var store: AppStore? = nil
     @StateObject private var vm = ScientistReviewViewModel()
     @StateObject private var scaleReviews = ScaleReviewStore()
-    @State private var contourSettings = ContourSettings(enabled: true)
+
+    @State private var studioMode: PatternStudioMode = .oneVsThree
+    @State private var activeEscalatedCaseID: UUID? = nil
+    @State private var escalatedSelectedCandID: String = ""
+    @State private var escalatedConfirmedCandID: [UUID: String] = [:]
+    @State private var escalatedRejectedCandIDs: [UUID: Set<String>] = [:]
+    @State private var escalatedUnsureSavedIDs: Set<UUID> = []
+
+    private var activeEscalatedCase: EscalatedNotSureCase? {
+        guard let id = activeEscalatedCaseID else { return nil }
+        return store?.escalatedNotSureCases.first(where: { $0.id == id })
+    }
+
+    private var isStudioPrimaryMode: Bool {
+        activeEscalatedCase != nil || vm.layoutMode == .contours || vm.layoutMode == .scales
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -531,14 +546,16 @@ struct ScientistReviewWorkspaceView: View {
             VStack(spacing: 0) {
                 scenarioAndSimulationBar
                 Divider().overlay(AdaColors.line)
-                if vm.layoutMode != .contours && vm.layoutMode != .scales {
+                if !isStudioPrimaryMode {
                     comparisonAidsToolbar
                     Divider().overlay(AdaColors.line)
                 }
                 dualComparisonCanvases
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Divider().overlay(AdaColors.line)
-                evidenceDrawerSection
+                if !isStudioPrimaryMode {
+                    Divider().overlay(AdaColors.line)
+                    evidenceDrawerSection
+                }
                 Divider().overlay(AdaColors.line)
                 decisionActionBar
             }
@@ -548,8 +565,8 @@ struct ScientistReviewWorkspaceView: View {
 
             // Slim Right Candidate Inspector
             slimCandidateInspector
-                .frame(width: 316)
-                .background(AdaColors.sidebar)
+                .frame(width: 252)
+                .background(AdaColors.canvas)
         }
         .background(AdaColors.canvas)
         .onAppear {
@@ -568,59 +585,122 @@ struct ScientistReviewWorkspaceView: View {
 
     private func syncRequestedReviewState() {
         if let store {
-            if vm.activeScenario != store.requestedReviewScenario {
-                vm.switchScenario(store.requestedReviewScenario)
+            if let reqID = store.requestedEscalatedCaseID,
+               let escalated = store.escalatedNotSureCases.first(where: { $0.id == reqID }) {
+                activeEscalatedCaseID = escalated.id
+                escalatedSelectedCandID = escalated.candidates.first?.id ?? ""
+                studioMode = .oneVsThree
+                vm.layoutMode = .contours
+                store.requestedEscalatedCaseID = nil
+            } else {
+                activeEscalatedCaseID = nil
+                if vm.activeScenario != store.requestedReviewScenario {
+                    vm.switchScenario(store.requestedReviewScenario)
+                }
+                vm.layoutMode = store.requestedReviewLayoutMode
+                if vm.layoutMode == .contours {
+                    studioMode = .oneVsThree
+                }
             }
-            vm.layoutMode = store.requestedReviewLayoutMode
         }
-        // Automatically show mock scale & head ROI annotations when opening Not Sure Review
+        vm.isEvidenceDrawerExpanded = false
         vm.showScaleOutlines = true
         vm.showHeadRegionOutline = true
         vm.showCrossPhotoThreads = true
     }
 
-    // MARK: - Top Scenario Switcher & Simulation Notice
+    // MARK: - Compact Case & View Switcher Bar
 
-    private var scenarioAndSimulationBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Scientist review · scenario demo", systemImage: "flask")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(AdaColors.navy)
-                Spacer()
-                Button("Reset demo") { vm.resetDemo() }.controlSize(.small)
-            }
-            Text("Candidate scores, annotations and decisions are simulated. Decisions stay in memory; no encounter is saved to the backend. Photo contours are computed from the bundled photographs.")
-                .font(.system(size: 11)).foregroundStyle(AdaColors.secondaryInk)
-            HStack {
-                Picker("Scenario", selection: Binding(
-                    get: { vm.activeScenario },
-                    set: { next in
-                        vm.switchScenario(next)
-                        vm.showScaleOutlines = true
-                        vm.showHeadRegionOutline = true
-                    }
-                )) {
-                    ForEach(ReviewScenarioID.allCases) { scenario in Text(scenario.shortTitle).tag(scenario) }
-                }.frame(maxWidth: 250)
-                Picker("View", selection: $vm.layoutMode) {
-                    ForEach(ScientistComparisonLayoutMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
-                }.frame(maxWidth: 210)
-                Button("Number scales") { vm.layoutMode = .scales }
-                    .controlSize(.small).tint(AdaColors.accent)
-                Button("Show All Mock Overlays") {
-                    if vm.layoutMode == .scales || vm.layoutMode == .contours {
-                        vm.layoutMode = .sideBySide
-                    }
+    private var caseSelectionBinding: Binding<String> {
+        Binding(
+            get: {
+                if let esc = activeEscalatedCase {
+                    return "esc:\(esc.id.uuidString)"
+                }
+                return "demo:\(vm.activeScenario.rawValue)"
+            },
+            set: { next in
+                if next.hasPrefix("esc:"),
+                   let uuid = UUID(uuidString: String(next.dropFirst(4))),
+                   let escalated = store?.escalatedNotSureCases.first(where: { $0.id == uuid }) {
+                    activeEscalatedCaseID = escalated.id
+                    escalatedSelectedCandID = escalated.candidates.first?.id ?? ""
+                    studioMode = .oneVsThree
+                } else if next.hasPrefix("demo:"),
+                          let scenario = ReviewScenarioID(rawValue: String(next.dropFirst(5))) {
+                    activeEscalatedCaseID = nil
+                    vm.switchScenario(scenario)
                     vm.showScaleOutlines = true
                     vm.showHeadRegionOutline = true
-                    vm.showXFeatPoints = true
-                    vm.showI3SBlobOverlay = true
-                    vm.showCrossPhotoThreads = true
+                }
+            }
+        )
+    }
+
+    private var scenarioAndSimulationBar: some View {
+        HStack(spacing: 10) {
+            Label("Not Sure Review", systemImage: "questionmark.circle")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(AdaColors.navy)
+
+            Picker("Case", selection: caseSelectionBinding) {
+                if let escalated = store?.escalatedNotSureCases, !escalated.isEmpty {
+                    Section("From I3S Queue") {
+                        ForEach(escalated) { item in
+                            Text("I3S · \(item.title)").tag("esc:\(item.id.uuidString)")
+                        }
+                    }
+                }
+                Section("Review Cases") {
+                    ForEach(ReviewScenarioID.allCases) { scenario in
+                        Text(scenario.shortTitle).tag("demo:\(scenario.rawValue)")
+                    }
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: 260)
+
+            if activeEscalatedCase != nil {
+                Picker("Studio Mode", selection: $studioMode) {
+                    ForEach(PatternStudioMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 220)
+            } else {
+                Picker("View", selection: $vm.layoutMode) {
+                    Text("Pattern 1 vs 3").tag(ScientistComparisonLayoutMode.contours)
+                    Text("Scale Manual").tag(ScientistComparisonLayoutMode.scales)
+                    Text("1:1 Photos").tag(ScientistComparisonLayoutMode.sideBySide)
+                    Text("Multi-Grid").tag(ScientistComparisonLayoutMode.multiCandidateGrid)
+                    Text("Blend").tag(ScientistComparisonLayoutMode.superimposeBlend)
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(maxWidth: 155)
+            }
+
+            Spacer(minLength: 0)
+
+            if activeEscalatedCase == nil {
+                Button {
+                    vm.resetDemo()
+                    vm.layoutMode = .contours
+                    studioMode = .oneVsThree
+                    vm.isEvidenceDrawerExpanded = false
+                } label: {
+                    Label("Reset", systemImage: "arrow.counterclockwise")
                 }
                 .controlSize(.small)
-                Spacer(minLength: 0)
-            }.pickerStyle(.menu).font(.system(size: 11))
-        }.padding(.horizontal, 16).padding(.vertical, 8).background(AdaColors.card)
+            }
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 14)
+        .frame(height: 42)
+        .background(AdaColors.card)
     }
 
     // MARK: - Comparison Aids & Synchronized Zoom Toolbar
@@ -747,21 +827,101 @@ struct ScientistReviewWorkspaceView: View {
 
     private var dualComparisonCanvases: some View {
         Group {
-            switch vm.layoutMode {
-            case .scales:
-                ScientistScalePhotos(queryName: vm.sighting.sampleImageName, galleryName: vm.selectedCandidate.sampleImageName, store: scaleReviews)
-            case .contours:
-                ScientistContourPhotos(queryName: vm.sighting.sampleImageName,
-                    galleryName: vm.selectedCandidate.sampleImageName, settings: $contourSettings)
-            case .sideBySide:
-                sideBySideComparisonCanvas
-            case .multiCandidateGrid:
-                multiCandidateComparisonCanvas
-            case .superimposeBlend:
-                superimposeComparisonCanvas
+            if let escalated = activeEscalatedCase {
+                escalatedPatternStudio(for: escalated)
+            } else {
+                switch vm.layoutMode {
+                case .scales:
+                    ScientistScalePhotos(queryName: vm.sighting.sampleImageName, galleryName: vm.selectedCandidate.sampleImageName, store: scaleReviews)
+                case .contours:
+                    ScientistPatternStudioContainer(
+                        sighting: vm.sighting,
+                        candidates: vm.candidates,
+                        selectedCandidateIndex: $vm.selectedCandidateIndex,
+                        studioMode: $studioMode,
+                        onConfirmCandidate: { idx in
+                            vm.selectCandidate(at: idx)
+                            vm.prepareSameTurtleConfirmation()
+                        },
+                        onRejectCandidate: { idx in
+                            vm.selectCandidate(at: idx)
+                            vm.rejectSelectedCandidateAndAdvance()
+                        }
+                    )
+                case .sideBySide:
+                    sideBySideComparisonCanvas
+                case .multiCandidateGrid:
+                    multiCandidateComparisonCanvas
+                case .superimposeBlend:
+                    superimposeComparisonCanvas
+                }
             }
         }
-        .background(Color.black.opacity(0.88))
+        .background(Color.black.opacity(0.92))
+    }
+
+    private func escalatedPatternStudio(for escalated: EscalatedNotSureCase) -> some View {
+        let queryTarget = PatternComparisonTarget(
+            id: "esc-q-\(escalated.id.uuidString)",
+            rank: 0,
+            title: escalated.title,
+            subtitle: "\(escalated.side.title) Query",
+            side: escalated.side,
+            sideMatches: true,
+            image: escalated.queryImage,
+            sampleEntry: nil,
+            fingerprint: escalated.queryFingerprint,
+            customROI: escalated.queryROI.count >= 3 ? escalated.queryROI : nil
+        )
+        let candidateTargets: [PatternComparisonTarget] = escalated.candidates.map { cand in
+            let sample = cand.sampleImageName.flatMap { I3SSampleLibrary.sample(forFilenameOrID: $0) }
+            let resolvedImg = cand.image ?? sample.flatMap { I3SSampleLibrary.loadImage(for: $0) }
+            return PatternComparisonTarget(
+                id: cand.id,
+                rank: cand.rank,
+                title: cand.name,
+                subtitle: "\(cand.profileCode) · \(cand.confidencePercent)%",
+                side: cand.side,
+                sideMatches: cand.sideMatches,
+                image: resolvedImg,
+                sampleEntry: sample,
+                fingerprint: cand.fingerprint,
+                customROI: nil
+            )
+        }
+        let selectedBinding = Binding<String>(
+            get: {
+                if candidateTargets.contains(where: { $0.id == escalatedSelectedCandID }) {
+                    return escalatedSelectedCandID
+                }
+                return candidateTargets.first?.id ?? ""
+            },
+            set: { escalatedSelectedCandID = $0 }
+        )
+        return PatternContourStudioView(
+            query: queryTarget,
+            candidates: candidateTargets,
+            selectedCandidateID: selectedBinding,
+            mode: $studioMode,
+            onSelectCandidateID: { escalatedSelectedCandID = $0 },
+            onConfirmCandidate: { target in
+                escalatedSelectedCandID = target.id
+                escalatedConfirmedCandID[escalated.id] = target.id
+            },
+            onRejectCandidate: { target in
+                var set = escalatedRejectedCandIDs[escalated.id] ?? []
+                set.insert(target.id)
+                escalatedRejectedCandIDs[escalated.id] = set
+                advanceEscalatedCandidate(in: escalated)
+            }
+        )
+    }
+
+    private func advanceEscalatedCandidate(in escalated: EscalatedNotSureCase) {
+        let rejected = escalatedRejectedCandIDs[escalated.id] ?? []
+        if let next = escalated.candidates.first(where: { !rejected.contains($0.id) }) {
+            escalatedSelectedCandID = next.id
+        }
     }
 
     private var sideBySideComparisonCanvas: some View {
@@ -1245,193 +1405,425 @@ struct ScientistReviewWorkspaceView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(AdaColors.sidebar)
+        .background(AdaColors.canvas)
     }
 
     // MARK: - Always-Visible Scientist Decision Bar
 
     private var decisionActionBar: some View {
-        let cand = vm.selectedCandidate
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Scientist Review Decision")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AdaColors.secondaryInk)
-                Text("Comparing \(vm.sighting.sightingID) vs. Rank #\(cand.rank) \(cand.displayName)")
+        Group {
+            if let escalated = activeEscalatedCase {
+                escalatedDecisionActionBar(for: escalated)
+            } else {
+                let cand = vm.selectedCandidate
+                HStack(spacing: 10) {
+                    Text("\(vm.sighting.sightingID) vs #\(cand.rank) \(cand.displayName)")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(AdaColors.ink)
+                        .lineLimit(1)
+
+                    if let outcome = vm.currentOutcome {
+                        Text(outcome.resolution == .linkedToExisting ? "Confirmed" : "Saved Unsure")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(outcome.resolution == .linkedToExisting ? AdaColors.green : AdaColors.orange, in: Capsule())
+                    }
+
+                    Spacer()
+
+                    Button {
+                        vm.prepareSameTurtleConfirmation()
+                    } label: {
+                        Label("Same Turtle", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .frame(height: 30)
+                            .background(AdaColors.green, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        vm.rejectSelectedCandidateAndAdvance()
+                    } label: {
+                        Label("Different", systemImage: "xmark.circle.fill")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .frame(height: 30)
+                            .background(AdaColors.red, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        vm.prepareUnsureSheet()
+                    } label: {
+                        Label("Unsure…", systemImage: "questionmark.circle")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(AdaColors.ink)
+                            .padding(.horizontal, 14)
+                            .frame(height: 30)
+                            .background(AdaColors.canvas, in: Capsule())
+                            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(AdaColors.card)
+            }
+        }
+    }
+
+    private func escalatedDecisionActionBar(for escalated: EscalatedNotSureCase) -> some View {
+        let selected = escalated.candidates.first(where: { $0.id == escalatedSelectedCandID }) ?? escalated.candidates.first
+        let confirmedID = escalatedConfirmedCandID[escalated.id]
+        let isUnsure = escalatedUnsureSavedIDs.contains(escalated.id)
+        return HStack(spacing: 10) {
+            if let selected {
+                Text("\(escalated.title) vs #\(selected.rank) \(selected.name)")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(AdaColors.ink)
+                    .lineLimit(1)
+            } else {
+                Text(escalated.title)
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(AdaColors.ink)
             }
 
+            if confirmedID != nil {
+                Text("Match Confirmed")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(AdaColors.green, in: Capsule())
+            } else if isUnsure {
+                Text("Held in Unsure")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(AdaColors.ink)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(AdaColors.orange.opacity(0.8), in: Capsule())
+            }
+
             Spacer()
 
-            Button {
-                vm.prepareSameTurtleConfirmation()
-            } label: {
-                Label("Same turtle…", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .frame(height: 34)
-                    .background(AdaColors.green, in: Capsule())
+            if let selected {
+                Button {
+                    escalatedConfirmedCandID[escalated.id] = selected.id
+                } label: {
+                    Label("Same Turtle", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                        .background(AdaColors.green, in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    var set = escalatedRejectedCandIDs[escalated.id] ?? []
+                    set.insert(selected.id)
+                    escalatedRejectedCandIDs[escalated.id] = set
+                    advanceEscalatedCandidate(in: escalated)
+                } label: {
+                    Label("Different", systemImage: "xmark.circle.fill")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                        .background(AdaColors.red, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             Button {
-                vm.rejectSelectedCandidateAndAdvance()
+                escalatedUnsureSavedIDs.insert(escalated.id)
             } label: {
-                Label("Different turtle", systemImage: "xmark.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .frame(height: 34)
-                    .background(AdaColors.red, in: Capsule())
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                vm.prepareUnsureSheet()
-            } label: {
-                Label("Unsure…", systemImage: "questionmark.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                Label("Keep Unsure", systemImage: "questionmark.circle")
+                    .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(AdaColors.ink)
-                    .padding(.horizontal, 16)
-                    .frame(height: 34)
-                    .background(AdaColors.orange.opacity(0.85), in: Capsule())
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .background(AdaColors.canvas, in: Capsule())
+                    .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
         .background(AdaColors.card)
     }
 
     // MARK: - Slim Right Candidate Inspector
 
     private var slimCandidateInspector: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Sighting summary card
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Text("SIGHTING UNDER REVIEW")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                    Spacer()
-                    Text(vm.sighting.side.title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(AdaColors.navy)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(AdaColors.accentSoft, in: Capsule())
-                }
-                Text(vm.sighting.sightingID)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(AdaColors.ink)
-                Text("\(vm.sighting.captureDate) · \(vm.sighting.location)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(AdaColors.secondaryInk)
-                Text(vm.activeScenario.walkthroughSummary)
-                    .font(.system(size: 11))
-                    .foregroundStyle(AdaColors.ink)
-                    .padding(8)
-                    .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        Group {
+            if let escalated = activeEscalatedCase {
+                escalatedInspector(for: escalated)
+            } else {
+                bundledInspector
             }
-            .padding(12)
-            .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private func escalatedInspector(for escalated: EscalatedNotSureCase) -> some View {
+        let rejected = escalatedRejectedCandIDs[escalated.id] ?? []
+        let confirmed = escalatedConfirmedCandID[escalated.id]
+        let activeID = escalated.candidates.contains(where: { $0.id == escalatedSelectedCandID })
+            ? escalatedSelectedCandID
+            : (escalated.candidates.first?.id ?? "")
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                if let qImg = escalated.queryImage {
+                    Image(nsImage: qImg)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(escalated.title)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AdaColors.ink)
+                        .lineLimit(1)
+                    Text(escalated.side.title)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(AdaColors.navy)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(AdaColors.card, in: Capsule())
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             HStack {
-                Text("Ranked Candidates")
+                Text("Candidates (\(escalated.candidates.count))")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(AdaColors.ink)
                 Spacer()
                 Button {
-                    if vm.layoutMode == .multiCandidateGrid {
-                        vm.layoutMode = .sideBySide
-                    } else {
-                        vm.selectAllCandidatesForMultiCompare()
-                    }
+                    studioMode = studioMode == .oneVsThree ? .oneToOne : .oneVsThree
                 } label: {
-                    Label(
-                        vm.layoutMode == .multiCandidateGrid
-                            ? "1:1 View"
-                            : "Compare All (\(vm.candidates.count))",
-                        systemImage: vm.layoutMode == .multiCandidateGrid ? "rectangle.split.2x1" : "square.grid.2x2"
-                    )
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .background(AdaColors.accent, in: Capsule())
+                    Text(studioMode == .oneVsThree ? "Focus 1:1" : "1 vs 3")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9)
+                        .frame(height: 22)
+                        .background(AdaColors.navy, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
 
             ScrollView {
                 VStack(spacing: 8) {
-                    ForEach(Array(vm.candidates.enumerated()), id: \.element.id) { index, item in
-                        let isSelected = index == vm.selectedCandidateIndex
-                        let isInMulti = vm.multiSelectedCandidateIDs.contains(item.id)
+                    ForEach(escalated.candidates) { item in
+                        let isSelected = item.id == activeID
+                        let isRejected = rejected.contains(item.id)
+                        let isConfirmed = confirmed == item.id
+                        let thumb = item.image ?? item.sampleImageName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
                         Button {
-                            vm.selectCandidate(at: index)
+                            escalatedSelectedCandID = item.id
                         } label: {
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack(spacing: 6) {
-                                    if vm.layoutMode == .multiCandidateGrid {
-                                        Button {
-                                            vm.toggleMultiCandidateSelection(item.id)
-                                        } label: {
-                                            Image(systemName: isInMulti ? "checkmark.square.fill" : "square")
-                                                .font(.system(size: 13, weight: .semibold))
-                                                .foregroundStyle(isInMulti ? AdaColors.accent : AdaColors.tertiaryInk)
+                            HStack(spacing: 8) {
+                                if let thumb {
+                                    Image(nsImage: thumb)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 44, height: 44)
+                                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 4) {
+                                        Text("#\(item.rank)")
+                                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(isSelected ? .white : AdaColors.ink)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 1)
+                                            .background(isSelected ? AdaColors.navy : AdaColors.canvas, in: Capsule())
+                                        Text(item.name)
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundStyle(AdaColors.ink)
+                                            .lineLimit(1)
+                                        Spacer()
+                                        Text("\(item.confidencePercent)%")
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(AdaColors.secondaryInk)
+                                    }
+                                    HStack {
+                                        Text("\(item.side.title) · \(item.dateText)")
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(AdaColors.secondaryInk)
+                                            .lineLimit(1)
+                                        Spacer()
+                                        if isConfirmed {
+                                            Text("Same").font(.system(size: 10, weight: .bold)).foregroundStyle(AdaColors.green)
+                                        } else if isRejected {
+                                            Text("Diff").font(.system(size: 10, weight: .bold)).foregroundStyle(AdaColors.red)
                                         }
-                                        .buttonStyle(.plain)
-                                    }
-
-                                    Text("#\(item.rank)")
-                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                        .foregroundStyle(isSelected ? .white : AdaColors.ink)
-                                        .padding(.horizontal, 7)
-                                        .padding(.vertical, 2)
-                                        .background(isSelected ? AdaColors.navy : AdaColors.canvas, in: Capsule())
-
-                                    Text(item.displayName)
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundStyle(AdaColors.ink)
-                                        .lineLimit(1)
-
-                                    Spacer()
-
-                                    Text("\(item.relativeMatchScore)%")
-                                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                        .foregroundStyle(AdaColors.secondaryInk)
-                                }
-
-                                HStack {
-                                    Text("\(item.side.title) · \(item.captureDate)")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(AdaColors.secondaryInk)
-                                    Spacer()
-                                    if item.status != .pending {
-                                        Text(item.status.rawValue)
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundStyle(item.status == .confirmed ? AdaColors.green : AdaColors.red)
                                     }
                                 }
-
-                                Text(item.junctionSummary)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(
-                                        item.topologyState == .isomorphicMatch
-                                            ? AdaColors.green
-                                            : (item.topologyState == .glareOccluded ? AdaColors.orange : AdaColors.red)
-                                    )
                             }
-                            .padding(10)
+                            .padding(8)
                             .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .stroke(isSelected ? AdaColors.navy : AdaColors.line, lineWidth: isSelected ? 2 : 1)
                             )
-                            .opacity(item.status == .rejected ? 0.65 : 1.0)
+                            .opacity(isRejected ? 0.55 : 1.0)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(10)
+    }
+
+    private var bundledInspector: some View {
+        let queryThumb = vm.sighting.sampleImageName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                if let queryThumb {
+                    Image(nsImage: queryThumb)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(vm.sighting.sightingID)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AdaColors.ink)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(vm.sighting.side.title)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(AdaColors.navy)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(AdaColors.canvas, in: Capsule())
+                        Text(vm.sighting.location)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            HStack {
+                Text("Candidates (\(vm.candidates.count))")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(AdaColors.ink)
+                Spacer()
+                Button {
+                    if vm.layoutMode == .contours {
+                        studioMode = studioMode == .oneVsThree ? .oneToOne : .oneVsThree
+                    } else if vm.layoutMode == .multiCandidateGrid {
+                        vm.layoutMode = .sideBySide
+                    } else {
+                        vm.layoutMode = .contours
+                        studioMode = .oneVsThree
+                    }
+                } label: {
+                    Label(
+                        (vm.layoutMode == .contours && studioMode == .oneVsThree)
+                            ? "Focus 1:1"
+                            : "1 vs 3",
+                        systemImage: (vm.layoutMode == .contours && studioMode == .oneVsThree) ? "rectangle.split.2x1" : "square.grid.2x2"
+                    )
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .frame(height: 22)
+                    .background(AdaColors.navy, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
+            ScrollView {
+                VStack(spacing: 7) {
+                    ForEach(Array(vm.candidates.enumerated()), id: \.element.id) { index, item in
+                        let isSelected = index == vm.selectedCandidateIndex
+                        let isInMulti = vm.multiSelectedCandidateIDs.contains(item.id)
+                        let candThumb = item.sampleImageName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
+                        Button {
+                            vm.selectCandidate(at: index)
+                        } label: {
+                            HStack(spacing: 8) {
+                                if vm.layoutMode == .multiCandidateGrid {
+                                    Button {
+                                        vm.toggleMultiCandidateSelection(item.id)
+                                    } label: {
+                                        Image(systemName: isInMulti ? "checkmark.square.fill" : "square")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(isInMulti ? AdaColors.accent : AdaColors.tertiaryInk)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                if let candThumb {
+                                    Image(nsImage: candThumb)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 42, height: 42)
+                                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                }
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 4) {
+                                        Text("#\(item.rank)")
+                                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(isSelected ? .white : AdaColors.ink)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 1)
+                                            .background(isSelected ? AdaColors.navy : AdaColors.canvas, in: Capsule())
+
+                                        Text(item.displayName)
+                                            .font(.system(size: 11.5, weight: .bold))
+                                            .foregroundStyle(AdaColors.ink)
+                                            .lineLimit(1)
+
+                                        Spacer()
+
+                                        Text("\(item.relativeMatchScore)%")
+                                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                            .foregroundStyle(AdaColors.secondaryInk)
+                                    }
+
+                                    HStack {
+                                        Text(item.side.title)
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundStyle(item.sideMatchesSighting ? AdaColors.secondaryInk : AdaColors.red)
+                                        Text("· \(item.captureDate)")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(AdaColors.secondaryInk)
+                                            .lineLimit(1)
+                                        Spacer()
+                                        if item.status != .pending {
+                                            Text(item.status.rawValue)
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundStyle(item.status == .confirmed ? AdaColors.green : AdaColors.red)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(8)
+                            .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(isSelected ? AdaColors.navy : AdaColors.line, lineWidth: isSelected ? 2 : 1)
+                            )
+                            .opacity(item.status == .rejected ? 0.60 : 1.0)
                         }
                         .buttonStyle(.plain)
                     }
@@ -1443,14 +1835,14 @@ struct ScientistReviewWorkspaceView: View {
             } label: {
                 Label(
                     vm.widerSearchExecuted.contains(vm.activeScenario)
-                        ? "Wider search added Rank #4"
-                        : "Run wider search (Crop + Local Rerank)",
+                        ? "Rank #4 Added"
+                        : "Wider Search (+Rank #4)",
                     systemImage: "magnifyingglass.circle"
                 )
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(AdaColors.ink)
                 .frame(maxWidth: .infinity)
-                .frame(height: 30)
+                .frame(height: 28)
                 .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1460,7 +1852,7 @@ struct ScientistReviewWorkspaceView: View {
             .buttonStyle(.plain)
             .disabled(vm.widerSearchExecuted.contains(vm.activeScenario))
         }
-        .padding(14)
+        .padding(10)
     }
 
     // MARK: - Confirmation & Unsure Modals
@@ -1577,6 +1969,9 @@ private struct SimulatedTurtlePhotoPane: View {
     @Binding var panOffset: CGSize
 
     @State private var dragStartOffset: CGSize? = nil
+    @State private var extractedPatterns: [DetectedScalePattern] = []
+    @State private var extractedROI: [ScalePoint] = []
+    @State private var extractedKey: String = ""
 
     private var matchedSampleEntry: I3SSampleEntry? {
         guard let sampleImageName else { return nil }
@@ -1603,7 +1998,12 @@ private struct SimulatedTurtlePhotoPane: View {
                     }
 
                     Canvas { context, size in
-                        drawSimulatedTurtleHead(in: &context, size: size, overRealPhoto: loadedSampleImage != nil)
+                        drawSimulatedTurtleHead(
+                            in: &context,
+                            size: size,
+                            overRealPhoto: loadedSampleImage != nil,
+                            imageSize: loadedSampleImage?.size
+                        )
                     }
                 }
                 .scaleEffect(zoomScale)
@@ -1623,6 +2023,9 @@ private struct SimulatedTurtlePhotoPane: View {
                         }
                 )
             }
+            .task(id: "\(sampleImageName ?? "")|\(showScaleOutlines)") {
+                await extractRealPatternsIfNeeded()
+            }
 
             // Top & Bottom Overlay Chrome
             VStack {
@@ -1633,6 +2036,7 @@ private struct SimulatedTurtlePhotoPane: View {
                     Text(title)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white)
+                        .lineLimit(1)
                     Text(sideLabel)
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(sideMatches ? Color.green : Color.red)
@@ -1640,35 +2044,73 @@ private struct SimulatedTurtlePhotoPane: View {
                         .padding(.vertical, 2)
                         .background(Color.white.opacity(0.12), in: Capsule())
                     Spacer()
-                    Text(dateAndLocation)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.85))
+                    if !extractedPatterns.isEmpty && showScaleOutlines {
+                        Text("\(extractedPatterns.count) scales")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Color.mint)
+                    } else {
+                        Text(dateAndLocation)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(Color.white.opacity(0.82))
+                            .lineLimit(1)
+                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
-                .padding(10)
+                .padding(8)
 
                 Spacer()
 
                 HStack {
                     Text(footerNote)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .lineLimit(1)
                     Spacer()
-                    Text(loadedSampleImage != nil ? "Bundled Sea Turtle Photo + Overlays" : "Schematic Diagram & Overlays")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.white.opacity(0.65))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.black.opacity(0.75))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.black.opacity(0.68))
             }
         }
         .clipped()
     }
 
-    private func drawSimulatedTurtleHead(in context: inout GraphicsContext, size: CGSize, overRealPhoto: Bool) {
+    @MainActor
+    private func extractRealPatternsIfNeeded() async {
+        let key = sampleImageName ?? ""
+        guard showScaleOutlines, let img = loadedSampleImage else { return }
+        if extractedKey == key && !extractedPatterns.isEmpty { return }
+        let sample = matchedSampleEntry
+        let side: TurtlePhotoSide = isRightProfile ? .right : .left
+        guard let raster = PatternContourEngine.underwaterLuminance(from: img, maxDimension: 360) else { return }
+        let sampleROIPoints: [ScalePoint] = {
+            guard let s = sample, s.imageWidth > 0, s.imageHeight > 0, s.roi.count >= 3 else { return [] }
+            let w = Double(s.imageWidth)
+            let h = Double(s.imageHeight)
+            return s.roi.compactMap { pair in
+                pair.count >= 2 ? ScalePoint(x: pair[0] / w, y: pair[1] / h) : nil
+            }
+        }()
+        let result = await Task.detached(priority: .userInitiated) { () -> ([ScalePoint], [DetectedScalePattern]) in
+            let roi = sampleROIPoints.count >= 3
+                ? sampleROIPoints
+                : PatternContourEngine.detectFacialPatternROI(from: raster, side: side).roi
+            let patterns = PatternContourEngine.extractPatterns(from: raster, roiPolygon: roi)
+            return (roi, patterns)
+        }.value
+        extractedROI = result.0
+        extractedPatterns = result.1
+        extractedKey = key
+    }
+
+    private func drawSimulatedTurtleHead(
+        in context: inout GraphicsContext,
+        size: CGSize,
+        overRealPhoto: Bool,
+        imageSize: CGSize?
+    ) {
         let w = size.width
         let h = size.height
         if !overRealPhoto {
@@ -1691,13 +2133,16 @@ private struct SimulatedTurtlePhotoPane: View {
 
         // Pixel-accurate mapping for bundled real photographs using their .fgp calibration
         let sample = matchedSampleEntry
-        let imgW = CGFloat(sample?.imageWidth ?? 1000)
-        let imgH = CGFloat(sample?.imageHeight ?? 750)
+        let imgW = CGFloat(sample?.imageWidth ?? Int(imageSize?.width ?? 1000))
+        let imgH = CGFloat(sample?.imageHeight ?? Int(imageSize?.height ?? 750))
         let fillScale = max(w / max(imgW, 1), h / max(imgH, 1))
         let fillOriginX = (w - imgW * fillScale) * 0.5
         let fillOriginY = (h - imgH * fillScale) * 0.5
         let mapSamplePixel: (Double, Double) -> CGPoint = { px, py in
             CGPoint(x: fillOriginX + CGFloat(px) * fillScale, y: fillOriginY + CGFloat(py) * fillScale)
+        }
+        let mapNormalizedPoint: (ScalePoint) -> CGPoint = { pt in
+            CGPoint(x: fillOriginX + pt.x * imgW * fillScale, y: fillOriginY + pt.y * imgH * fillScale)
         }
 
         if !overRealPhoto {
@@ -1719,44 +2164,69 @@ private struct SimulatedTurtlePhotoPane: View {
             context.stroke(Path(ellipseIn: eyeRect), with: .color(Color.white.opacity(0.65)), lineWidth: 2)
         }
 
-        // Postocular & central temporal scale polygons mapped to real .fgp cheek scales
-        if !overRealPhoto || showScaleOutlines {
-            if overRealPhoto, let sample, !sample.keypoints.isEmpty {
-                for kp in sample.keypoints.prefix(14) where kp.count >= 3 {
-                    let center = mapSamplePixel(kp[0], kp[1])
-                    let r = max(8, CGFloat(kp[2]) * 0.48 * fillScale)
-                    var poly = Path()
-                    for i in 0..<6 {
-                        let angle = CGFloat(i) * (.pi / 3.0) + 0.25
-                        let pt = CGPoint(x: center.x + cos(angle) * r, y: center.y + sin(angle) * (r * 0.88))
-                        if i == 0 { poly.move(to: pt) } else { poly.addLine(to: pt) }
-                    }
-                    poly.closeSubpath()
-                    context.fill(poly, with: .color(Color.mint.opacity(0.14)))
-                    context.stroke(poly, with: .color(Color.mint.opacity(0.92)), lineWidth: 2.0)
+        // Real extracted numbered facial scale pattern contours on actual photos
+        if overRealPhoto && showScaleOutlines && !extractedPatterns.isEmpty {
+            if extractedROI.count >= 3 {
+                var roiPath = Path()
+                for (idx, pt) in extractedROI.enumerated() {
+                    let c = mapNormalizedPoint(pt)
+                    if idx == 0 { roiPath.move(to: c) } else { roiPath.addLine(to: c) }
                 }
-            } else {
-                let polygons: [[(CGFloat, CGFloat)]] = [
-                    [(0.42, 0.32), (0.51, 0.31), (0.51, 0.40), (0.43, 0.41)],
-                    [(0.43, 0.41), (0.51, 0.40), (0.52, 0.49), (0.43, 0.50)],
-                    [(0.43, 0.50), (0.52, 0.49), (0.52, 0.59), (0.44, 0.58)],
-                    [(0.51, 0.40), (0.61, 0.38), (0.62, 0.52), (0.52, 0.49)],
-                    [(0.52, 0.49), (0.62, 0.52), (0.60, 0.62), (0.52, 0.59)],
-                ]
-                for poly in polygons {
-                    var p = Path()
-                    for (idx, pt) in poly.enumerated() {
-                        let c = CGPoint(x: mapX(pt.0), y: mapY(pt.1))
-                        if idx == 0 { p.move(to: c) } else { p.addLine(to: c) }
-                    }
-                    p.closeSubpath()
-                    context.fill(p, with: .color(Color(red: 0.11, green: 0.18, blue: 0.14)))
-                    context.stroke(p, with: .color(Color.mint), lineWidth: 2.4)
+                roiPath.closeSubpath()
+                context.stroke(
+                    roiPath,
+                    with: .color(Color.cyan.opacity(0.48)),
+                    style: StrokeStyle(lineWidth: 1.3, dash: [6, 4])
+                )
+            }
+            for scale in extractedPatterns {
+                guard scale.polygon.count >= 3 else { continue }
+                var poly = Path()
+                for (idx, pt) in scale.polygon.enumerated() {
+                    let c = mapNormalizedPoint(pt)
+                    if idx == 0 { poly.move(to: c) } else { poly.addLine(to: c) }
+                }
+                poly.closeSubpath()
+                context.fill(poly, with: .color(Color.mint.opacity(0.14)))
+                context.stroke(poly, with: .color(Color.mint.opacity(0.95)), style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round))
+
+                let center = mapNormalizedPoint(scale.centroid)
+                let pillRect = CGRect(x: center.x - 8, y: center.y - 7, width: 16, height: 14)
+                context.fill(Path(roundedRect: pillRect, cornerRadius: 4), with: .color(Color.black.opacity(0.76)))
+                context.draw(
+                    Text("\(scale.number)").font(.system(size: 9, weight: .bold, design: .rounded)).foregroundStyle(Color.mint),
+                    at: center
+                )
+            }
+        } else if !overRealPhoto {
+            let polygons: [[(CGFloat, CGFloat)]] = [
+                [(0.42, 0.32), (0.51, 0.31), (0.51, 0.40), (0.43, 0.41)],
+                [(0.43, 0.41), (0.51, 0.40), (0.52, 0.49), (0.43, 0.50)],
+                [(0.43, 0.50), (0.52, 0.49), (0.52, 0.59), (0.44, 0.58)],
+                [(0.51, 0.40), (0.61, 0.38), (0.62, 0.52), (0.52, 0.49)],
+                [(0.52, 0.49), (0.62, 0.52), (0.60, 0.62), (0.52, 0.59)],
+            ]
+            for (idx, poly) in polygons.enumerated() {
+                var p = Path()
+                for (pIdx, pt) in poly.enumerated() {
+                    let c = CGPoint(x: mapX(pt.0), y: mapY(pt.1))
+                    if pIdx == 0 { p.move(to: c) } else { p.addLine(to: c) }
+                }
+                p.closeSubpath()
+                context.fill(p, with: .color(Color(red: 0.11, green: 0.18, blue: 0.14)))
+                context.stroke(p, with: .color(Color.mint), lineWidth: 2.4)
+                if showScaleOutlines {
+                    let cx = poly.map(\.0).reduce(0, +) / CGFloat(poly.count)
+                    let cy = poly.map(\.1).reduce(0, +) / CGFloat(poly.count)
+                    context.draw(
+                        Text("\(idx + 1)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white),
+                        at: CGPoint(x: mapX(cx), y: mapY(cy))
+                    )
                 }
             }
         }
 
-        // Specular glare highlight in Scenario 2 sighting
+        // Glare highlight indicator when glare occludes center scales
         if hasSpecularGlare && showScaleOutlines {
             let glareCenter: CGPoint = {
                 if overRealPhoto, let sample, sample.keypoints.count > 2 {
@@ -1764,48 +2234,13 @@ private struct SimulatedTurtlePhotoPane: View {
                 }
                 return CGPoint(x: mapX(0.53), y: mapY(0.49))
             }()
-            let glareRect = CGRect(x: glareCenter.x - 58, y: glareCenter.y - 44, width: 116, height: 88)
-            context.fill(Path(ellipseIn: glareRect), with: .color(Color.yellow.opacity(0.18)))
+            let glareRect = CGRect(x: glareCenter.x - 52, y: glareCenter.y - 38, width: 104, height: 76)
+            context.fill(Path(ellipseIn: glareRect), with: .color(Color.yellow.opacity(0.14)))
             context.stroke(
                 Path(ellipseIn: glareRect),
-                with: .color(Color.yellow),
-                style: StrokeStyle(lineWidth: 2.2, dash: [6, 4])
+                with: .color(Color.yellow.opacity(0.85)),
+                style: StrokeStyle(lineWidth: 1.8, dash: [6, 4])
             )
-        }
-
-        // Numbered Scale Junctions (1–6) anchored on the actual cheek scales
-        if showScaleOutlines {
-            let junctionStatuses: [(Int, Bool)] = [
-                (1, true),
-                (2, !hasSpecularGlare),
-                (3, !isLookalikeSplitJ3 && !hasSpecularGlare),
-                (4, !hasSpecularGlare),
-                (5, true),
-                (6, !hasSpecularGlare),
-            ]
-            for (idx, (num, isMatch)) in junctionStatuses.enumerated() {
-                let pt: CGPoint = {
-                    if overRealPhoto, let sample, sample.keypoints.indices.contains(idx) {
-                        let kp = sample.keypoints[idx]
-                        return mapSamplePixel(kp[0], kp[1])
-                    }
-                    let fallbacks: [(CGFloat, CGFloat)] = [
-                        (0.51, 0.31), (0.51, 0.40), (0.52, 0.49),
-                        (0.52, 0.59), (0.61, 0.38), (0.62, 0.52),
-                    ]
-                    let fb = fallbacks[idx]
-                    return CGPoint(x: mapX(fb.0), y: mapY(fb.1))
-                }()
-                let r: CGFloat = 10
-                let rect = CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2)
-                let fillCol: Color = hasSpecularGlare && !isMatch ? .orange : (isMatch ? .green : .red)
-                context.fill(Path(ellipseIn: rect), with: .color(fillCol))
-                context.stroke(Path(ellipseIn: rect), with: .color(.white), lineWidth: 1.8)
-                context.draw(
-                    Text("\(num)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white),
-                    at: pt
-                )
-            }
         }
 
         // Head Region Outline (Real .fgp Cheek ROI Polygon)
@@ -1884,21 +2319,104 @@ private struct SimulatedTurtlePhotoPane: View {
     }
 }
 
-/// Caches image objects across slider/color changes; uses only the exact named fixture.
-private struct ScientistContourPhotos: View {
-    let queryName: String?
-    let galleryName: String?
-    @Binding var settings: ContourSettings
-    @State private var query: NSImage?
-    @State private var gallery: NSImage?
-    private var key: String { "\(queryName ?? "")|\(galleryName ?? "")" }
-    var body: some View {
-        ContourComparisonView(queryImage: query, galleryImage: gallery, settings: $settings,
-            queryTitle: "Query · bundled scenario", galleryTitle: "Gallery · bundled scenario")
-            .task(id: key) {
-                query = queryName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
-                gallery = galleryName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
+/// Bridges ScientistReviewWorkspaceView sighting + ranked candidates into PatternContourStudioView.
+private struct ScientistPatternStudioContainer: View {
+    let sighting: ReviewSightingItem
+    let candidates: [ReviewCandidateItem]
+    @Binding var selectedCandidateIndex: Int
+    @Binding var studioMode: PatternStudioMode
+    let onConfirmCandidate: (Int) -> Void
+    let onRejectCandidate: (Int) -> Void
+
+    @State private var queryImage: NSImage?
+    @State private var candidateImages: [String: NSImage] = [:]
+
+    private var queryTarget: PatternComparisonTarget {
+        let sample = sighting.sampleImageName.flatMap { I3SSampleLibrary.sample(forFilenameOrID: $0) }
+        return PatternComparisonTarget(
+            id: sighting.sightingID,
+            rank: 0,
+            title: sighting.sightingID,
+            subtitle: "\(sighting.side.title) · \(sighting.location)",
+            side: sighting.side,
+            sideMatches: true,
+            image: queryImage,
+            sampleEntry: sample,
+            fingerprint: nil,
+            customROI: nil
+        )
+    }
+
+    private var candidateTargets: [PatternComparisonTarget] {
+        candidates.map { item in
+            let sample = item.sampleImageName.flatMap { I3SSampleLibrary.sample(forFilenameOrID: $0) }
+            return PatternComparisonTarget(
+                id: item.id,
+                rank: item.rank,
+                title: item.displayName,
+                subtitle: "\(item.profileCode) · \(item.relativeMatchScore)%",
+                side: item.side,
+                sideMatches: item.sideMatchesSighting,
+                image: candidateImages[item.id],
+                sampleEntry: sample,
+                fingerprint: nil,
+                customROI: nil
+            )
+        }
+    }
+
+    private var selectedIDBinding: Binding<String> {
+        Binding(
+            get: {
+                guard candidates.indices.contains(selectedCandidateIndex) else {
+                    return candidates.first?.id ?? ""
+                }
+                return candidates[selectedCandidateIndex].id
+            },
+            set: { nextID in
+                if let idx = candidates.firstIndex(where: { $0.id == nextID }) {
+                    selectedCandidateIndex = idx
+                }
             }
+        )
+    }
+
+    private var loadKey: String {
+        "\(sighting.sampleImageName ?? "")|\(candidates.map(\.id).joined(separator: ","))"
+    }
+
+    var body: some View {
+        PatternContourStudioView(
+            query: queryTarget,
+            candidates: candidateTargets,
+            selectedCandidateID: selectedIDBinding,
+            mode: $studioMode,
+            onSelectCandidateID: { nextID in
+                if let idx = candidates.firstIndex(where: { $0.id == nextID }) {
+                    selectedCandidateIndex = idx
+                }
+            },
+            onConfirmCandidate: { target in
+                if let idx = candidates.firstIndex(where: { $0.id == target.id }) {
+                    onConfirmCandidate(idx)
+                }
+            },
+            onRejectCandidate: { target in
+                if let idx = candidates.firstIndex(where: { $0.id == target.id }) {
+                    onRejectCandidate(idx)
+                }
+            }
+        )
+        .task(id: loadKey) {
+            queryImage = sighting.sampleImageName.flatMap { I3SSampleLibrary.loadImage(named: $0) }
+            var loaded: [String: NSImage] = [:]
+            for cand in candidates {
+                if let img = cand.sampleImageName.flatMap({ I3SSampleLibrary.loadImage(named: $0) }) {
+                    loaded[cand.id] = img
+                }
+            }
+            candidateImages = loaded
+        }
     }
 }
 

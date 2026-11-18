@@ -3,6 +3,32 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct EscalatedNotSureCandidate: Identifiable {
+    let id: String
+    let rank: Int
+    let name: String
+    let profileCode: String
+    let side: TurtlePhotoSide
+    let sideMatches: Bool
+    let dateText: String
+    let location: String
+    let confidencePercent: Int
+    let image: NSImage?
+    let sampleImageName: String?
+    let fingerprint: I3SFingerprint?
+}
+
+struct EscalatedNotSureCase: Identifiable {
+    let id = UUID()
+    let title: String
+    let side: TurtlePhotoSide
+    let queryImage: NSImage?
+    let queryFingerprint: I3SFingerprint?
+    let queryROI: [ScalePoint]
+    let candidates: [EscalatedNotSureCandidate]
+    let createdAt = Date()
+}
+
 @MainActor
 final class AppStore: ObservableObject {
     let organizationKeySettings: OrganizationAPIKeySettings
@@ -51,6 +77,7 @@ final class AppStore: ObservableObject {
         didSet { Task { await reloadDashboard() } }
     }
     @Published private(set) var turtles: [Turtle] = []
+    @Published private(set) var analyticsTurtles: [Turtle] = []
     @Published private(set) var favoriteTurtles: [Turtle] = []
     @Published private(set) var sightings: [Sighting] = []
     @Published private(set) var dashboard: DashboardSnapshot = DashboardSnapshot(months: [], species: [])
@@ -76,7 +103,9 @@ final class AppStore: ObservableObject {
     @Published var isEditingDashboardWidgets = false
     @Published var isWidgetPickerPresented = false
     @Published var requestedReviewScenario: ReviewScenarioID = .rankOneJunctionMismatch
-    @Published var requestedReviewLayoutMode: ScientistComparisonLayoutMode = .sideBySide
+    @Published var requestedReviewLayoutMode: ScientistComparisonLayoutMode = .contours
+    @Published var requestedEscalatedCaseID: UUID? = nil
+    @Published var escalatedNotSureCases: [EscalatedNotSureCase] = []
     @Published var reviewNavigationTrigger = UUID()
     @Published private(set) var apiBaseURLString: String
     @Published private(set) var isAuthenticated = false
@@ -101,7 +130,7 @@ final class AppStore: ObservableObject {
     init(
         repository: TurtleRepository? = nil,
         client: APIClient? = nil,
-        dashboardLayoutStore: DashboardLayoutStore = DashboardLayoutStore()
+        dashboardLayoutStore: DashboardLayoutStore? = nil
     ) {
         let client = client ?? APIClient()
         self.client = client
@@ -166,7 +195,7 @@ final class AppStore: ObservableObject {
             isAuthenticated = true
             authEmail = demoPersona.email
             accountName = demoPersona.displayName
-            accountOrganization = "Sea Turtle Group"
+            accountOrganization = demoPersona.organizationName
             accountRoleLabel = demoPersona.roleLabel
         } else {
             isAuthenticated = client.account != nil
@@ -193,7 +222,11 @@ final class AppStore: ObservableObject {
         demoPersona = persona
         isEditingDashboardWidgets = false
         clearPrivateState(keepDemoMode: true)
-        repository = DemoTurtleRepository()
+        let dataset: DemoTurtleRepository.Dataset = persona == .superAsiaNetwork ? .panAsiaSuperAccount : .baliBaseline
+        repository = DemoTurtleRepository(dataset: dataset)
+        if persona == .superAsiaNetwork {
+            selectedMapPeriod = .allTime
+        }
         updateAccount()
         let generation = sessionGeneration
         Task {
@@ -203,18 +236,44 @@ final class AppStore: ObservableObject {
     }
 
     func selectDemoPersona(_ persona: DemoDashboardPersona) {
+        let datasetChanged = (demoPersona == .superAsiaNetwork) != (persona == .superAsiaNetwork)
         demoPersona = persona
         isEditingDashboardWidgets = false
-        updateAccount()
+        if datasetChanged && isDemoBypassActive {
+            clearPrivateState(keepDemoMode: true)
+            let dataset: DemoTurtleRepository.Dataset = persona == .superAsiaNetwork ? .panAsiaSuperAccount : .baliBaseline
+            repository = DemoTurtleRepository(dataset: dataset)
+            if persona == .superAsiaNetwork {
+                selectedMapPeriod = .allTime
+            }
+            updateAccount()
+            let generation = sessionGeneration
+            Task {
+                guard sessionGeneration == generation else { return }
+                await reloadAll()
+            }
+        } else {
+            updateAccount()
+        }
     }
 
     func openNotSureReview(
         scenario: ReviewScenarioID = .rankOneJunctionMismatch,
-        layoutMode: ScientistComparisonLayoutMode = .sideBySide
+        layoutMode: ScientistComparisonLayoutMode = .contours
     ) {
         selectedTurtle = nil
+        requestedEscalatedCaseID = nil
         requestedReviewScenario = scenario
         requestedReviewLayoutMode = layoutMode
+        reviewNavigationTrigger = UUID()
+        activeSection = .scientistReview
+    }
+
+    func escalateToNotSureReview(_ item: EscalatedNotSureCase) {
+        selectedTurtle = nil
+        escalatedNotSureCases.insert(item, at: 0)
+        requestedEscalatedCaseID = item.id
+        requestedReviewLayoutMode = .contours
         reviewNavigationTrigger = UUID()
         activeSection = .scientistReview
     }
@@ -298,6 +357,7 @@ final class AppStore: ObservableObject {
         mapTask?.cancel()
         photoCache.removeAll()
         turtles = []
+        analyticsTurtles = []
         favoriteTurtles = []
         sightings = []
         dashboard = DashboardSnapshot(months: [], species: [])
@@ -306,9 +366,12 @@ final class AppStore: ObservableObject {
         isIndividualsLoading = false
         individualRequest += 1
         dismissDetail()
+        escalatedNotSureCases.removeAll()
+        requestedEscalatedCaseID = nil
         isLoading = false
         lastError = nil
-        repository = isDemoBypassActive ? DemoTurtleRepository() : RemoteTurtleRepository(client: client)
+        let demoDataset: DemoTurtleRepository.Dataset = demoPersona == .superAsiaNetwork ? .panAsiaSuperAccount : .baliBaseline
+        repository = isDemoBypassActive ? DemoTurtleRepository(dataset: demoDataset) : RemoteTurtleRepository(client: client)
     }
 
     deinit { searchTask?.cancel(); mapTask?.cancel() }
@@ -355,6 +418,7 @@ final class AppStore: ObservableObject {
             guard sessionGeneration == generation else { return }
             if individualRequest == individualRevision, currentIndividualQuery == individualQuery {
                 turtles = page.items
+                analyticsTurtles = (repository as? DemoTurtleRepository)?.fullCatalogForAnalytics ?? page.items
                 totalIndividuals = page.total
                 favoriteTurtles = favoriteItems
             }
@@ -668,10 +732,9 @@ final class AppStore: ObservableObject {
     }
 
     private func scheduleMapReload() {
-        sightings = []
         mapTask?.cancel()
         mapTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(100))
+            try? await Task.sleep(for: .milliseconds(260))
             guard !Task.isCancelled, let self else { return }
             await self.reloadMap()
         }

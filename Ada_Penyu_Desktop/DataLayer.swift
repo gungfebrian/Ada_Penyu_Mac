@@ -958,9 +958,33 @@ private extension DashboardSnapshot {
 }
 
 final class DemoTurtleRepository: TurtleRepository {
-    private var turtles: [Turtle] = DemoFixtures.turtles
-    private var sightings: [Sighting] = DemoFixtures.sightings
-    private var favoriteIDs = Set(["Turtle #004", "Turtle #005"])
+    enum Dataset {
+        case baliBaseline
+        case panAsiaSuperAccount
+    }
+
+    private let dataset: Dataset
+    private var turtles: [Turtle]
+    private var sightings: [Sighting]
+    private var favoriteIDs: Set<String>
+
+    var fullCatalogForAnalytics: [Turtle] {
+        turtles.map(withFavorite)
+    }
+
+    init(dataset: Dataset = .baliBaseline) {
+        self.dataset = dataset
+        switch dataset {
+        case .baliBaseline:
+            self.turtles = DemoFixtures.turtles
+            self.sightings = DemoFixtures.sightings
+            self.favoriteIDs = Set(["Turtle #004", "Turtle #005"])
+        case .panAsiaSuperAccount:
+            self.turtles = DemoFixtures.superAsiaTurtles
+            self.sightings = DemoFixtures.superAsiaSightings
+            self.favoriteIDs = Set(["ASIA-IN-001", "ASIA-ID-002", "ASIA-MY-006", "ASIA-JP-021"])
+        }
+    }
 
     func listIndividuals(query: IndividualQuery) async throws -> Page<Turtle> {
         var results = turtles.filter { turtle in
@@ -1209,6 +1233,100 @@ enum DemoFixtures {
                         date: turtle.firstRecorded,
                         condition: turtle.condition,
                         coordinate: coord
+                    )
+                )
+            }
+        }
+        return result
+    }()
+
+    // MARK: - Pan-Asia Super Account Demo Dataset (SE Asia, India & Indian Ocean, East Asia)
+
+    static let superAsiaTurtles: [Turtle] = [
+        // South Asia / India & Indian Ocean
+        Turtle(id: "ASIA-IN-001", species: .oliveRidley, location: "Gahirmatha, Odisha, India", lastSeen: "12 Nov 2026", sightings: 14, condition: .healthy, firstRecorded: "18 Dec 2025", isFavorite: true, coordinate: TurtleCoordinate(latitude: 20.715, longitude: 87.018), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000001"), leftPhotoURL: "Amina1_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Kaveri", profileCode: "IND-OD-01"),
+        Turtle(id: "ASIA-IN-002", species: .oliveRidley, location: "Rushikulya, Odisha, India", lastSeen: "05 Nov 2026", sightings: 9, condition: .scarred, firstRecorded: "14 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 19.375, longitude: 85.075), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000002"), leftPhotoURL: "Ghost1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Chilika", profileCode: "IND-OD-02"),
+        Turtle(id: "ASIA-IN-003", species: .green, location: "Havelock Reef, Andaman, India", lastSeen: "09 Nov 2026", sightings: 11, condition: .healthy, firstRecorded: "04 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 11.976, longitude: 92.987), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000003"), leftPhotoURL: "Aikane1_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Swaraj", profileCode: "IND-AN-03"),
+        Turtle(id: "ASIA-IN-004", species: .leatherback, location: "Little Andaman, India", lastSeen: "21 Oct 2026", sightings: 5, condition: .injured, firstRecorded: "03 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 10.625, longitude: 92.548), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000004"), leftPhotoURL: "Hoku1_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Galathea", profileCode: "IND-AN-04"),
+        Turtle(id: "ASIA-IN-005", species: .green, location: "Agatti Lagoon, Lakshadweep, India", lastSeen: "15 Nov 2026", sightings: 12, condition: .healthy, firstRecorded: "22 Dec 2025", isFavorite: false, coordinate: TurtleCoordinate(latitude: 10.858, longitude: 72.194), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000005"), leftPhotoURL: "Amina2_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Agatti", profileCode: "IND-LK-05"),
+        Turtle(id: "ASIA-IN-006", species: .oliveRidley, location: "Pirotan Island, Gujarat, India", lastSeen: "28 Oct 2026", sightings: 6, condition: .scarred, firstRecorded: "11 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 22.601, longitude: 69.956), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000006"), leftPhotoURL: "Ghost2_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Kachchh", profileCode: "IND-GJ-06"),
+        Turtle(id: "ASIA-LK-007", species: .loggerhead, location: "Rekawa Lagoon, Sri Lanka", lastSeen: "01 Nov 2026", sightings: 8, condition: .healthy, firstRecorded: "09 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 6.046, longitude: 80.861), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000007"), leftPhotoURL: "Hoku2_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Rekawa", profileCode: "LKA-RK-07"),
+        Turtle(id: "ASIA-MV-008", species: .hawksbill, location: "Lhaviyani Atoll, Maldives", lastSeen: "07 Nov 2026", sightings: 10, condition: .healthy, firstRecorded: "15 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 5.402, longitude: 73.478), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000008"), leftPhotoURL: "Amina3_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Naifaru", profileCode: "MDV-LH-08"),
+
+        // Southeast Asia
+        Turtle(id: "ASIA-ID-009", species: .hawksbill, location: "Nusa Penida, Bali, Indonesia", lastSeen: "16 Nov 2026", sightings: 13, condition: .injured, firstRecorded: "06 Dec 2025", isFavorite: true, coordinate: TurtleCoordinate(latitude: -8.728, longitude: 115.544), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000009"), leftPhotoURL: "Amina1_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Amina", profileCode: "IDN-BA-09"),
+        Turtle(id: "ASIA-ID-010", species: .green, location: "Serangan Reef, Bali, Indonesia", lastSeen: "10 Nov 2026", sightings: 9, condition: .healthy, firstRecorded: "25 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.724, longitude: 115.250), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000010"), leftPhotoURL: "Aikane1_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Serangan", profileCode: "IDN-BA-10"),
+        Turtle(id: "ASIA-ID-011", species: .leatherback, location: "Misool, Raja Ampat, Indonesia", lastSeen: "03 Nov 2026", sightings: 7, condition: .healthy, firstRecorded: "19 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -1.915, longitude: 130.145), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000011"), leftPhotoURL: "Amina2_L.jpg", rightPhotoURL: nil, name: "Misool", profileCode: "IDN-RA-11"),
+        Turtle(id: "ASIA-ID-012", species: .green, location: "Derawan Atoll, Indonesia", lastSeen: "14 Nov 2026", sightings: 15, condition: .healthy, firstRecorded: "12 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 2.284, longitude: 118.248), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000012"), leftPhotoURL: "Hoku1_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Derawan", profileCode: "IDN-DE-12"),
+        Turtle(id: "ASIA-ID-013", species: .hawksbill, location: "Wakatobi Reef, Indonesia", lastSeen: "19 Oct 2026", sightings: 6, condition: .scarred, firstRecorded: "08 May 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -5.318, longitude: 123.595), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000013"), leftPhotoURL: "Ghost1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Hoga", profileCode: "IDN-WK-13"),
+        Turtle(id: "ASIA-MY-014", species: .green, location: "Sipadan, Sabah, Malaysia", lastSeen: "11 Nov 2026", sightings: 16, condition: .healthy, firstRecorded: "02 Dec 2025", isFavorite: true, coordinate: TurtleCoordinate(latitude: 4.115, longitude: 118.628), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000014"), leftPhotoURL: "Aikane2_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Sipadan", profileCode: "MYS-SB-14"),
+        Turtle(id: "ASIA-MY-015", species: .hawksbill, location: "Pulau Redang, Malaysia", lastSeen: "23 Oct 2026", sightings: 7, condition: .injured, firstRecorded: "27 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 5.775, longitude: 103.008), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000015"), leftPhotoURL: "Ghost2_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Chagar", profileCode: "MYS-TR-15"),
+        Turtle(id: "ASIA-TH-016", species: .green, location: "Similan Islands, Thailand", lastSeen: "04 Nov 2026", sightings: 8, condition: .healthy, firstRecorded: "16 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 8.650, longitude: 97.641), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000016"), leftPhotoURL: "Hoku2_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Andaman", profileCode: "THA-SM-16"),
+        Turtle(id: "ASIA-TH-017", species: .hawksbill, location: "Koh Tao, Thailand", lastSeen: "29 Oct 2026", sightings: 5, condition: .scarred, firstRecorded: "04 Jun 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 10.072, longitude: 99.839), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000017"), leftPhotoURL: "Amina3_L.jpg", rightPhotoURL: nil, name: "Tao", profileCode: "THA-KT-17"),
+        Turtle(id: "ASIA-PH-018", species: .green, location: "Apo Reef, Philippines", lastSeen: "08 Nov 2026", sightings: 10, condition: .healthy, firstRecorded: "13 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 12.662, longitude: 120.415), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000018"), leftPhotoURL: "Aikane1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Apo", profileCode: "PHL-AP-18"),
+        Turtle(id: "ASIA-PH-019", species: .hawksbill, location: "El Nido, Palawan, Philippines", lastSeen: "15 Oct 2026", sightings: 6, condition: .healthy, firstRecorded: "20 May 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 11.195, longitude: 119.392), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000019"), leftPhotoURL: "Hoku1_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Bacuit", profileCode: "PHL-PL-19"),
+        Turtle(id: "ASIA-VN-020", species: .green, location: "Con Dao Islands, Vietnam", lastSeen: "06 Nov 2026", sightings: 9, condition: .healthy, firstRecorded: "07 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 8.685, longitude: 106.607), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000020"), leftPhotoURL: "Amina1_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Bay Canh", profileCode: "VNM-CD-20"),
+
+        // East Asia
+        Turtle(id: "ASIA-JP-021", species: .loggerhead, location: "Zamami, Okinawa, Japan", lastSeen: "13 Nov 2026", sightings: 11, condition: .healthy, firstRecorded: "10 Jan 2026", isFavorite: true, coordinate: TurtleCoordinate(latitude: 26.228, longitude: 127.303), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000021"), leftPhotoURL: nil, rightPhotoURL: "Zizo1_R.jpg", name: "Kerama", profileCode: "JPN-OK-21"),
+        Turtle(id: "ASIA-JP-022", species: .green, location: "Chichijima, Ogasawara, Japan", lastSeen: "22 Oct 2026", sightings: 7, condition: .healthy, firstRecorded: "28 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 27.095, longitude: 142.191), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000022"), leftPhotoURL: "Hoku2_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Bonin", profileCode: "JPN-OG-22"),
+        Turtle(id: "ASIA-TW-023", species: .green, location: "Liuqiu Island, Taiwan", lastSeen: "30 Oct 2026", sightings: 8, condition: .injured, firstRecorded: "18 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 22.342, longitude: 120.369), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000023"), leftPhotoURL: "Ghost1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Xiaoqiu", profileCode: "TWN-LQ-23"),
+        Turtle(id: "ASIA-TW-024", species: .oliveRidley, location: "Penghu Channel, Taiwan", lastSeen: "18 Sep 2026", sightings: 4, condition: .healthy, firstRecorded: "11 Jun 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 23.568, longitude: 119.566), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000024"), leftPhotoURL: "Amina2_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Penghu", profileCode: "TWN-PH-24"),
+    ]
+
+    static let superAsiaSightings: [Sighting] = {
+        var result: [Sighting] = []
+        let migrationHops: [String: (location: String, date: String, lat: Double, lon: Double)] = [
+            "ASIA-IN-001": ("Rushikulya Offshore, India", "19 Sep 2026", 19.42, 85.15),
+            "ASIA-IN-003": ("Neil Island, Andaman, India", "12 Aug 2026", 11.83, 93.04),
+            "ASIA-IN-005": ("Bangaram Atoll, Lakshadweep", "24 Aug 2026", 10.94, 72.29),
+            "ASIA-ID-009": ("Crystal Bay, Nusa Penida", "14 Aug 2026", -8.714, 115.458),
+            "ASIA-ID-010": ("Sanur Reef, Bali, Indonesia", "29 Jul 2026", -8.687, 115.262),
+            "ASIA-ID-012": ("Sangalaki Island, Indonesia", "10 Jul 2026", 2.092, 118.401),
+            "ASIA-MY-014": ("Mabul Reef, Sabah, Malaysia", "03 Sep 2026", 4.245, 118.631),
+            "ASIA-PH-018": ("Coron Passage, Philippines", "21 Aug 2026", 11.98, 120.20),
+            "ASIA-JP-021": ("Aka Island, Okinawa, Japan", "07 Jul 2026", 26.198, 127.281),
+            "ASIA-LK-007": ("Trincomalee Reef, Sri Lanka", "16 Jun 2026", 8.587, 81.215),
+        ]
+        for (index, turtle) in superAsiaTurtles.enumerated() {
+            let coord = turtle.coordinate ?? TurtleCoordinate(latitude: 5.0, longitude: 105.0)
+            result.append(
+                Sighting(
+                    name: turtle.displayName,
+                    id: "asia-s-cur-\(index + 1)",
+                    turtleID: turtle.id,
+                    species: turtle.species,
+                    location: turtle.location,
+                    date: turtle.lastSeen,
+                    condition: turtle.condition,
+                    coordinate: coord
+                )
+            )
+            if let hop = migrationHops[turtle.id] {
+                result.append(
+                    Sighting(
+                        name: turtle.displayName,
+                        id: "asia-s-mid-\(index + 1)",
+                        turtleID: turtle.id,
+                        species: turtle.species,
+                        location: hop.location,
+                        date: hop.date,
+                        condition: turtle.condition,
+                        coordinate: TurtleCoordinate(latitude: hop.lat, longitude: hop.lon)
+                    )
+                )
+            }
+            if turtle.sightings > 4 {
+                result.append(
+                    Sighting(
+                        name: turtle.displayName,
+                        id: "asia-s-first-\(index + 1)",
+                        turtleID: turtle.id,
+                        species: turtle.species,
+                        location: turtle.location,
+                        date: turtle.firstRecorded,
+                        condition: turtle.condition,
+                        coordinate: TurtleCoordinate(latitude: coord.latitude + 0.04, longitude: coord.longitude - 0.04)
                     )
                 )
             }

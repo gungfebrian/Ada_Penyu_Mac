@@ -30,7 +30,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .dashboard: "square.grid.2x2"
         case .map: "map"
         case .individuals: "tortoise"
-        case .scientistReview: "rectangle.split.2x1.badge.gearshape"
+        case .scientistReview: "questionmark.circle"
         case .identification: "viewfinder.circle"
         case .favorites: "heart"
         case .sightings: "binoculars"

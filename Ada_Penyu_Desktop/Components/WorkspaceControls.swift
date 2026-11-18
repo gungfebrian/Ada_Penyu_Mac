@@ -92,13 +92,6 @@ struct WorkspaceHeader: View {
                         .help("Switch account workspace")
                     }
                     SpeciesPicker(selection: $store.chartSpecies)
-                    Button {
-                        store.isWidgetPickerPresented = true
-                    } label: {
-                        ContextPill(title: "Add Widget", icon: "plus.square.on.square")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open visual widget gallery")
 
                     Button {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
@@ -106,9 +99,9 @@ struct WorkspaceHeader: View {
                         }
                     } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: store.isEditingDashboardWidgets ? "checkmark" : "square.grid.2x2")
+                            Image(systemName: store.isEditingDashboardWidgets ? "checkmark" : "slider.horizontal.3")
                                 .font(.system(size: 11, weight: .semibold))
-                            Text(store.isEditingDashboardWidgets ? "Done" : "Edit Widgets")
+                            Text(store.isEditingDashboardWidgets ? "Done" : "Customize")
                                 .font(.system(size: 12, weight: store.isEditingDashboardWidgets ? .semibold : .regular))
                         }
                         .foregroundStyle(store.isEditingDashboardWidgets ? .white : AdaColors.ink)

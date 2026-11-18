@@ -26,7 +26,6 @@ struct AccountLoginView: View {
     static let enableQuickDemoBypass = true
 
     @ObservedObject var store: AppStore
-    @AppStorage("ada.quickDemoBypassHidden") private var isQuickDemoHidden = false
     @State private var email = ""
     @State private var password = ""
     @State private var rememberMe = false
@@ -49,51 +48,38 @@ struct AccountLoginView: View {
                 HStack(spacing: 0) {
                     if isSplitLayout {
                         welcomePanel
-                            .frame(width: min(max(geometry.size.width * 0.42, 380), 520))
+                            .frame(width: min(max(geometry.size.width * 0.42, 360), 500))
                     }
 
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            if !isSplitLayout {
-                                compactBrandHeader
-                            }
-
-                            if Self.enableQuickDemoBypass {
-                                quickDemoBypassBanner
-                            }
-
-                            loginCard
-
-                            #if DEBUG
-                            Button {
-                                store.isAuthSheetPresented = true
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "slider.horizontal.3")
-                                        .font(.system(size: 11, weight: .medium))
-                                    Text("Developer API settings…")
-                                        .font(.system(size: 12, weight: .medium))
+                    ZStack(alignment: .bottomTrailing) {
+                        ScrollView {
+                            VStack(spacing: 18) {
+                                if !isSplitLayout {
+                                    compactBrandHeader
                                 }
-                                .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule()
-                                        .fill(FigCraftLoginTokens.surface.opacity(0.75))
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(FigCraftLoginTokens.secondaryBorder, lineWidth: 1)
-                                        )
-                                )
+
+                                loginCard
                             }
-                            .buttonStyle(.plain)
-                            .disabled(isSigningIn)
-                            #endif
+                            .frame(maxWidth: 410)
+                            .padding(.horizontal, FigCraftLoginTokens.gutter)
+                            .padding(.vertical, 36)
+                            .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                         }
-                        .frame(maxWidth: 440)
-                        .padding(.horizontal, FigCraftLoginTokens.gutter)
-                        .padding(.vertical, 40)
-                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+
+                        #if DEBUG
+                        Button {
+                            store.isAuthSheetPresented = true
+                        } label: {
+                            Label("API Settings", systemImage: "slider.horizontal.3")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(FigCraftLoginTokens.supportingInk)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isSigningIn)
+                        .padding(14)
+                        #endif
                     }
                     .background(FigCraftLoginTokens.background)
                     .clipShape(
@@ -113,54 +99,23 @@ struct AccountLoginView: View {
 
     private var compactBrandHeader: some View {
         HStack(spacing: 12) {
-            Image("AdaPenyuMark").resizable().renderingMode(.template).scaledToFit().frame(width: 40, height: 40).foregroundStyle(FigCraftLoginTokens.primary)
-            VStack(alignment: .leading, spacing: 2) {
-                Image("AdaPenyuWordmark").resizable().renderingMode(.template).scaledToFit().frame(width: 130, height: 24)
-                    .foregroundStyle(FigCraftLoginTokens.primary)
-                Text("Sea Turtle Group")
-                    .font(.system(size: 12))
-                    .foregroundStyle(FigCraftLoginTokens.supportingInk)
-            }
+            Image("AdaPenyuMark").resizable().renderingMode(.template).scaledToFit().frame(width: 36, height: 36).foregroundStyle(FigCraftLoginTokens.primary)
+            Image("AdaPenyuWordmark").resizable().renderingMode(.template).scaledToFit().frame(width: 124, height: 22)
+                .foregroundStyle(FigCraftLoginTokens.primary)
             Spacer()
         }
     }
 
     private var loginCard: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text("SEA TURTLE GROUP")
-                        .font(.system(size: 11, weight: .semibold))
-                        .tracking(1.2)
-                        .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                    Spacer()
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(AdaColors.green)
-                            .frame(width: 6, height: 6)
-                        Text("Conservation Workspace")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(FigCraftLoginTokens.background, in: Capsule())
-                }
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Sign in")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(FigCraftLoginTokens.primary)
 
-                Text("Welcome back.")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(FigCraftLoginTokens.primary)
-
-                Text("Sign in to inspect encounters, review scale patterns, and sync field records.")
-                    .font(.system(size: 14))
-                    .foregroundStyle(FigCraftLoginTokens.supportingInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Email address")
-                        .font(.system(size: 13, weight: .medium))
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Email")
+                        .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(FigCraftLoginTokens.primary)
 
                     HStack(spacing: 10) {
@@ -185,15 +140,15 @@ struct AccountLoginView: View {
                             .onSubmit { focusedField = .password }
                             .accessibilityLabel("Email address")
                             .textFieldStyle(.plain)
-                            .font(.system(size: 14))
+                            .font(.system(size: 13.5))
                             .foregroundStyle(FigCraftLoginTokens.primary)
                     }
                     .modifier(LoginInputStyle(isFocused: focusedField == .email))
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("Password")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(FigCraftLoginTokens.primary)
 
                     HStack(spacing: 10) {
@@ -212,14 +167,14 @@ struct AccountLoginView: View {
                                 TextField(
                                     "",
                                     text: $password,
-                                    prompt: Text(verbatim: "Enter your password")
+                                    prompt: Text(verbatim: "Password")
                                         .foregroundColor(FigCraftLoginTokens.supportingInk)
                                 )
                             } else {
                                 SecureField(
                                     "",
                                     text: $password,
-                                    prompt: Text(verbatim: "Enter your password")
+                                    prompt: Text(verbatim: "Password")
                                         .foregroundColor(FigCraftLoginTokens.supportingInk)
                                 )
                             }
@@ -229,7 +184,7 @@ struct AccountLoginView: View {
                         .onSubmit(signIn)
                         .accessibilityLabel("Password")
                         .textFieldStyle(.plain)
-                        .font(.system(size: 14))
+                        .font(.system(size: 13.5))
                         .foregroundStyle(FigCraftLoginTokens.primary)
 
                         Button {
@@ -248,31 +203,15 @@ struct AccountLoginView: View {
                     .modifier(LoginInputStyle(isFocused: focusedField == .password))
                 }
 
-                HStack(spacing: 8) {
-                    Toggle("Keep me signed in on this Mac", isOn: $rememberMe)
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 13))
-                        .foregroundStyle(FigCraftLoginTokens.primary)
-
-                    Spacer()
-
-                    HStack(spacing: 4) {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 10))
-                        Text("Keychain")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(FigCraftLoginTokens.supportingInk)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(FigCraftLoginTokens.background, in: Capsule())
-                    .help("Your remembered session is stored securely in the macOS Keychain.")
-                }
+                Toggle("Remember me", isOn: $rememberMe)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
 
                 if let message = errorMessage ?? store.lastError {
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 14))
+                            .font(.system(size: 13))
                             .foregroundStyle(AdaColors.red)
                             .padding(.top, 1)
 
@@ -282,19 +221,11 @@ struct AccountLoginView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                     }
-                    .padding(14)
+                    .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: FigCraftLoginTokens.inputRadius, style: .continuous)
-                            .fill(AdaColors.red.opacity(0.08))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: FigCraftLoginTokens.inputRadius, style: .continuous)
-                                    .stroke(AdaColors.red.opacity(0.22), lineWidth: 1)
-                            )
-                    )
+                    .background(AdaColors.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
 
-                // FigCraft Design System Primary Action: pill button (#0B253A, height 52)
                 Button(action: signIn) {
                     HStack(spacing: 8) {
                         if isSigningIn {
@@ -303,14 +234,14 @@ struct AccountLoginView: View {
                                 .tint(.white)
                         }
                         Text(isSigningIn ? "Signing in…" : "Sign in")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                         if !isSigningIn {
                             Image(systemName: "arrow.right")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: 12, weight: .semibold))
                         }
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 50)
+                    .frame(height: 46)
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -322,126 +253,76 @@ struct AccountLoginView: View {
                 .disabled(!canSubmit)
                 .keyboardShortcut(.defaultAction)
 
-                Label("Your remembered session is stored securely on this Mac.", systemImage: "lock")
-                    .font(.system(size: 12))
-                    .foregroundStyle(FigCraftLoginTokens.supportingInk)
+                if Self.enableQuickDemoBypass {
+                    HStack(spacing: 10) {
+                        Rectangle().fill(FigCraftLoginTokens.secondaryBorder.opacity(0.7)).frame(height: 1)
+                        Text("demo")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(FigCraftLoginTokens.supportingInk)
+                        Rectangle().fill(FigCraftLoginTokens.secondaryBorder.opacity(0.7)).frame(height: 1)
+                    }
+                    .padding(.top, 2)
+
+                    HStack(spacing: 8) {
+                        Button {
+                            password = ""
+                            store.enterDemoWorkspace(persona: .superAsiaNetwork)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "globe.asia.australia.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text("Asia Super Demo")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                Spacer()
+                                Text("⌘D")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.white.opacity(0.20), in: Capsule())
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 42)
+                            .background(Capsule().fill(FigCraftLoginTokens.elevatedNavy))
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut("d", modifiers: [.command])
+                        .accessibilityLabel("Quick Demo Mode")
+
+                        ActionDropdown(items: DemoDashboardPersona.allCases.map { persona in
+                            DropdownAction(
+                                title: persona.displayName,
+                                selected: false,
+                                action: {
+                                    password = ""
+                                    store.enterDemoWorkspace(persona: persona)
+                                }
+                            )
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "person.crop.circle")
+                                    .font(.system(size: 13))
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundStyle(FigCraftLoginTokens.primary)
+                            .frame(width: 52, height: 42)
+                            .background(FigCraftLoginTokens.background, in: Capsule())
+                            .overlay(Capsule().stroke(FigCraftLoginTokens.secondaryBorder, lineWidth: 1))
+                        }
+                        .help("Choose demo role")
+                    }
+                }
             }
             .disabled(isSigningIn)
         }
-        .padding(FigCraftLoginTokens.gutter)
+        .padding(28)
         .background(
             RoundedRectangle(cornerRadius: FigCraftLoginTokens.cardRadius, style: .continuous)
                 .fill(FigCraftLoginTokens.surface)
-                .shadow(color: Color.black.opacity(0.04), radius: 16, y: 6)
+                .shadow(color: Color.black.opacity(0.05), radius: 18, y: 8)
         )
-    }
-
-    @ViewBuilder
-    private var quickDemoBypassBanner: some View {
-        if isQuickDemoHidden {
-            HStack {
-                Spacer()
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        isQuickDemoHidden = false
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 9))
-                        Text("Show Demo Shortcut")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(FigCraftLoginTokens.surface))
-                }
-                .buttonStyle(.plain)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Button {
-                        password = ""
-                        store.enterDemoWorkspace()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "bolt.fill")
-                                .font(.system(size: 13, weight: .bold))
-                            Text("Quick Demo Mode (No Login)")
-                                .font(.system(size: 14, weight: .semibold))
-                            Spacer()
-                            Text("⌘D")
-                                .font(.system(size: 11, weight: .semibold))
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 2)
-                                .background(Color.white.opacity(0.18), in: Capsule())
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 12, weight: .bold))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 44)
-                        .background(Capsule().fill(AdaColors.green))
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut("d", modifiers: [.command])
-                    .accessibilityLabel("Quick Demo Mode")
-
-                    Button {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isQuickDemoHidden = true
-                        }
-                    } label: {
-                        Image(systemName: "eye.slash")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(FigCraftLoginTokens.background))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Hide demo button (can be re-shown anytime)")
-                    .accessibilityLabel("Hide demo button")
-                }
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        Text("Jump in as:")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(FigCraftLoginTokens.supportingInk)
-
-                        ForEach(DemoDashboardPersona.allCases) { persona in
-                            Button {
-                                password = ""
-                                store.enterDemoWorkspace(persona: persona)
-                            } label: {
-                                Text(persona.displayName)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(FigCraftLoginTokens.primary)
-                                    .padding(.horizontal, 10)
-                                    .frame(height: 25)
-                                    .background(
-                                        Capsule()
-                                            .fill(FigCraftLoginTokens.background)
-                                            .overlay(
-                                                Capsule().stroke(FigCraftLoginTokens.secondaryBorder, lineWidth: 1)
-                                            )
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(FigCraftLoginTokens.surface)
-                    .shadow(color: Color.black.opacity(0.05), radius: 12, y: 4)
-            )
-        }
     }
 
     private var welcomePanel: some View {
@@ -454,92 +335,42 @@ struct AccountLoginView: View {
                     .scaledToFill()
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .clipped()
-                    .opacity(0.55)
+                    .opacity(0.45)
             }
             .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 28) {
-                // Brand row matching FigCraft Overview sidebar top-left identity
+            VStack(alignment: .leading, spacing: 24) {
                 HStack(spacing: 12) {
-                    Image("AdaPenyuMark").resizable().scaledToFit().frame(width: 42, height: 42)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Image("AdaPenyuWordmark").resizable().scaledToFit().frame(width: 140, height: 26)
-                            .foregroundStyle(.white)
-                        Text("Sea Turtle Group")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.72))
-                    }
+                    Image("AdaPenyuMark").resizable().scaledToFit().frame(width: 40, height: 40)
+                    Image("AdaPenyuWordmark").resizable().scaledToFit().frame(width: 134, height: 24)
+                        .foregroundStyle(.white)
                 }
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 16)
 
                 Image("turtleShade")
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: 270)
-                    .opacity(0.85)
+                    .frame(maxWidth: 250)
+                    .opacity(0.88)
                     .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Every encounter\nhelps tell their story.")
-                        .font(.system(size: 34, weight: .semibold))
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Sea Turtle\nPhoto-ID")
+                        .font(.system(size: 36, weight: .semibold))
                         .tracking(-0.6)
-                        .fixedSize(horizontal: false, vertical: true)
 
-                    Text("A shared desktop workspace to recognise sea turtles, compare scale patterns, and follow their coastal journeys.")
-                        .font(.system(size: 15))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .lineSpacing(4)
-                        .foregroundStyle(.white.opacity(0.82))
-                        .frame(maxWidth: 360, alignment: .leading)
-                }
-
-                // Elevated sub-card inspired by FigCraft Overview hero stat cards (#19344A, 18pt radius)
-                HStack(spacing: 12) {
-                    welcomePillar(icon: "square.grid.2x2", title: "Overview", subtitle: "Sightings & trends")
-                    welcomePillar(icon: "map", title: "Coastal Map", subtitle: "Encounter pins")
-                    welcomePillar(icon: "viewfinder", title: "Photo ID", subtitle: "I3S & scale review")
+                    Text("Southeast Asia · India · Indo-Pacific")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.76))
                 }
 
                 Spacer(minLength: 8)
-
-                HStack(spacing: 8) {
-                    Image(systemName: "water.waves")
-                    Text("Built around conservation · Bali monitoring")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(.white.opacity(0.76))
             }
             .foregroundStyle(.white)
             .padding(40)
         }
         .clipped()
-    }
-
-    private func welcomePillar(icon: String, title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.9))
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-            Text(subtitle)
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.68))
-                .lineLimit(1)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(FigCraftLoginTokens.elevatedNavy.opacity(0.88))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-        )
     }
 
     private func signIn() {

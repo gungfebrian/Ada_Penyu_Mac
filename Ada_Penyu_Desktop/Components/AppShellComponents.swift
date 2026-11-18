@@ -70,7 +70,7 @@ struct SidebarView: View {
                     selection = .favorites
                     expandIfCollapsed()
                 }),
-                DropdownAction(title: "Not Sure Review (2)", selected: selection == .scientistReview, action: {
+                DropdownAction(title: "Not Sure Review (\(notSurePendingCount))", selected: selection == .scientistReview, action: {
                     selection = .scientistReview
                     expandIfCollapsed()
                 }),
@@ -120,10 +120,10 @@ struct SidebarView: View {
                     .font(.system(size: 17))
                     .frame(width: 24)
                     .overlay(alignment: .topTrailing) {
-                        if section == .scientistReview && isCollapsed {
+                        if section == .scientistReview && isCollapsed && notSurePendingCount > 0 {
                             Circle()
-                                .fill(AdaColors.orange)
-                                .frame(width: 8, height: 8)
+                                .fill(.white)
+                                .frame(width: 7, height: 7)
                                 .offset(x: 4, y: -3)
                                 .transition(.scale.combined(with: .opacity))
                         }
@@ -135,13 +135,13 @@ struct SidebarView: View {
                         .fixedSize(horizontal: true, vertical: false)
                         .transition(.opacity)
                     Spacer(minLength: 0)
-                    if section == .scientistReview {
-                        Text("2")
+                    if section == .scientistReview && notSurePendingCount > 0 {
+                        Text("\(notSurePendingCount)")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(AdaColors.navy)
                             .padding(.horizontal, 7)
                             .frame(height: 18)
-                            .background(AdaColors.orange, in: Capsule())
+                            .background(.white.opacity(0.92), in: Capsule())
                             .transition(.opacity)
                     }
                 }

@@ -247,11 +247,11 @@ enum DashboardRolePreset: String, CaseIterable, Identifiable, Codable, Hashable 
         case .generalOverview:
             return [
                 DashboardWidgetItem(kind: .kpiOverview, span: .full),
-                DashboardWidgetItem(kind: .notSureQueue, span: .half),
-                DashboardWidgetItem(kind: .recentSightings, span: .half),
                 DashboardWidgetItem(kind: .sightingsTrend, span: .half),
                 DashboardWidgetItem(kind: .geographicMap, span: .half),
+                DashboardWidgetItem(kind: .recentSightings, span: .half),
                 DashboardWidgetItem(kind: .speciesBreakdown, span: .half),
+                DashboardWidgetItem(kind: .notSureQueue, span: .half),
                 DashboardWidgetItem(kind: .photoIDReadiness, span: .half),
             ]
         case .populationEcology:
@@ -288,6 +288,7 @@ enum DashboardRolePreset: String, CaseIterable, Identifiable, Codable, Hashable 
 /// so each account's personalized widget workspace can be demonstrated and persisted independently.
 enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable {
     case demoResearcher = "demo_researcher"
+    case superAsiaNetwork = "super_asia_network"
     case ecologistAmina = "ecologist_amina"
     case rangerWayan = "ranger_wayan"
     case vetPutu = "vet_putu"
@@ -297,6 +298,7 @@ enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable
     var displayName: String {
         switch self {
         case .demoResearcher: "Demo Owner"
+        case .superAsiaNetwork: "Asia Super Account"
         case .ecologistAmina: "Dr. Amina Saleh"
         case .rangerWayan: "Ranger Wayan"
         case .vetPutu: "Dr. Putu Wijaya"
@@ -306,6 +308,7 @@ enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable
     var roleLabel: String {
         switch self {
         case .demoResearcher: "Tier 1 · Organization Owner"
+        case .superAsiaNetwork: "Tier 1 · SE Asia & India Network"
         case .ecologistAmina: "Tier 2 · Marine Scientist"
         case .rangerWayan: "Tier 3 · Field Patrol Ranger"
         case .vetPutu: "Tier 3 · Veterinary Triage"
@@ -315,15 +318,23 @@ enum DemoDashboardPersona: String, CaseIterable, Identifiable, Codable, Hashable
     var email: String {
         switch self {
         case .demoResearcher: "owner@seaturtle.org"
+        case .superAsiaNetwork: "asia-super@seaturtle.org"
         case .ecologistAmina: "amina@seaturtle.org"
         case .rangerWayan: "wayan@seaturtle.org"
         case .vetPutu: "putu@seaturtle.org"
         }
     }
 
+    var organizationName: String {
+        switch self {
+        case .superAsiaNetwork: "Indo-Pacific Turtle Network"
+        default: "Sea Turtle Group"
+        }
+    }
+
     var defaultPreset: DashboardRolePreset {
         switch self {
-        case .demoResearcher: .generalOverview
+        case .demoResearcher, .superAsiaNetwork: .generalOverview
         case .ecologistAmina: .populationEcology
         case .rangerWayan: .fieldRanger
         case .vetPutu: .healthTriage
@@ -378,7 +389,7 @@ struct DashboardAccountLayout: Codable, Hashable {
 // MARK: - Per-Account Persistence Store
 
 final class DashboardLayoutStore {
-    static let storageKey = "ada.dashboard.accountLayouts.v4"
+    static let storageKey = "ada.dashboard.accountLayouts.v5"
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
