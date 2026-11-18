@@ -1,0 +1,8 @@
+Natural Earth 50m Admin-0 Countries (WorldCountries50m.json)
+
+Derived from Natural Earth v5.x (1:50m Cultural Vectors: Admin 0 – Countries),
+simplified via Douglas-Peucker (0.06° tolerance) into compact multi-ring
+land/coastline polygons with ISO-A2, English, and Bahasa Indonesia labels.
+
+License: Public Domain (https://www.naturalearthdata.com/about/terms-of-use/)
+"Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com."
