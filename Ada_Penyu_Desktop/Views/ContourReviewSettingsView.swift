@@ -75,7 +75,7 @@ struct ContourReviewSettingsView: View {
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(AdaColors.ink)
                             Spacer()
-                            Text(store.preferences.edgeThreshold, format: .number.precision(.fractionLength(2)))
+                            Text(String(format: "%.2f", store.preferences.edgeThreshold))
                                 .font(.system(size: 13, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(AdaColors.navy)
                                 .accessibilityIdentifier("settings.contour.edgeThresholdValue")

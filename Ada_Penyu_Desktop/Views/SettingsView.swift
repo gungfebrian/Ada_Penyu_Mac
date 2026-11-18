@@ -73,7 +73,7 @@ struct SettingsView: View {
                         SettingsNavigationRow(
                             icon: "person.2",
                             title: "Manage Rangers",
-                            trailingValue: organisation.memberCountSummary,
+                            trailingValue: localizedMemberCount,
                             accessibilityID: "settings.row.manageRangers"
                         ) {
                             store.requestSettingsDetail(.manageRangers)
@@ -227,17 +227,25 @@ struct SettingsView: View {
     }
 
     private var accountBadgeText: String {
-        if store.isDemoBypassActive { return "Demo" }
-        if store.isLiveOwner { return "Owner" }
-        if store.isLiveRanger { return "Ranger" }
+        if store.isDemoBypassActive { return store.localization.localized("Demo") }
+        if store.isLiveOwner { return store.localization.localized("Owner") }
+        if store.isLiveRanger { return store.localization.localized("Ranger") }
         return store.accountRoleLabel
     }
 
+    private var localizedMemberCount: String? {
+        guard organisation.canManageRangers else { return nil }
+        let count = organisation.profile?.memberCount ?? (organisation.rangerTotal > 0 ? organisation.rangerTotal : nil)
+        guard let count else { return nil }
+        let unit = store.localization.localized(count == 1 ? "member" : "members")
+        return "\(count) \(unit)"
+    }
+
     private var apiKeyRowStatus: String? {
-        if store.isDemoBypassActive { return "Demo" }
-        if !store.isLiveOwner { return "Owner only" }
+        if store.isDemoBypassActive { return store.localization.localized("Demo") }
+        if !store.isLiveOwner { return store.localization.localized("Owner only") }
         if let metadata = model.metadata {
-            return metadata.configured ? "Active" : "Not configured"
+            return store.localization.localized(metadata.configured ? "Active" : "Not configured")
         }
         return nil
     }

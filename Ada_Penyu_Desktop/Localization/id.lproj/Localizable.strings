@@ -87,6 +87,8 @@
 "Location" = "Lokasi";
 "Optional location" = "Lokasi opsional";
 "Members" = "Anggota";
+"member" = "anggota";
+"members" = "anggota";
 "Not set" = "Belum diatur";
 "Only the organisation owner can edit organisation details." = "Hanya pemilik organisasi yang dapat mengubah detail organisasi.";
 "Search, invite, and manage ranger access for your organisation." = "Cari, undang, dan kelola akses ranger untuk organisasi Anda.";
