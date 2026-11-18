@@ -1,577 +1,453 @@
 import SwiftUI
 
-// Tokens aligned with FigCraft MCP "AdaPenyu Design System" (Frame 64) & "Overview" (Frame 2):
-// - Background: #F5F6F7 | Surface: #FFFFFF | Primary: #0B253A
-// - Secondary (border/divider): #D9D9D9 | Tertiary: #626F76 | Supporting: #71818B
-// - Input Focused: #E8E8E8
-// - 32 px gutters · 24 px card radius · 40 px main panel radius · pill buttons
-private enum FigCraftLoginTokens {
-    static let background = Color(red: 245 / 255, green: 246 / 255, blue: 247 / 255) // #F5F6F7
-    static let surface = Color.white // #FFFFFF
-    static let primary = Color(red: 11 / 255, green: 37 / 255, blue: 58 / 255) // #0B253A
-    static let elevatedNavy = Color(red: 25 / 255, green: 52 / 255, blue: 74 / 255) // #19344A
-    static let secondaryBorder = Color(red: 217 / 255, green: 217 / 255, blue: 217 / 255) // #D9D9D9
-    static let tertiaryInk = Color(red: 98 / 255, green: 111 / 255, blue: 118 / 255) // #626F76
-    static let supportingInk = Color(red: 113 / 255, green: 129 / 255, blue: 139 / 255) // #71818B
-    static let inputUnfocused = Color(red: 245 / 255, green: 246 / 255, blue: 247 / 255) // #F5F6F7
-    static let inputFocused = Color(red: 232 / 255, green: 232 / 255, blue: 232 / 255) // #E8E8E8
-    static let cardRadius: CGFloat = 24
-    static let mainPanelRadius: CGFloat = 40
-    static let inputRadius: CGFloat = 14
-    static let gutter: CGFloat = 32
-}
-
 struct AccountLoginView: View {
-    /// Set this to `false` later to completely remove the quick demo bypass from the login screen.
-    static let enableQuickDemoBypass = true
-
     @ObservedObject var store: AppStore
-    @AppStorage("ada.quickDemoBypassHidden") private var isQuickDemoHidden = false
     @State private var email = ""
     @State private var password = ""
     @State private var rememberMe = false
     @State private var isSigningIn = false
-    @State private var errorMessage: String?
-
     @State private var showsPassword = false
-    @FocusState private var focusedField: LoginField?
-    private enum LoginField { case email, password }
+    @State private var errorMessage: String?
+    @FocusState private var focusedField: Field?
+
+    private enum Field { case email, password, revealedPassword }
+
+    private var submittedEmail: String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var canSubmit: Bool {
-        !isSigningIn && !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
+        !isSigningIn && !submittedEmail.isEmpty && !password.isEmpty
     }
 
     var body: some View {
         GeometryReader { geometry in
-            let isSplitLayout = geometry.size.width >= 860
-            ZStack {
-                FigCraftLoginTokens.primary.ignoresSafeArea()
+            let isSplit = geometry.size.width >= 880
 
-                HStack(spacing: 0) {
-                    if isSplitLayout {
-                        welcomePanel
-                            .frame(width: min(max(geometry.size.width * 0.42, 380), 520))
-                    }
-
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            if !isSplitLayout {
-                                compactBrandHeader
-                            }
-
-                            if Self.enableQuickDemoBypass {
-                                quickDemoBypassBanner
-                            }
-
-                            loginCard
-
-                            #if DEBUG
-                            Button {
-                                store.isAuthSheetPresented = true
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "slider.horizontal.3")
-                                        .font(.system(size: 11, weight: .medium))
-                                    Text("Developer API settings…")
-                                        .font(.system(size: 12, weight: .medium))
-                                }
-                                .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule()
-                                        .fill(FigCraftLoginTokens.surface.opacity(0.75))
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(FigCraftLoginTokens.secondaryBorder, lineWidth: 1)
-                                        )
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(isSigningIn)
-                            #endif
-                        }
-                        .frame(maxWidth: 440)
-                        .padding(.horizontal, FigCraftLoginTokens.gutter)
-                        .padding(.vertical, 40)
-                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
-                    }
-                    .background(FigCraftLoginTokens.background)
-                    .clipShape(
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: isSplitLayout ? FigCraftLoginTokens.mainPanelRadius : 0,
-                            bottomLeadingRadius: isSplitLayout ? FigCraftLoginTokens.mainPanelRadius : 0,
-                            bottomTrailingRadius: 0,
-                            topTrailingRadius: 0,
-                            style: .continuous
-                        )
-                    )
+            HStack(spacing: 0) {
+                if isSplit {
+                    welcomePanel(height: geometry.size.height)
+                        .frame(width: min(geometry.size.width * 0.43, 550))
                 }
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if !isSplit {
+                            brandLockup(color: AdaColors.navy)
+                                .padding(.bottom, 4)
+                        }
+
+                        signInCard
+                        demoCard
+
+                        #if DEBUG
+                        Button {
+                            store.isAuthSheetPresented = true
+                        } label: {
+                            Label("API settings", systemImage: "slider.horizontal.3")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(AdaColors.secondaryInk)
+                                .padding(.horizontal, 10)
+                                .frame(minHeight: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isSigningIn)
+                        .frame(maxWidth: .infinity)
+                        #endif
+                    }
+                    .frame(maxWidth: 440)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, isSplit ? 34 : 20)
+                    .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                }
+                .background(AdaColors.canvas)
+                .clipShape(UnevenRoundedRectangle(
+                    topLeadingRadius: isSplit ? AdaLayout.containerRadius : 0,
+                    bottomLeadingRadius: isSplit ? AdaLayout.containerRadius : 0
+                ))
             }
+            .background(isSplit ? AdaColors.navy : AdaColors.canvas)
         }
         .onAppear { focusedField = .email }
-    }
-
-    private var compactBrandHeader: some View {
-        HStack(spacing: 12) {
-            Image("AdaPenyuMark").resizable().renderingMode(.template).scaledToFit().frame(width: 40, height: 40).foregroundStyle(FigCraftLoginTokens.primary)
-            VStack(alignment: .leading, spacing: 2) {
-                Image("AdaPenyuWordmark").resizable().renderingMode(.template).scaledToFit().frame(width: 130, height: 24)
-                    .foregroundStyle(FigCraftLoginTokens.primary)
-                Text("Sea Turtle Group")
-                    .font(.system(size: 12))
-                    .foregroundStyle(FigCraftLoginTokens.supportingInk)
-            }
-            Spacer()
+        .onChange(of: store.apiBaseURLString) { _, _ in
+            errorMessage = nil
+            password = ""
+            showsPassword = false
+            focusedField = .email
         }
     }
 
-    private var loginCard: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text("SEA TURTLE GROUP")
-                        .font(.system(size: 11, weight: .semibold))
-                        .tracking(1.2)
-                        .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                    Spacer()
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(AdaColors.green)
-                            .frame(width: 6, height: 6)
-                        Text("Conservation Workspace")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(FigCraftLoginTokens.background, in: Capsule())
-                }
-
-                Text("Welcome back.")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(FigCraftLoginTokens.primary)
-
-                Text("Sign in to inspect encounters, review scale patterns, and sync field records.")
+    private var signInCard: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Sign in")
+                    .font(.system(size: 30, weight: .semibold))
+                    .tracking(-0.5)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Open your organization’s workspace.")
                     .font(.system(size: 14))
-                    .foregroundStyle(FigCraftLoginTokens.supportingInk)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(AdaColors.secondaryInk)
             }
 
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 15) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("Email address")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(FigCraftLoginTokens.primary)
 
                     HStack(spacing: 10) {
-                        Image(systemName: "envelope")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(
-                                focusedField == .email
-                                    ? FigCraftLoginTokens.primary
-                                    : FigCraftLoginTokens.tertiaryInk
-                            )
-                            .frame(width: 18)
-                            .accessibilityHidden(true)
-
+                        fieldIcon("envelope", active: focusedField == .email)
                         TextField(
-                            "",
-                            text: $email,
-                            prompt: Text(verbatim: "you@organisation.org")
-                                .foregroundColor(FigCraftLoginTokens.supportingInk)
+                            "Email address", text: $email,
+                            prompt: Text(verbatim: "you@organization.org").foregroundColor(AdaColors.secondaryInk)
                         )
-                            .textContentType(.username)
-                            .focused($focusedField, equals: .email)
-                            .onSubmit { focusedField = .password }
-                            .accessibilityLabel("Email address")
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 14))
-                            .foregroundStyle(FigCraftLoginTokens.primary)
+                        .labelsHidden()
+                        .textContentType(.username)
+                        .textFieldStyle(.plain)
+                        .focused($focusedField, equals: .email)
+                        .onSubmit { focusedField = showsPassword ? .revealedPassword : .password }
                     }
                     .modifier(LoginInputStyle(isFocused: focusedField == .email))
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("Password")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(FigCraftLoginTokens.primary)
 
                     HStack(spacing: 10) {
-                        Image(systemName: "lock")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(
-                                focusedField == .password
-                                    ? FigCraftLoginTokens.primary
-                                    : FigCraftLoginTokens.tertiaryInk
-                            )
-                            .frame(width: 18)
-                            .accessibilityHidden(true)
+                        let isPasswordFocused = focusedField == .password || focusedField == .revealedPassword
+                        fieldIcon("lock", active: isPasswordFocused)
 
                         Group {
                             if showsPassword {
-                                TextField(
-                                    "",
-                                    text: $password,
-                                    prompt: Text(verbatim: "Enter your password")
-                                        .foregroundColor(FigCraftLoginTokens.supportingInk)
-                                )
+                                TextField("Password", text: $password, prompt: passwordPrompt)
+                                    .focused($focusedField, equals: .revealedPassword)
                             } else {
-                                SecureField(
-                                    "",
-                                    text: $password,
-                                    prompt: Text(verbatim: "Enter your password")
-                                        .foregroundColor(FigCraftLoginTokens.supportingInk)
-                                )
+                                SecureField("Password", text: $password, prompt: passwordPrompt)
+                                    .focused($focusedField, equals: .password)
                             }
                         }
+                        .labelsHidden()
                         .textContentType(.password)
-                        .focused($focusedField, equals: .password)
-                        .onSubmit(signIn)
-                        .accessibilityLabel("Password")
                         .textFieldStyle(.plain)
-                        .font(.system(size: 14))
-                        .foregroundStyle(FigCraftLoginTokens.primary)
+                        .onSubmit(signIn)
 
                         Button {
                             showsPassword.toggle()
-                            focusedField = .password
+                            focusedField = showsPassword ? .revealedPassword : .password
                         } label: {
                             Image(systemName: showsPassword ? "eye.slash" : "eye")
-                                .font(.system(size: 13, weight: .medium))
-                                .frame(width: 28, height: 28)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(AdaColors.secondaryInk)
+                                .frame(width: 36, height: 42)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
+                        .help(showsPassword ? "Hide password" : "Show password")
                         .accessibilityLabel(showsPassword ? "Hide password" : "Show password")
                     }
-                    .modifier(LoginInputStyle(isFocused: focusedField == .password))
+                    .modifier(LoginInputStyle(isFocused: focusedField == .password || focusedField == .revealedPassword))
                 }
+                Toggle("Keep me signed in on this Mac", isOn: $rememberMe)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 13))
+            }
+            .disabled(isSigningIn)
 
+            if let notice = store.sessionNotice, errorMessage == nil, store.lastError == nil, !isSigningIn {
+                Label {
+                    Text(notice)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                        .accessibilityHidden(true)
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(AdaColors.navy)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(AdaColors.navy.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(notice)
+                .accessibilityIdentifier("login.sessionNotice")
+            }
+
+            if let message = errorMessage ?? store.lastError, !isSigningIn {
+                Label {
+                    Text(message)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                } icon: {
+                    Image(systemName: "exclamationmark.circle")
+                        .accessibilityHidden(true)
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(AdaColors.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(AdaColors.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Sign in error. \(message)")
+            }
+
+            Button(action: signIn) {
                 HStack(spacing: 8) {
-                    Toggle("Keep me signed in on this Mac", isOn: $rememberMe)
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 13))
-                        .foregroundStyle(FigCraftLoginTokens.primary)
-
-                    Spacer()
-
-                    HStack(spacing: 4) {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 10))
-                        Text("Keychain")
-                            .font(.system(size: 11, weight: .medium))
+                    if isSigningIn {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.white)
+                            .accessibilityHidden(true)
                     }
-                    .foregroundStyle(FigCraftLoginTokens.supportingInk)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(FigCraftLoginTokens.background, in: Capsule())
-                    .help("Your remembered session is stored securely in the macOS Keychain.")
-                }
-
-                if let message = errorMessage ?? store.lastError {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(AdaColors.red)
-                            .padding(.top, 1)
-
-                        Text(message)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(AdaColors.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
+                    Text(isSigningIn ? "Signing in…" : "Sign in")
+                        .font(.system(size: 14, weight: .semibold))
+                    if !isSigningIn {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .accessibilityHidden(true)
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: FigCraftLoginTokens.inputRadius, style: .continuous)
-                            .fill(AdaColors.red.opacity(0.08))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: FigCraftLoginTokens.inputRadius, style: .continuous)
-                                    .stroke(AdaColors.red.opacity(0.22), lineWidth: 1)
-                            )
-                    )
                 }
+                .frame(maxWidth: .infinity, minHeight: 46)
+                .foregroundStyle(canSubmit || isSigningIn ? .white : AdaColors.secondaryInk)
+                .background(canSubmit || isSigningIn ? AdaColors.navy : AdaColors.canvas, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(LoginSubmitStyle())
+            .disabled(!canSubmit)
+            .keyboardShortcut(.defaultAction)
+        }
+        .foregroundStyle(AdaColors.ink)
+        .adaCard(padding: AdaLayout.pagePadding)
+    }
 
-                // FigCraft Design System Primary Action: pill button (#0B253A, height 52)
-                Button(action: signIn) {
+    private var demoCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Explore a demo")
+                    .font(.system(size: 15, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Text("Browse sample sightings and try photo review.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(AdaColors.secondaryInk)
+            }
+            HStack(spacing: 8) {
+                Button {
+                    openDemo(.worldSuperNetwork)
+                } label: {
                     HStack(spacing: 8) {
-                        if isSigningIn {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(.white)
-                        }
-                        Text(isSigningIn ? "Signing in…" : "Sign in")
-                            .font(.system(size: 15, weight: .semibold))
-                        if !isSigningIn {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
+                        Image(systemName: "globe.americas")
+                            .accessibilityHidden(true)
+                        Text("World Super Demo")
+                        Spacer(minLength: 6)
+                        Text("⌘D")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                            .accessibilityHidden(true)
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 42)
+                    .background(AdaColors.canvas, in: Capsule())
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(
-                    Capsule()
-                        .fill(FigCraftLoginTokens.primary.opacity(canSubmit || isSigningIn ? 1 : 0.42))
-                )
-                .disabled(!canSubmit)
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut("d", modifiers: .command)
+                .accessibilityHint("Opens a workspace with sample records")
 
-                Label("Your remembered session is stored securely on this Mac.", systemImage: "lock")
-                    .font(.system(size: 12))
-                    .foregroundStyle(FigCraftLoginTokens.supportingInk)
-            }
-            .disabled(isSigningIn)
-        }
-        .padding(FigCraftLoginTokens.gutter)
-        .background(
-            RoundedRectangle(cornerRadius: FigCraftLoginTokens.cardRadius, style: .continuous)
-                .fill(FigCraftLoginTokens.surface)
-                .shadow(color: Color.black.opacity(0.04), radius: 16, y: 6)
-        )
-    }
-
-    @ViewBuilder
-    private var quickDemoBypassBanner: some View {
-        if isQuickDemoHidden {
-            HStack {
-                Spacer()
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        isQuickDemoHidden = false
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 9))
-                        Text("Show Demo Shortcut")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(FigCraftLoginTokens.surface))
-                }
-                .buttonStyle(.plain)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Button {
-                        password = ""
-                        store.enterDemoWorkspace()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "bolt.fill")
-                                .font(.system(size: 13, weight: .bold))
-                            Text("Quick Demo Mode (No Login)")
-                                .font(.system(size: 14, weight: .semibold))
-                            Spacer()
-                            Text("⌘D")
-                                .font(.system(size: 11, weight: .semibold))
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 2)
-                                .background(Color.white.opacity(0.18), in: Capsule())
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 12, weight: .bold))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 44)
-                        .background(Capsule().fill(AdaColors.green))
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut("d", modifiers: [.command])
-                    .accessibilityLabel("Quick Demo Mode")
-
-                    Button {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isQuickDemoHidden = true
-                        }
-                    } label: {
-                        Image(systemName: "eye.slash")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(FigCraftLoginTokens.tertiaryInk)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(FigCraftLoginTokens.background))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Hide demo button (can be re-shown anytime)")
-                    .accessibilityLabel("Hide demo button")
-                }
-
-                ScrollView(.horizontal, showsIndicators: false) {
+                ActionDropdown(
+                    items: DemoDashboardPersona.allCases.map { persona in
+                        DropdownAction(
+                            title: persona.displayName,
+                            subtitle: persona.roleLabel,
+                            icon: "person.crop.circle",
+                            selected: false,
+                            action: { openDemo(persona) }
+                        )
+                    },
+                    header: "Demo workspaces",
+                    placement: .aboveLeading,
+                    minWidth: 232
+                ) {
                     HStack(spacing: 6) {
-                        Text("Jump in as:")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(FigCraftLoginTokens.supportingInk)
-
-                        ForEach(DemoDashboardPersona.allCases) { persona in
-                            Button {
-                                password = ""
-                                store.enterDemoWorkspace(persona: persona)
-                            } label: {
-                                Text(persona.displayName)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(FigCraftLoginTokens.primary)
-                                    .padding(.horizontal, 10)
-                                    .frame(height: 25)
-                                    .background(
-                                        Capsule()
-                                            .fill(FigCraftLoginTokens.background)
-                                            .overlay(
-                                                Capsule().stroke(FigCraftLoginTokens.secondaryBorder, lineWidth: 1)
-                                            )
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
+                        Text("Demo roles")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .accessibilityHidden(true)
                     }
+                    .font(.system(size: 12, weight: .medium))
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 42)
+                    .background(AdaColors.canvas, in: Capsule())
                 }
+                .accessibilityLabel("Choose a demo role")
             }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(FigCraftLoginTokens.surface)
-                    .shadow(color: Color.black.opacity(0.05), radius: 12, y: 4)
-            )
         }
+        .disabled(isSigningIn)
+        .foregroundStyle(AdaColors.ink)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .adaCard(padding: 24)
     }
 
-    private var welcomePanel: some View {
-        ZStack(alignment: .bottomLeading) {
-            FigCraftLoginTokens.primary
+    private func welcomePanel(height: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            brandLockup(color: .white)
 
-            GeometryReader { proxy in
-                Image("bg_satu")
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .clipped()
-                    .opacity(0.55)
+            Spacer()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Sea turtle photo ID")
+                    .font(.system(size: 38, weight: .semibold))
+                    .tracking(-0.9)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+
+                Text("Track sightings, match patterns, and follow individuals over time.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: 360, alignment: .leading)
+
+            Spacer()
+
+            carapaceFooter
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 44)
+        .padding(.top, 52)
+        .padding(.bottom, 36)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background {
+            ZStack {
+                AdaColors.navy
+                GeometryReader { bounds in
+                    Image("bg_satu")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: bounds.size.width, height: bounds.size.height)
+                        .clipped()
+                        .opacity(0.32)
+                }
             }
             .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 28) {
-                // Brand row matching FigCraft Overview sidebar top-left identity
-                HStack(spacing: 12) {
-                    Image("AdaPenyuMark").resizable().scaledToFit().frame(width: 42, height: 42)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Image("AdaPenyuWordmark").resizable().scaledToFit().frame(width: 140, height: 26)
-                            .foregroundStyle(.white)
-                        Text("Sea Turtle Group")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.72))
-                    }
-                }
-
-                Spacer(minLength: 12)
-
-                Image("turtleShade")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 270)
-                    .opacity(0.85)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Every encounter\nhelps tell their story.")
-                        .font(.system(size: 34, weight: .semibold))
-                        .tracking(-0.6)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Text("A shared desktop workspace to recognise sea turtles, compare scale patterns, and follow their coastal journeys.")
-                        .font(.system(size: 15))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .lineSpacing(4)
-                        .foregroundStyle(.white.opacity(0.82))
-                        .frame(maxWidth: 360, alignment: .leading)
-                }
-
-                // Elevated sub-card inspired by FigCraft Overview hero stat cards (#19344A, 18pt radius)
-                HStack(spacing: 12) {
-                    welcomePillar(icon: "square.grid.2x2", title: "Overview", subtitle: "Sightings & trends")
-                    welcomePillar(icon: "map", title: "Coastal Map", subtitle: "Encounter pins")
-                    welcomePillar(icon: "viewfinder", title: "Photo ID", subtitle: "I3S & scale review")
-                }
-
-                Spacer(minLength: 8)
-
-                HStack(spacing: 8) {
-                    Image(systemName: "water.waves")
-                    Text("Built around conservation · Bali monitoring")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(.white.opacity(0.76))
-            }
-            .foregroundStyle(.white)
-            .padding(40)
         }
         .clipped()
     }
 
-    private func welcomePillar(icon: String, title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.9))
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-            Text(subtitle)
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.68))
-                .lineLimit(1)
+    private var carapaceFooter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                ForEach([
+                    "SpeciesIcons/species-green",
+                    "SpeciesIcons/species-hawksbill",
+                    "SpeciesIcons/species-olive",
+                    "SpeciesIcons/species-loggerhead",
+                    "SpeciesIcons/species-leatherback",
+                    "SpeciesIcons/species-flatback"
+                ], id: \.self) { asset in
+                    Image(asset)
+                        .resizable()
+                        .renderingMode(.template)
+                        .scaledToFit()
+                        .frame(width: 16, height: 22)
+                        .foregroundStyle(.white.opacity(0.56))
+                }
+            }
+
+            Text("AdaPenyu · Since 2026")
+                .font(.system(size: 11.5, weight: .medium))
+                .tracking(0.3)
+                .foregroundStyle(.white.opacity(0.52))
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(FigCraftLoginTokens.elevatedNavy.opacity(0.88))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-        )
+        .accessibilityHidden(true)
+    }
+
+    private func brandLockup(color: Color) -> some View {
+        HStack(spacing: 12) {
+            Image("AdaPenyuMark")
+                .resizable()
+                .renderingMode(.template)
+                .scaledToFit()
+                .frame(width: 38, height: 38)
+
+            Image("AdaPenyuWordmark")
+                .resizable()
+                .renderingMode(.template)
+                .scaledToFit()
+                .frame(width: 132, height: 24)
+        }
+        .foregroundStyle(color)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("AdaPenyu")
+    }
+
+    private func fieldIcon(_ name: String, active: Bool) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 14))
+            .foregroundStyle(active ? AdaColors.ink : AdaColors.secondaryInk)
+            .frame(width: 17)
+            .accessibilityHidden(true)
+    }
+
+    private var passwordPrompt: Text {
+        Text("Enter your password").foregroundColor(AdaColors.secondaryInk)
+    }
+
+    private func openDemo(_ persona: DemoDashboardPersona) {
+        guard !isSigningIn else { return }
+        password = ""
+        showsPassword = false
+        store.enterDemoWorkspace(persona: persona)
     }
 
     private func signIn() {
         guard canSubmit else { return }
-        isSigningIn = true; errorMessage = nil
-        let submittedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = submittedEmail
+        let password = self.password
+        let rememberMe = self.rememberMe
+        isSigningIn = true
+        showsPassword = false
+        errorMessage = nil
+
         Task {
-            defer { password = ""; isSigningIn = false }
-            do { try await store.signIn(email: submittedEmail, password: password, rememberMe: rememberMe) }
-            catch is CancellationError { }
-            catch { errorMessage = error.localizedDescription; focusedField = .password }
+            defer { isSigningIn = false }
+            do {
+                try await store.signIn(email: email, password: password, rememberMe: rememberMe)
+                self.password = ""
+            } catch is CancellationError {
+                self.password = ""
+            } catch {
+                self.password = ""
+                errorMessage = error.localizedDescription
+                focusedField = (error as? APIError)?.fieldErrors["email"] == nil ? .password : .email
+            }
         }
+    }
+}
+
+private struct LoginSubmitStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.84 : 1)
     }
 }
 
 private struct LoginInputStyle: ViewModifier {
     let isFocused: Bool
+
     func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, 14)
-            .frame(height: 48)
-            .background(
-                RoundedRectangle(cornerRadius: FigCraftLoginTokens.inputRadius, style: .continuous)
-                    .fill(isFocused ? FigCraftLoginTokens.inputFocused : FigCraftLoginTokens.inputUnfocused)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: FigCraftLoginTokens.inputRadius, style: .continuous)
-                    .stroke(
-                        isFocused ? FigCraftLoginTokens.primary : FigCraftLoginTokens.secondaryBorder,
-                        lineWidth: isFocused ? 1.5 : 1
-                    )
-            )
+        let shape = RoundedRectangle(cornerRadius: 12)
+        return content
+            .font(.system(size: 14))
+            .padding(.leading, 13)
+            .padding(.trailing, 8)
+            .frame(minHeight: 46)
+            .background(isFocused ? Color(red: 232 / 255, green: 232 / 255, blue: 232 / 255) : AdaColors.canvas, in: shape)
+            .overlay {
+                shape.strokeBorder(isFocused ? AdaColors.navy : AdaColors.line, lineWidth: isFocused ? 1.5 : 1)
+                    .allowsHitTesting(false)
+            }
     }
 }
 

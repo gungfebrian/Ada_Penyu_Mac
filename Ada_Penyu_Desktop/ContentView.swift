@@ -21,6 +21,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
+        .environment(\.locale, store.localization.locale)
         .task { await store.bootstrap() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             store.organizationKeySettings.clipboard.clearIfOwned()
@@ -72,13 +73,18 @@ struct ContentView: View {
                         store.selectedSpecies = species
                         store.activeSection = .individuals
                     },
+                    onOpenProductSettings: store.isAuthenticated ? { store.openSettings() } : nil,
                     onOpenAuthSettings: debugSettingsAction,
                     accountName: store.accountName,
                     accountEmail: store.authEmail,
                     accountOrganization: store.accountOrganization,
+                    accountRole: store.isDemoBypassActive ? "Demo" : (store.isLiveOwner ? "Owner" : (store.isLiveRanger ? "Ranger" : store.accountRoleLabel)),
+                    isDemoWorkspace: store.isDemoBypassActive,
                     onSignOut: signOutAction,
                     isCollapsed: isSidebarCollapsed,
+                    notSurePendingCount: store.pendingNotSureCases.count,
                     isNavigationLocked: store.organizationKeySettings.isChanging,
+                    localization: store.localization,
                     onToggleSidebar: toggleSidebar,
                     onExpandSidebar: { setSidebarCollapsed(false) }
                 )
@@ -140,18 +146,91 @@ struct ContentView: View {
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
+
+            if store.isReviewPracticePresented {
+                VStack(spacing: 0) {
+                    HStack(spacing: 14) {
+                        Button {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                store.isReviewPracticePresented = false
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                Text("Back")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                            }
+                            .foregroundStyle(AdaColors.navy)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
+                            .background(AdaColors.card, in: Capsule())
+                            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Text("Practice Review")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(AdaColors.ink)
+
+                        Text("Sample")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(AdaColors.navy)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
+                            .background(AdaColors.navy.opacity(0.08), in: Capsule())
+
+                        Spacer(minLength: 0)
+
+                        Button {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                store.isReviewPracticePresented = false
+                            }
+                        } label: {
+                            Text("Done")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 18)
+                                .frame(height: 34)
+                                .background(AdaColors.navy, in: Capsule())
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut(.cancelAction)
+                    }
+                    .padding(.leading, 84) // clears macOS window traffic lights cleanly in full-window mode
+                    .padding(.trailing, 24)
+                    .padding(.top, 14)
+                    .padding(.bottom, 12)
+                    .background(AdaColors.canvas)
+
+                    ScientistReviewWorkspaceView(store: store)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AdaColors.canvas)
+                .ignoresSafeArea(.container, edges: .top)
+                .transition(.opacity)
+                .zIndex(20)
+            }
         }
         .background(AdaColors.navy)
         .onChange(of: store.activeSection) { _, _ in selectedSightingID = nil; store.dismissDetail() }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
         .animation(.easeOut(duration: 0.16), value: showingExport)
+        .animation(.easeOut(duration: 0.16), value: store.isReviewPracticePresented)
         .animation(.easeOut(duration: 0.18), value: store.selectedTurtle?.id)
         .onExitCommand {
-            if showingExport {
+            if store.isReviewPracticePresented {
+                store.isReviewPracticePresented = false
+            } else if showingExport {
                 showingExport = false
                 exportQueryOverride = nil
             } else if store.selectedTurtle != nil {
                 store.dismissDetail()
+            } else if store.activeSection == .settings && store.settingsDetail != nil {
+                store.requestSettingsBack()
             }
         }
         .safeAreaInset(edge: .top) {
@@ -170,7 +249,11 @@ struct ContentView: View {
     }
 
     private var pageTitle: String {
-        store.selectedTurtle == nil ? store.activeSection.title : (selectedSightingID == nil ? "Turtle Profile" : "Sighting Details")
+        if store.selectedTurtle != nil {
+            return selectedSightingID == nil ? "Turtle Profile" : "Sighting Details"
+        }
+        let rawTitle = store.activeSection == .scientistReview ? AppSection.individuals.title : store.activeSection.title
+        return store.localization.localized(rawTitle)
     }
 
     private func openMap(turtleID: String?) {
@@ -186,7 +269,11 @@ struct ContentView: View {
     private var pageView: some View {
         switch store.activeSection {
         case .dashboard:
-            DashboardView(store: store, snapshot: store.dashboard, turtles: store.turtles, recentSightings: store.sightings,
+            DashboardView(
+                store: store,
+                snapshot: store.dashboard,
+                turtles: store.analyticsTurtles.isEmpty ? store.turtles : store.analyticsTurtles,
+                recentSightings: store.sightings,
                 chartMode: $store.chartMode, chartSpecies: $store.chartSpecies,
                 onExport: { showingExport = true }, onSelect: store.select,
                 onBrowseTurtles: { store.activeSection = .individuals },
@@ -197,26 +284,30 @@ struct ContentView: View {
                     store.activeSection = .sightings
                 }, onOpenMap: { openMap(turtleID: nil) })
         case .map:
-            MapPageView(turtles: store.turtles, sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod, selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition, onReload: { Task { await store.reloadMap() } }, onSelect: store.select, focusTurtleID: focusedMapTurtleID)
+            MapPageView(turtles: store.analyticsTurtles.isEmpty ? store.turtles : store.analyticsTurtles,
+                sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod,
+                selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition,
+                onReload: { Task { await store.reloadMap() } }, onSelect: store.select,
+                focusTurtleID: focusedMapTurtleID, onOpenSighting: openSighting)
         case .individuals:
-            IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText,
-                selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
-                onToggleFavorite: store.toggleFavorite, onSelect: store.select,
-                selectedSpecies: $store.selectedSpecies, pageSize: $store.individualsPageSize,
-                offset: store.individualsOffset, isLoading: store.isIndividualsLoading,
-                onPage: { page in Task { await store.loadIndividualsPage(page) } })
-        case .sightings:
-            SightingsListView(
-                sightings: store.sightings,
-                onOpenNotSureReview: { scenario in
-                    store.openNotSureReview(scenario: scenario)
-                }
-            ) { sighting in
-                selectedSightingID = sighting.id
-                store.select(store.turtles.first { $0.id == sighting.turtleID } ?? sighting.turtleReference)
+            VStack(spacing: 0) {
+                catalogTabs
+                IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText,
+                    selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                    onToggleFavorite: store.toggleFavorite, onSelect: store.select,
+                    selectedSpecies: $store.selectedSpecies, pageSize: $store.individualsPageSize,
+                    offset: store.individualsOffset, isLoading: store.isIndividualsLoading,
+                    onPage: { page in Task { await store.loadIndividualsPage(page) } })
             }
+        case .sightings:
+            SightingsListView(sightings: store.sightings, onSelect: openSighting)
         case .scientistReview:
-            ScientistReviewWorkspaceView(store: store)
+            VStack(spacing: 0) {
+                catalogTabs
+                NotSureWorkspaceView(store: store, onOpenPractice: {
+                    store.isReviewPracticePresented = true
+                })
+            }
         case .identification:
             I3SWorkspaceView(store: store)
         case .favorites:
@@ -225,6 +316,45 @@ struct ContentView: View {
             SettingsView(store: store, model: store.organizationKeySettings)
         }
     }
+    private func openSighting(_ sighting: Sighting) {
+        selectedSightingID = sighting.id
+        store.select(store.turtles.first { $0.id == sighting.turtleID }
+            ?? store.analyticsTurtles.first { $0.id == sighting.turtleID }
+            ?? sighting.turtleReference)
+    }
+
+    private var catalogTabs: some View {
+        HStack(spacing: 18) {
+            catalogTab("Individuals", count: store.totalIndividuals, selected: store.activeSection == .individuals) {
+                store.activeSection = .individuals
+            }
+            catalogTab("Not Sure", count: store.pendingNotSureCases.count, selected: store.activeSection == .scientistReview) {
+                store.openNotSureReview()
+            }
+            Spacer()
+        }
+        .padding(.horizontal, AdaLayout.pagePadding)
+        .overlay(alignment: .bottom) { Rectangle().fill(AdaColors.line).frame(height: 1) }
+    }
+
+    private func catalogTab(_ title: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(title).font(.system(size: 13, weight: selected ? .semibold : .medium))
+                Text(count.formatted()).font(.caption.monospacedDigit()).foregroundStyle(AdaColors.secondaryInk)
+            }
+            .foregroundStyle(selected ? AdaColors.navy : AdaColors.secondaryInk)
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if selected { Rectangle().fill(AdaColors.navy).frame(height: 2) }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
 }
 
 private struct ExportSheet: View {

@@ -92,13 +92,6 @@ struct WorkspaceHeader: View {
                         .help("Switch account workspace")
                     }
                     SpeciesPicker(selection: $store.chartSpecies)
-                    Button {
-                        store.isWidgetPickerPresented = true
-                    } label: {
-                        ContextPill(title: "Add Widget", icon: "plus.square.on.square")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open visual widget gallery")
 
                     Button {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
@@ -106,9 +99,9 @@ struct WorkspaceHeader: View {
                         }
                     } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: store.isEditingDashboardWidgets ? "checkmark" : "square.grid.2x2")
+                            Image(systemName: store.isEditingDashboardWidgets ? "checkmark" : "slider.horizontal.3")
                                 .font(.system(size: 11, weight: .semibold))
-                            Text(store.isEditingDashboardWidgets ? "Done" : "Edit Widgets")
+                            Text(store.isEditingDashboardWidgets ? "Done" : "Customize")
                                 .font(.system(size: 12, weight: store.isEditingDashboardWidgets ? .semibold : .regular))
                         }
                         .foregroundStyle(store.isEditingDashboardWidgets ? .white : AdaColors.ink)
@@ -189,38 +182,52 @@ struct SpeciesLabel: View {
 
 struct DropdownAction: Identifiable {
     let title: String
+    var subtitle: String? = nil
+    var icon: String? = nil
+    var badge: String? = nil
     var selected = false
     let action: () -> Void
     var id: String { title }
 }
 
-/// SwiftUI's macOS Menu restyles complex labels as native popup cells. A
-/// popover keeps the supplied capsule/rail label and its full click target.
+/// Custom non-native FigCraft floating dropdown menu. Keeps supplied capsule/rail
+/// labels intact and renders a crisp elevated surface with zero native popover glass.
 struct ActionDropdown<Label: View>: View {
     let items: [DropdownAction]
+    var header: String? = nil
+    var placement: AdaPopupPlacement = .belowLeading
+    var minWidth: CGFloat = 204
     @ViewBuilder let label: Label
     @State private var showing = false
+
     var body: some View {
-        Button { showing.toggle() } label: { label.contentShape(Rectangle()) }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showing, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 3) {
+        Button {
+            showing.toggle()
+        } label: {
+            label.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .adaFloatingPopup(isPresented: $showing, placement: placement, verticalGap: 8) {
+            AdaPopupCardSurface(minWidth: minWidth) {
+                if let header, !header.isEmpty {
+                    AdaPopupSectionHeader(title: header)
+                }
+                VStack(alignment: .leading, spacing: 2) {
                     ForEach(items) { item in
-                        Button {
+                        AdaPopupRow(
+                            title: item.title,
+                            subtitle: item.subtitle,
+                            icon: item.icon,
+                            badge: item.badge,
+                            isSelected: item.selected
+                        ) {
                             showing = false
                             item.action()
-                        } label: {
-                            HStack(spacing: 10) {
-                                Text(item.title).frame(maxWidth: .infinity, alignment: .leading)
-                                Image(systemName: "checkmark").opacity(item.selected ? 1 : 0)
-                            }
-                            .font(.system(size: 12)).foregroundStyle(AdaColors.ink)
-                            .padding(.horizontal, 12).frame(minHeight: 30).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                        .accessibilityAddTraits(item.selected ? .isSelected : [])
+                        }
                     }
-                }.padding(6).frame(minWidth: 190)
+                }
             }
+        }
     }
 }
 

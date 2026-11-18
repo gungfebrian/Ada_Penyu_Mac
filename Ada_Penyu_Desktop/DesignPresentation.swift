@@ -49,7 +49,9 @@ extension TurtleSpecies {
         case .green: "GreenSpecies"
         case .hawksbill: "HawksbillSpecies"
         case .oliveRidley: "RidleySpecies"
-        default: nil
+        case .loggerhead: "SpeciesIcons/species-loggerhead"
+        case .leatherback: "SpeciesIcons/species-leatherback"
+        case .unknown: nil
         }
     }
 }

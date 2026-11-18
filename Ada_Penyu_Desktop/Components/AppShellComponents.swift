@@ -20,19 +20,33 @@ struct SidebarView: View {
     let onSelectSpecies: (TurtleSpecies?) -> Void
 
     // Account actions live in the sidebar user menu.
+    var onOpenProductSettings: (() -> Void)? = nil
     var onOpenAuthSettings: (() -> Void)? = nil
     var accountName = "Researcher"
     var accountEmail = ""
     var accountOrganization = ""
+    var accountRole = ""
+    var isDemoWorkspace = false
     var onSignOut: (() -> Void)? = nil
 
     var isCollapsed = false
+    var notSurePendingCount = 0
     var isNavigationLocked = false
+    var localization: LocalizationManager? = nil
     var onToggleSidebar: () -> Void = {}
     var onExpandSidebar: (() -> Void)? = nil
 
     @State private var speciesExpanded = true
     @State private var conditionsExpanded = true
+    @State private var isAccountPopupPresented = false
+
+    private var isSecondaryWorkspaceSelected: Bool {
+        selection == .sightings || selection == .favorites || selection == .identification
+    }
+
+    private func localized(_ key: String) -> String {
+        localization?.localized(key) ?? key
+    }
 
     private func expandIfCollapsed() {
         guard isCollapsed else { return }
@@ -43,13 +57,13 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 0) {
             windowChrome
             brandRow
-            VStack(spacing: 8) {
-                ForEach([AppSection.dashboard, .map, .individuals, .scientistReview, .settings]) { section in
+            VStack(spacing: 6) {
+                ForEach([AppSection.dashboard, .map, .individuals, .scientistReview]) { section in
                     navigationRow(section)
                 }
             }
             .disabled(isNavigationLocked)
-            .padding(.top, 28)
+            .padding(.top, 24)
 
             // Clicking open space in the sidebar toggles/expands smoothly while preserving top chrome window dragging.
             Color.clear
@@ -61,46 +75,21 @@ struct SidebarView: View {
                 }
                 .accessibilityHidden(true)
 
-            ActionDropdown(items: [
-                DropdownAction(title: "Sightings", selected: selection == .sightings, action: {
-                    selection = .sightings
-                    expandIfCollapsed()
-                }),
-                DropdownAction(title: "Favorites (\(favoriteCount))", selected: selection == .favorites, action: {
-                    selection = .favorites
-                    expandIfCollapsed()
-                }),
-                DropdownAction(title: "Not Sure Review (2)", selected: selection == .scientistReview, action: {
-                    selection = .scientistReview
-                    expandIfCollapsed()
-                }),
-                DropdownAction(title: "I3S Pattern ID", selected: selection == .identification, action: {
-                    selection = .identification
-                    expandIfCollapsed()
-                })
-            ]) {
-                HStack(spacing: 14) {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 18))
-                        .frame(width: 24)
-                    if !isCollapsed {
-                        Text("More workspaces")
-                            .font(.system(size: 12))
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .transition(.opacity)
-                        Spacer(minLength: 0)
-                    }
-                }
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.horizontal, 12)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .clipped()
+            // Bottom utility rail: cleanly separates secondary tools & Settings from main research workspaces.
+            VStack(spacing: 4) {
+                Rectangle()
+                    .fill(.white.opacity(0.08))
+                    .frame(height: 1)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 6)
+
+                moreWorkspacesControl
+                    .padding(.horizontal, 12)
+
+                navigationRow(.settings)
             }
-            .help("Sightings, favorites, and identification workspaces")
-            .accessibilityLabel("More workspaces")
             .disabled(isNavigationLocked)
-            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
 
             userMenu
         }
@@ -110,9 +99,92 @@ struct SidebarView: View {
         .animation(AdaSidebarStyle.animation, value: isCollapsed)
     }
 
+    private var moreWorkspacesControl: some View {
+        ActionDropdown(
+            items: secondaryWorkspaceActions,
+            header: localized("More workspaces"),
+            placement: .aboveLeading,
+            minWidth: 248
+        ) {
+            HStack(spacing: 14) {
+                Image(systemName: "square.stack.3d.up")
+                    .font(.system(size: 16, weight: .medium))
+                    .frame(width: 24)
+                    .overlay(alignment: .topTrailing) {
+                        if isCollapsed && isSecondaryWorkspaceSelected {
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 6, height: 6)
+                                .offset(x: 3, y: -2)
+                        }
+                    }
+                if !isCollapsed {
+                    Text(LocalizedStringKey("More workspaces"))
+                        .font(.system(size: 13.5, weight: isSecondaryWorkspaceSelected ? .semibold : .regular))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .transition(.opacity)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .transition(.opacity)
+                }
+            }
+            .foregroundStyle(.white.opacity(isSecondaryWorkspaceSelected ? 1.0 : 0.85))
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+            .background(isSecondaryWorkspaceSelected ? .white.opacity(0.11) : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipped()
+        }
+        .help("Sightings, favorites, and I3S identification")
+        .accessibilityLabel("More workspaces")
+    }
+
+    private var secondaryWorkspaceActions: [DropdownAction] {
+        [
+            DropdownAction(
+                title: localized("Sightings"),
+                subtitle: localized("Encounter log & timeline"),
+                icon: AppSection.sightings.icon,
+                selected: selection == .sightings,
+                action: {
+                    selection = .sightings
+                    expandIfCollapsed()
+                }
+            ),
+            DropdownAction(
+                title: localized("Favorites"),
+                subtitle: localized("Bookmarked sea turtles"),
+                icon: AppSection.favorites.icon,
+                badge: favoriteCount > 0 ? "\(favoriteCount)" : nil,
+                selected: selection == .favorites,
+                action: {
+                    selection = .favorites
+                    expandIfCollapsed()
+                }
+            ),
+            DropdownAction(
+                title: localized("I3S Pattern ID"),
+                subtitle: localized("Spot-matching workbench"),
+                icon: AppSection.identification.icon,
+                selected: selection == .identification,
+                action: {
+                    selection = .identification
+                    expandIfCollapsed()
+                }
+            )
+        ]
+    }
+
     private func navigationRow(_ section: AppSection) -> some View {
         Button {
-            selection = section
+            if section == .settings, let onOpenProductSettings {
+                onOpenProductSettings()
+            } else {
+                selection = section
+            }
             expandIfCollapsed()
         } label: {
             HStack(spacing: 14) {
@@ -120,28 +192,28 @@ struct SidebarView: View {
                     .font(.system(size: 17))
                     .frame(width: 24)
                     .overlay(alignment: .topTrailing) {
-                        if section == .scientistReview && isCollapsed {
+                        if section == .scientistReview && isCollapsed && notSurePendingCount > 0 {
                             Circle()
-                                .fill(AdaColors.orange)
-                                .frame(width: 8, height: 8)
+                                .fill(.white)
+                                .frame(width: 7, height: 7)
                                 .offset(x: 4, y: -3)
                                 .transition(.scale.combined(with: .opacity))
                         }
                     }
                 if !isCollapsed {
-                    Text(section.title)
+                    Text(LocalizedStringKey(section.title))
                         .font(.system(size: 14))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                         .transition(.opacity)
                     Spacer(minLength: 0)
-                    if section == .scientistReview {
-                        Text("2")
+                    if section == .scientistReview && notSurePendingCount > 0 {
+                        Text("\(notSurePendingCount)")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(AdaColors.navy)
                             .padding(.horizontal, 7)
                             .frame(height: 18)
-                            .background(AdaColors.orange, in: Capsule())
+                            .background(.white.opacity(0.92), in: Capsule())
                             .transition(.opacity)
                     }
                 }
@@ -216,20 +288,26 @@ struct SidebarView: View {
         .accessibilityLabel(isCollapsed ? "AdaPenyu, Expand sidebar" : "AdaPenyu, Collapse sidebar")
     }
 
-    // SwiftUI Menu draws this label as a 31pt popup button, so the profile
-    // is a normal view and the actions open through an AppKit menu.
     private var userMenu: some View {
         VStack(spacing: 0) {
             Rectangle()
-                .fill(AdaColors.line)
+                .fill(.white.opacity(0.08))
                 .frame(height: 1)
 
-            SidebarAccountMenu(
+            SidebarAccountTrigger(
                 label: accountLabel,
                 accessibilityLabel: accountAccessibilityLabel,
-                onOpenAuthSettings: onOpenAuthSettings,
-                onSignOut: onSignOut
+                onPress: { isAccountPopupPresented.toggle() }
             )
+            .adaFloatingPopup(isPresented: $isAccountPopupPresented, placement: .aboveLeading, verticalGap: 10) {
+                SidebarAccountPopupCard(
+                    accountName: accountName,
+                    accountEmail: accountEmail,
+                    accountOrganization: accountOrganization,
+                    roleBadge: resolvedRoleBadge,
+                    actions: accountMenuModel.popupActions(dismiss: { isAccountPopupPresented = false })
+                )
+            }
             .padding(.horizontal, 12)
             .padding(.top, 10)
             .padding(.bottom, 12)
@@ -238,10 +316,25 @@ struct SidebarView: View {
         }
     }
 
+    private var accountMenuModel: SidebarAccountMenuModel {
+        let model = SidebarAccountMenuModel()
+        model.onOpenProductSettings = onOpenProductSettings
+        model.isSettingsNavigationDisabled = isNavigationLocked
+        model.onOpenAuthSettings = onOpenAuthSettings
+        model.onSignOut = onSignOut
+        model.localize = { key in localization?.localized(key) ?? key }
+        return model
+    }
+
+    private var resolvedRoleBadge: String {
+        if !accountRole.isEmpty { return localized(accountRole) }
+        return localized(isDemoWorkspace ? "Demo" : "Live")
+    }
+
     private var accountLabel: some View {
         HStack(spacing: isCollapsed ? 0 : 10) {
             Circle()
-                .fill(isCollapsed ? .white.opacity(0.2) : AdaColors.navy)
+                .fill(isCollapsed ? .white.opacity(0.2) : AdaColors.navySoft)
                 .frame(width: 32, height: 32)
                 .overlay {
                     Text(accountInitial)
@@ -282,14 +375,14 @@ struct SidebarView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
         .frame(width: isCollapsed ? 48 : AdaLayout.sidebarWidth - 24, alignment: .leading)
-        .background(Color.white.opacity(isCollapsed ? 0 : 0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.white.opacity(isCollapsed ? 0 : (isAccountPopupPresented ? 0.11 : 0.05)))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(AdaColors.line.opacity(isCollapsed ? 0 : 1), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(isCollapsed ? 0 : (isAccountPopupPresented ? 0.18 : 0.09)), lineWidth: 1)
         }
         .clipped()
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var accountInitial: String {
@@ -299,7 +392,8 @@ struct SidebarView: View {
     }
 
     private var statusLine: String {
-        accountOrganization.isEmpty ? "Live" : "\(accountOrganization) · Live"
+        let mode = resolvedRoleBadge
+        return accountOrganization.isEmpty ? mode : "\(accountOrganization) · \(mode)"
     }
 
     private var accountAccessibilityLabel: String {
@@ -309,15 +403,238 @@ struct SidebarView: View {
     }
 }
 
-/// Full-width account row. A SwiftUI `Menu` label collapses to the initial
-/// on macOS, so this view draws the profile and pops an `NSMenu` on click.
-private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
-    var label: Label
-    var accessibilityLabel: String
+struct SidebarAccountPopupAction: Identifiable {
+    enum Kind {
+        case settings
+        case debugEndpoint
+        case signOut
+    }
+
+    let id: String
+    let kind: Kind
+    let title: String
+    var subtitle: String? = nil
+    let icon: String
+    var shortcut: String? = nil
+    var isEnabled: Bool = true
+    var isSubdued: Bool = false
+    var isDestructive: Bool = false
+    let perform: () -> Void
+}
+
+/// Custom non-native FigCraft floating account menu card.
+struct SidebarAccountPopupCard: View {
+    let accountName: String
+    let accountEmail: String
+    let accountOrganization: String
+    let roleBadge: String
+    let actions: [SidebarAccountPopupAction]
+
+    private var initial: String {
+        let trimmed = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return "?" }
+        return String(first).uppercased()
+    }
+
+    private var primaryActions: [SidebarAccountPopupAction] {
+        actions.filter { !$0.isDestructive }
+    }
+
+    private var destructiveActions: [SidebarAccountPopupAction] {
+        actions.filter(\.isDestructive)
+    }
+
+    var body: some View {
+        AdaPopupCardSurface(width: 268, cornerRadius: 18, padding: 10) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(AdaColors.navy)
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        Text(initial)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(accountName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AdaColors.ink)
+                            .lineLimit(1)
+                        if !roleBadge.isEmpty {
+                            Text(roleBadge)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(AdaColors.navy)
+                                .padding(.horizontal, 7)
+                                .frame(height: 18)
+                                .background(AdaColors.canvas, in: Capsule())
+                                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                        }
+                    }
+
+                    if !accountEmail.isEmpty {
+                        Text(accountEmail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    if !accountOrganization.isEmpty {
+                        Text(accountOrganization)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(AdaColors.secondaryInk.opacity(0.85))
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 6)
+
+            if !primaryActions.isEmpty {
+                AdaPopupDivider()
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(primaryActions) { item in
+                        AdaPopupRow(
+                            title: item.title,
+                            subtitle: item.subtitle,
+                            icon: item.icon,
+                            shortcut: item.shortcut,
+                            isSubdued: item.isSubdued,
+                            isDisabled: !item.isEnabled,
+                            action: item.perform
+                        )
+                    }
+                }
+            }
+
+            if !destructiveActions.isEmpty {
+                AdaPopupDivider()
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(destructiveActions) { item in
+                        AdaPopupRow(
+                            title: item.title,
+                            subtitle: item.subtitle,
+                            icon: item.icon,
+                            isDestructive: true,
+                            isDisabled: !item.isEnabled,
+                            action: item.perform
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+final class SidebarAccountMenuModel: NSObject {
+    var onOpenProductSettings: (() -> Void)?
+    var isSettingsNavigationDisabled = false
     var onOpenAuthSettings: (() -> Void)?
     var onSignOut: (() -> Void)?
+    var localize: (String) -> String = { $0 }
 
-    func makeCoordinator() -> SidebarAccountMenuModel { SidebarAccountMenuModel() }
+    @objc func openProductSettings(_ sender: NSMenuItem) { onOpenProductSettings?() }
+
+    @objc func openSettings(_ sender: NSMenuItem) { onOpenAuthSettings?() }
+
+    @objc func signOut(_ sender: NSMenuItem) { onSignOut?() }
+
+    func popupActions(dismiss: @escaping () -> Void = {}) -> [SidebarAccountPopupAction] {
+        var result: [SidebarAccountPopupAction] = []
+
+        if let openProduct = onOpenProductSettings {
+            result.append(SidebarAccountPopupAction(
+                id: "settings",
+                kind: .settings,
+                title: localize("Settings"),
+                icon: "gearshape",
+                shortcut: "⌘,",
+                isEnabled: !isSettingsNavigationDisabled,
+                perform: {
+                    dismiss()
+                    openProduct()
+                }
+            ))
+        }
+
+        #if DEBUG
+        if let openAuth = onOpenAuthSettings {
+            result.append(SidebarAccountPopupAction(
+                id: "debugEndpoint",
+                kind: .debugEndpoint,
+                title: localize("API Endpoint"),
+                subtitle: localize("Debug backend server"),
+                icon: "server.rack",
+                isEnabled: true,
+                isSubdued: true,
+                perform: {
+                    dismiss()
+                    openAuth()
+                }
+            ))
+        }
+        #endif
+
+        if let signOut = onSignOut {
+            result.append(SidebarAccountPopupAction(
+                id: "signOut",
+                kind: .signOut,
+                title: localize("Sign Out"),
+                icon: "rectangle.portrait.and.arrow.right",
+                isEnabled: true,
+                isDestructive: true,
+                perform: {
+                    dismiss()
+                    signOut()
+                }
+            ))
+        }
+
+        return result
+    }
+
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        if onOpenProductSettings != nil {
+            let item = NSMenuItem(title: localize("Settings…"), action: #selector(openProductSettings(_:)), keyEquivalent: ",")
+            item.keyEquivalentModifierMask = [.command]
+            item.target = self
+            item.isEnabled = !isSettingsNavigationDisabled
+            item.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+            menu.addItem(item)
+        }
+
+        #if DEBUG
+        if onOpenAuthSettings != nil {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let item = NSMenuItem(title: localize("Developer API Settings…"), action: #selector(openSettings(_:)), keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: nil)
+            menu.addItem(item)
+        }
+        #endif
+
+        if onSignOut != nil {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let item = NSMenuItem(title: localize("Sign Out"), action: #selector(signOut(_:)), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        return menu
+    }
+}
+
+/// Full-width account card trigger that avoids SwiftUI's native macOS popup button
+/// chrome while presenting our custom FigCraft floating popup card on press.
+private struct SidebarAccountTrigger<Label: View>: NSViewRepresentable {
+    var label: Label
+    var accessibilityLabel: String
+    var onPress: () -> Void
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SidebarAccountMenuHost, context: Context) -> CGSize? {
         let fitting = nsView.hosting.fittingSize
@@ -328,61 +645,22 @@ private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
 
     func makeNSView(context: Context) -> SidebarAccountMenuHost {
         let host = SidebarAccountMenuHost(rootView: AnyView(label))
-        host.model = context.coordinator
-        apply(context.coordinator)
+        host.onPress = onPress
         host.syncAccessibilityLabel(accessibilityLabel)
         return host
     }
 
     func updateNSView(_ nsView: SidebarAccountMenuHost, context: Context) {
         nsView.hosting.rootView = AnyView(label)
-        nsView.model = context.coordinator
-        apply(context.coordinator)
+        nsView.onPress = onPress
         nsView.syncAccessibilityLabel(accessibilityLabel)
         nsView.invalidateIntrinsicContentSize()
-    }
-
-    private func apply(_ model: SidebarAccountMenuModel) {
-        model.onOpenAuthSettings = onOpenAuthSettings
-        model.onSignOut = onSignOut
-    }
-}
-
-final class SidebarAccountMenuModel: NSObject {
-    var onOpenAuthSettings: (() -> Void)?
-    var onSignOut: (() -> Void)?
-
-    @objc func openSettings(_ sender: NSMenuItem) { onOpenAuthSettings?() }
-
-    @objc func signOut(_ sender: NSMenuItem) { onSignOut?() }
-
-    func makeMenu() -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-
-        #if DEBUG
-        if onOpenAuthSettings != nil {
-            if !menu.items.isEmpty { menu.addItem(.separator()) }
-            let item = NSMenuItem(title: "Developer API Settings…", action: #selector(openSettings(_:)), keyEquivalent: "")
-            item.target = self
-            item.image = NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: nil)
-            menu.addItem(item)
-        }
-        #endif
-
-        if onSignOut != nil {
-            if !menu.items.isEmpty { menu.addItem(.separator()) }
-            let item = NSMenuItem(title: "Sign Out", action: #selector(signOut(_:)), keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
-        }
-        return menu
     }
 }
 
 private final class SidebarAccountMenuHost: NSView {
     let hosting: InertAccountHostingView
-    var model: SidebarAccountMenuModel?
+    var onPress: (() -> Void)?
 
     init(rootView: AnyView) {
         hosting = InertAccountHostingView(rootView: rootView)
@@ -422,13 +700,11 @@ private final class SidebarAccountMenuHost: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let menu = model?.makeMenu() else { return }
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        onPress?()
     }
 
     override func accessibilityPerformPress() -> Bool {
-        guard let menu = model?.makeMenu() else { return false }
-        menu.popUp(positioning: nil, at: NSPoint(x: bounds.midX, y: bounds.maxY), in: self)
+        onPress?()
         return true
     }
 }

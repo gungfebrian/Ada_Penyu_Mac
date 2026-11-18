@@ -23,10 +23,7 @@ struct IndividualsView: View {
                 HStack(spacing: 28) {
                     Text("Individuals  \(total)").font(.system(size: 13, weight: .semibold))
                         .padding(.vertical, 12).overlay(alignment: .bottom) { Rectangle().fill(AdaColors.navy).frame(height: 2) }
-                    Text("Not Sure").font(.system(size: 13)).foregroundStyle(AdaColors.secondaryInk)
-                        .help("The review queue is not available from the current API.")
                     Spacer()
-                    Text("Review queue unavailable").font(.system(size: 10)).foregroundStyle(AdaColors.secondaryInk)
                 }
                 .overlay(alignment: .bottom) { Rectangle().fill(AdaColors.line).frame(height: 1) }
                 ViewThatFits(in: .horizontal) {
@@ -231,52 +228,11 @@ struct IdentityPhotoPair: View {
 
 struct SightingsListView: View {
     let sightings: [Sighting]
-    var onOpenNotSureReview: ((ReviewScenarioID) -> Void)? = nil
     let onSelect: (Sighting) -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if let onOpenNotSureReview {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            SectionTitle(
-                                "Pending 'Not Sure' review",
-                                subtitle: "2 ranger encounters marked 'Not Sure' · mock scale & junction annotations ready"
-                            )
-                            Spacer()
-                            Button("Open Review Workspace  →") {
-                                onOpenNotSureReview(.rankOneJunctionMismatch)
-                            }
-                            .buttonStyle(AdaPillButtonStyle())
-                        }
-
-                        HStack(spacing: 16) {
-                            notSureSightingCard(
-                                id: "SGT-2026-1109",
-                                species: .green,
-                                side: "Left Head",
-                                date: "09 Nov 2026",
-                                location: "Crystal Bay, Nusa Penida",
-                                note: "Rank #1 vs #2 (84% vs 79%) · 6 scale junctions annotated",
-                                scenario: .rankOneJunctionMismatch,
-                                action: onOpenNotSureReview
-                            )
-                            notSureSightingCard(
-                                id: "SGT-2026-1110",
-                                species: .hawksbill,
-                                side: "Right Head",
-                                date: "10 Nov 2026",
-                                location: "Jemeluk Wall, Amed",
-                                note: "Specular glare over J2–J4 · Head ROI & scales annotated",
-                                scenario: .glareOcclusionUnsure,
-                                action: onOpenNotSureReview
-                            )
-                        }
-                    }
-                    .adaCard(padding: 22)
-                }
-
                 SectionTitle("Recorded sightings", subtitle: "\(sightings.count) loaded records · current map filters")
                 if sightings.isEmpty {
                     ContentUnavailableView("No sightings in this range", systemImage: "binoculars", description: Text("Change the time window or species filter."))
@@ -295,54 +251,5 @@ struct SightingsListView: View {
                 }
             }.padding(AdaLayout.pagePadding)
         }
-    }
-
-    private func notSureSightingCard(
-        id: String,
-        species: TurtleSpecies,
-        side: String,
-        date: String,
-        location: String,
-        note: String,
-        scenario: ReviewScenarioID,
-        action: @escaping (ReviewScenarioID) -> Void
-    ) -> some View {
-        Button {
-            action(scenario)
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(id)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AdaColors.ink)
-                    Text("Not Sure · \(side)")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(AdaColors.orange)
-                        .padding(.horizontal, 8)
-                        .frame(height: 20)
-                        .background(AdaColors.orange.opacity(0.14), in: Capsule())
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(AdaColors.navy)
-                }
-                HStack(spacing: 12) {
-                    SpeciesLabel(species: species).font(.system(size: 11))
-                    Text("·").foregroundStyle(AdaColors.secondaryInk)
-                    Text("\(date) · \(location)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                }
-                Text(note)
-                    .font(.system(size: 11))
-                    .foregroundStyle(AdaColors.secondaryInk)
-                    .lineLimit(1)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }

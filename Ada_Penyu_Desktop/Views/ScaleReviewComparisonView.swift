@@ -8,10 +8,26 @@ struct ScaleReviewComparisonView: View {
     @ObservedObject var store: ScaleReviewStore
     var querySampleName: String? = nil
     var gallerySampleName: String? = nil
-    @State private var showsNumbers = true
+    @State private var showsNumbers: Bool
     @State private var queryColor = Color.cyan
     @State private var galleryColor = AdaColors.orange
     @State private var exportMessage: String?
+
+    init(
+        queryImage: NSImage?,
+        galleryImage: NSImage?,
+        store: ScaleReviewStore,
+        querySampleName: String? = nil,
+        gallerySampleName: String? = nil,
+        initialShowsNumbers: Bool = true
+    ) {
+        self.queryImage = queryImage
+        self.galleryImage = galleryImage
+        self.store = store
+        self.querySampleName = querySampleName
+        self.gallerySampleName = gallerySampleName
+        self._showsNumbers = State(initialValue: initialShowsNumbers)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -116,7 +132,7 @@ private struct ScalePhotoReviewPane: View {
                     Menu("\(Int(zoom * 100))%") {
                         ForEach([1.0, 1.5, 2.0], id: \.self) { value in Button("\(Int(value * 100))%") { zoom = value } }
                     }.frame(width: 72)
-                    Button("Load Mock Scales", action: seedMockScales)
+                    Button("Detect Scales", action: seedMockScales)
                 }
                 HStack(spacing: 6) {
                     Text("Edges")
@@ -228,19 +244,14 @@ private struct ScalePhotoReviewPane: View {
 
     private func seedMockScales() {
         guard let hash else { return }
-        let matchedSample: I3SSampleEntry? = {
-            if let sampleName, let s = I3SSampleLibrary.sample(forFilenameOrID: sampleName) {
-                return s
-            }
-            if let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                return I3SSampleLibrary.samples.first { $0.imageWidth == cg.width && $0.imageHeight == cg.height }
-            }
-            return I3SSampleLibrary.samples.first
-        }()
-        store.seedMockAnnotations(for: hash, sample: matchedSample)
+        let matchedSample = sampleName.flatMap { I3SSampleLibrary.sample(forFilenameOrID: $0) }
+        store.seedMockAnnotations(for: hash, sample: matchedSample, image: image)
         mode = .inspect
         selected = store.documents[hash]?.scales.first?.id
-        message = "Loaded pre-annotated postocular scales. Click any scale number to confirm, reject, or redraw."
+        let count = store.documents[hash]?.scales.count ?? 0
+        message = count > 0
+            ? "Extracted \(count) scale pattern contours inside the cheek ROI. Click any number to confirm, reject, or redraw."
+            : "Set Head ROI or click Propose regions."
     }
     private func fittedRect(size: CGSize) -> CGRect {
         guard let image, image.size.width > 0, image.size.height > 0 else { return .zero }

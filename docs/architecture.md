@@ -25,10 +25,12 @@ flowchart LR
 
 | Layer | Files | Responsibility |
 | --- | --- | --- |
-| Shell | `ContentView.swift`, `Components/AppShellComponents.swift` | Navigation, top bar, account menu, contextual export, global error/loading surfaces. |
-| State | `AppStore.swift` | Owns route, query state, selected turtle, async loading, favorites, session generation, and export commands. |
-| Contract | `DataLayer.swift` | Shared query/value types, `TurtleRepository`, API DTOs, date/status mapping, and the remote repository. |
-| Feature views | `Views/DashboardView.swift`, `MapCanvasView.swift`, `CollectionViews.swift`, `TurtleDetailView.swift` | Render realistic data and emit user intent through bindings/closures. No view performs HTTP. |
+| Shell | `ContentView.swift`, `Components/AppShellComponents.swift`, `Components/AdaFloatingPopup.swift` | Collapsible FigCraft sidebar, custom non-native floating popups, `⌘,` settings routing, contextual export, full-window Practice Review, and global error/loading surfaces. |
+| State | `AppStore.swift`, `LocalizationManager.swift`, `DesktopContourPreferences.swift` | Owns route, query state, selected turtle, async loading, favorites, live EN/ID locale, per-account contour defaults, session generation, and export commands. |
+| Contract | `DataLayer.swift` | Shared query/value types, `TurtleRepository`, API DTOs, date/status mapping, `RemoteTurtleRepository`, and `DemoTurtleRepository` (Bali, Asia, and Global datasets). |
+| Spatial & Map | `H3/`, `H3SpatialIndex.swift`, `FrontendCountryResolver.swift`, `MapCanvasView.swift` | Vendored Uber H3 v4.5.0 C library for zoom-adaptive hexagonal aggregation (Res 1–6) transitioning to teardrop penyu markers, plus offline Natural Earth 50m GPS→Country resolution with a 370 km coastal EEZ buffer. |
+| Settings | `Views/SettingsView.swift`, `PasswordSecuritySettings.swift`, `OrganisationSettingsModel.swift`, `OrganizationAPIKeySettings.swift` | iOS-parity adaptive Settings split workspace: Password & Security, Organisation Profile, owner-only Manage Rangers, Language (EN/ID), macOS App Permissions, per-account Contour Review defaults, and Organization API Key management. |
+| Feature views | `Views/DashboardView.swift`, `CollectionViews.swift`, `TurtleDetailView.swift`, `Views/NotSureWorkspaceView.swift`, `Views/ScientistReviewWorkspaceView.swift`, `Views/PatternContourStudioView.swift` | Render records, interactive photo contour comparison (1-vs-3, 1:1, overlay), and review workflows. No view performs HTTP. |
 | Domain/design | `AppModel.swift`, `DesignSystem.swift`, `Components/` | Stable display models, colors, spacing, condition semantics, branding, and reusable controls. |
 | Backend | `app/api/`, `app/services/` | REST endpoints and persistence. |
 

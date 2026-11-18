@@ -23,6 +23,7 @@ struct Ada_Penyu_DesktopApp: App {
                     minHeight: AdaLayout.minimumWindowSize.height
                 )
                 .preferredColorScheme(.light)
+                .environment(\.locale, store.localization.locale)
                 .ignoresSafeArea(.container, edges: .top)
                 .background(WindowConfigurator())
         }
@@ -31,6 +32,15 @@ struct Ada_Penyu_DesktopApp: App {
             height: AdaLayout.defaultWindowSize.height
         )
         .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(store.localization.localized("Settings…")) {
+                    store.openSettings()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+                .disabled(!store.isAuthenticated || store.organizationKeySettings.isChanging)
+            }
+        }
     }
 }
 

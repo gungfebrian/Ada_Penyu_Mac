@@ -958,9 +958,39 @@ private extension DashboardSnapshot {
 }
 
 final class DemoTurtleRepository: TurtleRepository {
-    private var turtles: [Turtle] = DemoFixtures.turtles
-    private var sightings: [Sighting] = DemoFixtures.sightings
-    private var favoriteIDs = Set(["Turtle #004", "Turtle #005"])
+    enum Dataset {
+        case baliBaseline
+        case panAsiaSuperAccount
+        case worldSuperAccount
+    }
+
+    private let dataset: Dataset
+    private var turtles: [Turtle]
+    private var sightings: [Sighting]
+    private var favoriteIDs: Set<String>
+
+    var fullCatalogForAnalytics: [Turtle] {
+        turtles.map(withFavorite)
+    }
+
+    init(dataset: Dataset = .baliBaseline) {
+        self.dataset = dataset
+        switch dataset {
+        case .baliBaseline:
+            self.turtles = DemoFixtures.turtles
+            self.sightings = DemoFixtures.sightings
+            self.favoriteIDs = Set(["Turtle #004", "Turtle #005"])
+        case .panAsiaSuperAccount:
+            self.turtles = DemoFixtures.superAsiaTurtles
+            self.sightings = DemoFixtures.superAsiaSightings
+            self.favoriteIDs = Set(["ASIA-IN-001", "ASIA-ID-002", "ASIA-MY-006", "ASIA-JP-021"])
+        case .worldSuperAccount:
+            let world = DemoFixtures.worldSuperDataset
+            self.turtles = world.turtles
+            self.sightings = world.sightings
+            self.favoriteIDs = Set(world.turtles.prefix(8).map(\.id))
+        }
+    }
 
     func listIndividuals(query: IndividualQuery) async throws -> Page<Turtle> {
         var results = turtles.filter { turtle in
@@ -1068,7 +1098,7 @@ final class DemoTurtleRepository: TurtleRepository {
             let conf = idx == 0 ? 0.94 : max(0.08, 0.82 - Double(idx) * 0.14)
             let defaultPhoto = side == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"
             let candidatePhoto = side == .right ? (t.rightPhotoURL ?? defaultPhoto) : (t.leftPhotoURL ?? defaultPhoto)
-            return MatchCandidateItem(
+            var candidate = MatchCandidateItem(
                 individualID: t.backendID ?? UUID(),
                 name: t.displayName,
                 profileCode: t.profileCode ?? String(format: "000%03d", idx + 1),
@@ -1086,11 +1116,13 @@ final class DemoTurtleRepository: TurtleRepository {
                 lastSeenLocation: t.location,
                 condition: t.condition
             )
+            candidate.isBundledExample = true
+            return candidate
         }
         return MatchSearchOutcome(
             querySide: side,
             gallerySize: turtles.count,
-            matchState: "likely_match",
+            matchState: "bundled_examples",
             candidates: Array(items),
             isDualPair: false,
             pairAgreed: nil
@@ -1102,10 +1134,10 @@ final class DemoTurtleRepository: TurtleRepository {
         return MatchSearchOutcome(
             querySide: .left,
             gallerySize: single.gallerySize * 2,
-            matchState: "likely_match",
+            matchState: "bundled_examples",
             candidates: single.candidates,
             isDualPair: true,
-            pairAgreed: true
+            pairAgreed: nil
         )
     }
 
@@ -1214,5 +1246,258 @@ enum DemoFixtures {
             }
         }
         return result
+    }()
+
+    // MARK: - Pan-Asia Super Account Demo Dataset (SE Asia, India & Indian Ocean, East Asia)
+
+    static let superAsiaTurtles: [Turtle] = [
+        // South Asia / India & Indian Ocean
+        Turtle(id: "ASIA-IN-001", species: .oliveRidley, location: "Gahirmatha, Odisha, India", lastSeen: "12 Nov 2026", sightings: 14, condition: .healthy, firstRecorded: "18 Dec 2025", isFavorite: true, coordinate: TurtleCoordinate(latitude: 20.715, longitude: 87.018), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000001"), leftPhotoURL: "Amina1_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Kaveri", profileCode: "IND-OD-01"),
+        Turtle(id: "ASIA-IN-002", species: .oliveRidley, location: "Rushikulya, Odisha, India", lastSeen: "05 Nov 2026", sightings: 9, condition: .scarred, firstRecorded: "14 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 19.375, longitude: 85.075), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000002"), leftPhotoURL: "Ghost1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Chilika", profileCode: "IND-OD-02"),
+        Turtle(id: "ASIA-IN-003", species: .green, location: "Havelock Reef, Andaman, India", lastSeen: "09 Nov 2026", sightings: 11, condition: .healthy, firstRecorded: "04 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 11.976, longitude: 92.987), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000003"), leftPhotoURL: "Aikane1_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Swaraj", profileCode: "IND-AN-03"),
+        Turtle(id: "ASIA-IN-004", species: .leatherback, location: "Little Andaman, India", lastSeen: "21 Oct 2026", sightings: 5, condition: .injured, firstRecorded: "03 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 10.625, longitude: 92.548), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000004"), leftPhotoURL: "Hoku1_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Galathea", profileCode: "IND-AN-04"),
+        Turtle(id: "ASIA-IN-005", species: .green, location: "Agatti Lagoon, Lakshadweep, India", lastSeen: "15 Nov 2026", sightings: 12, condition: .healthy, firstRecorded: "22 Dec 2025", isFavorite: false, coordinate: TurtleCoordinate(latitude: 10.858, longitude: 72.194), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000005"), leftPhotoURL: "Amina2_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Agatti", profileCode: "IND-LK-05"),
+        Turtle(id: "ASIA-IN-006", species: .oliveRidley, location: "Pirotan Island, Gujarat, India", lastSeen: "28 Oct 2026", sightings: 6, condition: .scarred, firstRecorded: "11 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 22.601, longitude: 69.956), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000006"), leftPhotoURL: "Ghost2_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Kachchh", profileCode: "IND-GJ-06"),
+        Turtle(id: "ASIA-LK-007", species: .loggerhead, location: "Rekawa Lagoon, Sri Lanka", lastSeen: "01 Nov 2026", sightings: 8, condition: .healthy, firstRecorded: "09 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 6.046, longitude: 80.861), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000007"), leftPhotoURL: "Hoku2_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Rekawa", profileCode: "LKA-RK-07"),
+        Turtle(id: "ASIA-MV-008", species: .hawksbill, location: "Lhaviyani Atoll, Maldives", lastSeen: "07 Nov 2026", sightings: 10, condition: .healthy, firstRecorded: "15 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 5.402, longitude: 73.478), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000008"), leftPhotoURL: "Amina3_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Naifaru", profileCode: "MDV-LH-08"),
+
+        // Southeast Asia
+        Turtle(id: "ASIA-ID-009", species: .hawksbill, location: "Nusa Penida, Bali, Indonesia", lastSeen: "16 Nov 2026", sightings: 13, condition: .injured, firstRecorded: "06 Dec 2025", isFavorite: true, coordinate: TurtleCoordinate(latitude: -8.728, longitude: 115.544), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000009"), leftPhotoURL: "Amina1_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Amina", profileCode: "IDN-BA-09"),
+        Turtle(id: "ASIA-ID-010", species: .green, location: "Serangan Reef, Bali, Indonesia", lastSeen: "10 Nov 2026", sightings: 9, condition: .healthy, firstRecorded: "25 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -8.724, longitude: 115.250), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000010"), leftPhotoURL: "Aikane1_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Serangan", profileCode: "IDN-BA-10"),
+        Turtle(id: "ASIA-ID-011", species: .leatherback, location: "Misool, Raja Ampat, Indonesia", lastSeen: "03 Nov 2026", sightings: 7, condition: .healthy, firstRecorded: "19 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -1.915, longitude: 130.145), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000011"), leftPhotoURL: "Amina2_L.jpg", rightPhotoURL: nil, name: "Misool", profileCode: "IDN-RA-11"),
+        Turtle(id: "ASIA-ID-012", species: .green, location: "Derawan Atoll, Indonesia", lastSeen: "14 Nov 2026", sightings: 15, condition: .healthy, firstRecorded: "12 Jan 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 2.284, longitude: 118.248), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000012"), leftPhotoURL: "Hoku1_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Derawan", profileCode: "IDN-DE-12"),
+        Turtle(id: "ASIA-ID-013", species: .hawksbill, location: "Wakatobi Reef, Indonesia", lastSeen: "19 Oct 2026", sightings: 6, condition: .scarred, firstRecorded: "08 May 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: -5.318, longitude: 123.595), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000013"), leftPhotoURL: "Ghost1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Hoga", profileCode: "IDN-WK-13"),
+        Turtle(id: "ASIA-MY-014", species: .green, location: "Sipadan, Sabah, Malaysia", lastSeen: "11 Nov 2026", sightings: 16, condition: .healthy, firstRecorded: "02 Dec 2025", isFavorite: true, coordinate: TurtleCoordinate(latitude: 4.115, longitude: 118.628), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000014"), leftPhotoURL: "Aikane2_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Sipadan", profileCode: "MYS-SB-14"),
+        Turtle(id: "ASIA-MY-015", species: .hawksbill, location: "Pulau Redang, Malaysia", lastSeen: "23 Oct 2026", sightings: 7, condition: .injured, firstRecorded: "27 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 5.775, longitude: 103.008), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000015"), leftPhotoURL: "Ghost2_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Chagar", profileCode: "MYS-TR-15"),
+        Turtle(id: "ASIA-TH-016", species: .green, location: "Similan Islands, Thailand", lastSeen: "04 Nov 2026", sightings: 8, condition: .healthy, firstRecorded: "16 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 8.650, longitude: 97.641), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000016"), leftPhotoURL: "Hoku2_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Andaman", profileCode: "THA-SM-16"),
+        Turtle(id: "ASIA-TH-017", species: .hawksbill, location: "Koh Tao, Thailand", lastSeen: "29 Oct 2026", sightings: 5, condition: .scarred, firstRecorded: "04 Jun 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 10.072, longitude: 99.839), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000017"), leftPhotoURL: "Amina3_L.jpg", rightPhotoURL: nil, name: "Tao", profileCode: "THA-KT-17"),
+        Turtle(id: "ASIA-PH-018", species: .green, location: "Apo Reef, Philippines", lastSeen: "08 Nov 2026", sightings: 10, condition: .healthy, firstRecorded: "13 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 12.662, longitude: 120.415), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000018"), leftPhotoURL: "Aikane1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Apo", profileCode: "PHL-AP-18"),
+        Turtle(id: "ASIA-PH-019", species: .hawksbill, location: "El Nido, Palawan, Philippines", lastSeen: "15 Oct 2026", sightings: 6, condition: .healthy, firstRecorded: "20 May 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 11.195, longitude: 119.392), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000019"), leftPhotoURL: "Hoku1_L.jpg", rightPhotoURL: "Zizo1_R.jpg", name: "Bacuit", profileCode: "PHL-PL-19"),
+        Turtle(id: "ASIA-VN-020", species: .green, location: "Con Dao Islands, Vietnam", lastSeen: "06 Nov 2026", sightings: 9, condition: .healthy, firstRecorded: "07 Mar 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 8.685, longitude: 106.607), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000020"), leftPhotoURL: "Amina1_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Bay Canh", profileCode: "VNM-CD-20"),
+
+        // East Asia
+        Turtle(id: "ASIA-JP-021", species: .loggerhead, location: "Zamami, Okinawa, Japan", lastSeen: "13 Nov 2026", sightings: 11, condition: .healthy, firstRecorded: "10 Jan 2026", isFavorite: true, coordinate: TurtleCoordinate(latitude: 26.228, longitude: 127.303), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000021"), leftPhotoURL: nil, rightPhotoURL: "Zizo1_R.jpg", name: "Kerama", profileCode: "JPN-OK-21"),
+        Turtle(id: "ASIA-JP-022", species: .green, location: "Chichijima, Ogasawara, Japan", lastSeen: "22 Oct 2026", sightings: 7, condition: .healthy, firstRecorded: "28 Apr 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 27.095, longitude: 142.191), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000022"), leftPhotoURL: "Hoku2_L.jpg", rightPhotoURL: "Amina1_R.jpg", name: "Bonin", profileCode: "JPN-OG-22"),
+        Turtle(id: "ASIA-TW-023", species: .green, location: "Liuqiu Island, Taiwan", lastSeen: "30 Oct 2026", sightings: 8, condition: .injured, firstRecorded: "18 Feb 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 22.342, longitude: 120.369), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000023"), leftPhotoURL: "Ghost1_L.jpg", rightPhotoURL: "Amina2_R.jpg", name: "Xiaoqiu", profileCode: "TWN-LQ-23"),
+        Turtle(id: "ASIA-TW-024", species: .oliveRidley, location: "Penghu Channel, Taiwan", lastSeen: "18 Sep 2026", sightings: 4, condition: .healthy, firstRecorded: "11 Jun 2026", isFavorite: false, coordinate: TurtleCoordinate(latitude: 23.568, longitude: 119.566), backendID: UUID(uuidString: "00000000-0000-4000-8100-000000000024"), leftPhotoURL: "Amina2_L.jpg", rightPhotoURL: "Zizo2_R.jpg", name: "Penghu", profileCode: "TWN-PH-24"),
+    ]
+
+    static let superAsiaSightings: [Sighting] = {
+        var result: [Sighting] = []
+        let migrationHops: [String: (location: String, date: String, lat: Double, lon: Double)] = [
+            "ASIA-IN-001": ("Rushikulya Offshore, India", "19 Sep 2026", 19.42, 85.15),
+            "ASIA-IN-003": ("Neil Island, Andaman, India", "12 Aug 2026", 11.83, 93.04),
+            "ASIA-IN-005": ("Bangaram Atoll, Lakshadweep", "24 Aug 2026", 10.94, 72.29),
+            "ASIA-ID-009": ("Crystal Bay, Nusa Penida", "14 Aug 2026", -8.714, 115.458),
+            "ASIA-ID-010": ("Sanur Reef, Bali, Indonesia", "29 Jul 2026", -8.687, 115.262),
+            "ASIA-ID-012": ("Sangalaki Island, Indonesia", "10 Jul 2026", 2.092, 118.401),
+            "ASIA-MY-014": ("Mabul Reef, Sabah, Malaysia", "03 Sep 2026", 4.245, 118.631),
+            "ASIA-PH-018": ("Coron Passage, Philippines", "21 Aug 2026", 11.98, 120.20),
+            "ASIA-JP-021": ("Aka Island, Okinawa, Japan", "07 Jul 2026", 26.198, 127.281),
+            "ASIA-LK-007": ("Trincomalee Reef, Sri Lanka", "16 Jun 2026", 8.587, 81.215),
+        ]
+        for (index, turtle) in superAsiaTurtles.enumerated() {
+            let coord = turtle.coordinate ?? TurtleCoordinate(latitude: 5.0, longitude: 105.0)
+            result.append(
+                Sighting(
+                    name: turtle.displayName,
+                    id: "asia-s-cur-\(index + 1)",
+                    turtleID: turtle.id,
+                    species: turtle.species,
+                    location: turtle.location,
+                    date: turtle.lastSeen,
+                    condition: turtle.condition,
+                    coordinate: coord
+                )
+            )
+            if let hop = migrationHops[turtle.id] {
+                result.append(
+                    Sighting(
+                        name: turtle.displayName,
+                        id: "asia-s-mid-\(index + 1)",
+                        turtleID: turtle.id,
+                        species: turtle.species,
+                        location: hop.location,
+                        date: hop.date,
+                        condition: turtle.condition,
+                        coordinate: TurtleCoordinate(latitude: hop.lat, longitude: hop.lon)
+                    )
+                )
+            }
+            if turtle.sightings > 4 {
+                result.append(
+                    Sighting(
+                        name: turtle.displayName,
+                        id: "asia-s-first-\(index + 1)",
+                        turtleID: turtle.id,
+                        species: turtle.species,
+                        location: turtle.location,
+                        date: turtle.firstRecorded,
+                        condition: turtle.condition,
+                        coordinate: TurtleCoordinate(latitude: coord.latitude + 0.04, longitude: coord.longitude - 0.04)
+                    )
+                )
+            }
+        }
+        return result
+    }()
+
+    // MARK: - World-Level Global Sea Turtle Super Account (~360 Turtles, ~1,700+ Sightings Worldwide)
+
+    struct WorldHabitatSeed {
+        let code: String
+        let site: String
+        let lat: Double
+        let lon: Double
+        let turtleCount: Int
+        let spreadDeg: Double
+        let primarySpecies: TurtleSpecies
+        let secondarySpecies: TurtleSpecies
+        let migrationDeltaLat: Double
+        let migrationDeltaLon: Double
+    }
+
+    static let worldSuperDataset: (turtles: [Turtle], sightings: [Sighting]) = {
+        let habitats: [WorldHabitatSeed] = [
+            // Indonesia & Coral Triangle (high-density multi-island showcase for H3 Res 4–6)
+            .init(code: "ID-BL", site: "Sanur & Nusa Penida Reef", lat: -8.715, lon: 115.320, turtleCount: 22, spreadDeg: 0.24, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: -0.09, migrationDeltaLon: 0.22),
+            .init(code: "ID-KM", site: "Komodo & Flores Channel", lat: -8.540, lon: 119.560, turtleCount: 14, spreadDeg: 0.35, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: 0.14, migrationDeltaLon: -0.25),
+            .init(code: "ID-RA", site: "Misool & Wayag, Raja Ampat", lat: -1.120, lon: 130.380, turtleCount: 18, spreadDeg: 0.72, primarySpecies: .leatherback, secondarySpecies: .hawksbill, migrationDeltaLat: -0.45, migrationDeltaLon: 0.35),
+            .init(code: "ID-DR", site: "Derawan & Sangalaki Atoll", lat: 2.240, lon: 118.320, turtleCount: 16, spreadDeg: 0.32, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: -0.18, migrationDeltaLon: 0.20),
+            .init(code: "ID-BN", site: "Bunaken Marine Wall", lat: 1.620, lon: 124.760, turtleCount: 11, spreadDeg: 0.26, primarySpecies: .green, secondarySpecies: .oliveRidley, migrationDeltaLat: 0.12, migrationDeltaLon: 0.18),
+            .init(code: "ID-WK", site: "Wakatobi Coral Atolls", lat: -5.330, lon: 123.620, turtleCount: 12, spreadDeg: 0.42, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: -0.22, migrationDeltaLon: 0.28),
+            .init(code: "ID-JV", site: "Pangumbahan Nesting Beach", lat: -7.320, lon: 106.400, turtleCount: 9, spreadDeg: 0.28, primarySpecies: .green, secondarySpecies: .oliveRidley, migrationDeltaLat: -0.15, migrationDeltaLon: -0.18),
+            .init(code: "ID-MT", site: "Mentawai Outer Reefs", lat: -2.080, lon: 99.650, turtleCount: 8, spreadDeg: 0.45, primarySpecies: .leatherback, secondarySpecies: .hawksbill, migrationDeltaLat: -0.35, migrationDeltaLon: 0.25),
+
+            // Southeast Asia
+            .init(code: "MY-SP", site: "Sipadan & Mabul Reef", lat: 4.160, lon: 118.630, turtleCount: 14, spreadDeg: 0.28, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: 0.16, migrationDeltaLon: -0.14),
+            .init(code: "MY-RD", site: "Pulau Redang Sanctuary", lat: 5.780, lon: 103.010, turtleCount: 9, spreadDeg: 0.25, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: -0.14, migrationDeltaLon: 0.16),
+            .init(code: "PH-AP", site: "Apo Reef & Palawan", lat: 12.150, lon: 120.220, turtleCount: 13, spreadDeg: 0.65, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: -0.45, migrationDeltaLon: -0.35),
+            .init(code: "PH-TB", site: "Tubbataha Sulu Atoll", lat: 8.850, lon: 119.900, turtleCount: 10, spreadDeg: 0.30, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: 0.25, migrationDeltaLon: 0.30),
+            .init(code: "TH-SM", site: "Similan & Surin Reefs", lat: 8.750, lon: 97.680, turtleCount: 10, spreadDeg: 0.40, primarySpecies: .green, secondarySpecies: .oliveRidley, migrationDeltaLat: 0.32, migrationDeltaLon: 0.15),
+            .init(code: "VN-CD", site: "Con Dao Bay Canh", lat: 8.690, lon: 106.640, turtleCount: 9, spreadDeg: 0.26, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: 0.12, migrationDeltaLon: 0.14),
+            .init(code: "PW-RK", site: "Palau Barrier Drop-off", lat: 7.340, lon: 134.460, turtleCount: 8, spreadDeg: 0.30, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: -0.18, migrationDeltaLon: -0.15),
+
+            // South Asia & Indian Ocean
+            .init(code: "IN-OD", site: "Gahirmatha & Rushikulya Coast", lat: 20.150, lon: 86.250, turtleCount: 15, spreadDeg: 0.70, primarySpecies: .oliveRidley, secondarySpecies: .green, migrationDeltaLat: -0.60, migrationDeltaLon: -0.45),
+            .init(code: "IN-AN", site: "Havelock & Little Andaman", lat: 11.450, lon: 92.820, turtleCount: 11, spreadDeg: 0.55, primarySpecies: .leatherback, secondarySpecies: .green, migrationDeltaLat: -0.40, migrationDeltaLon: 0.20),
+            .init(code: "IN-LK", site: "Agatti Lagoon, Lakshadweep", lat: 10.820, lon: 72.350, turtleCount: 10, spreadDeg: 0.45, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: 0.22, migrationDeltaLon: 0.25),
+            .init(code: "LK-RK", site: "Rekawa & Hikkaduwa Coast", lat: 6.120, lon: 80.520, turtleCount: 9, spreadDeg: 0.38, primarySpecies: .loggerhead, secondarySpecies: .oliveRidley, migrationDeltaLat: 0.25, migrationDeltaLon: 0.45),
+            .init(code: "MV-BA", site: "Baa & Lhaviyani Atolls", lat: 5.260, lon: 73.180, turtleCount: 12, spreadDeg: 0.55, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: -0.35, migrationDeltaLon: 0.15),
+            .init(code: "OM-RJ", site: "Ras Al Jinz Reserve", lat: 22.420, lon: 59.830, turtleCount: 10, spreadDeg: 0.32, primarySpecies: .green, secondarySpecies: .loggerhead, migrationDeltaLat: -0.30, migrationDeltaLon: -0.20),
+            .init(code: "SC-AL", site: "Aldabra & Mahé Reefs", lat: -4.680, lon: 55.460, turtleCount: 9, spreadDeg: 0.42, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: -0.25, migrationDeltaLon: 0.20),
+            .init(code: "TZ-ZN", site: "Zanzibar & Mafia Channel", lat: -6.850, lon: 39.650, turtleCount: 10, spreadDeg: 0.65, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: -0.45, migrationDeltaLon: 0.18),
+            .init(code: "MG-NB", site: "Nosy Be Coral Banks", lat: -13.340, lon: 48.260, turtleCount: 8, spreadDeg: 0.35, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: -0.25, migrationDeltaLon: -0.20),
+
+            // East Asia & Oceania
+            .init(code: "JP-OK", site: "Kerama & Zamami Reefs", lat: 26.220, lon: 127.300, turtleCount: 11, spreadDeg: 0.35, primarySpecies: .loggerhead, secondarySpecies: .green, migrationDeltaLat: 0.24, migrationDeltaLon: 0.32),
+            .init(code: "JP-OG", site: "Chichijima, Ogasawara", lat: 27.090, lon: 142.190, turtleCount: 7, spreadDeg: 0.25, primarySpecies: .green, secondarySpecies: .loggerhead, migrationDeltaLat: -0.18, migrationDeltaLon: 0.14),
+            .init(code: "TW-LQ", site: "Xiaoliuqiu Coral Shelf", lat: 22.340, lon: 120.370, turtleCount: 8, spreadDeg: 0.22, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: 0.20, migrationDeltaLon: -0.18),
+            .init(code: "AU-GB", site: "Heron & Lady Elliot Reef", lat: -23.620, lon: 152.120, turtleCount: 15, spreadDeg: 0.55, primarySpecies: .green, secondarySpecies: .loggerhead, migrationDeltaLat: -0.45, migrationDeltaLon: 0.30),
+            .init(code: "AU-NG", site: "Ningaloo Marine Park", lat: -22.240, lon: 113.820, turtleCount: 11, spreadDeg: 0.45, primarySpecies: .loggerhead, secondarySpecies: .green, migrationDeltaLat: -0.35, migrationDeltaLon: -0.18),
+            .init(code: "US-HI", site: "Maui & Oahu Reefs", lat: 20.880, lon: -156.680, turtleCount: 11, spreadDeg: 0.50, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: 0.35, migrationDeltaLon: -0.45),
+
+            // Americas & Caribbean
+            .init(code: "CR-TG", site: "Tortuguero & Cahuita Coast", lat: 10.540, lon: -83.480, turtleCount: 15, spreadDeg: 0.45, primarySpecies: .green, secondarySpecies: .leatherback, migrationDeltaLat: -0.32, migrationDeltaLon: 0.25),
+            .init(code: "EC-GL", site: "Isabela & Santa Cruz, Galápagos", lat: -0.680, lon: -90.620, turtleCount: 14, spreadDeg: 0.65, primarySpecies: .green, secondarySpecies: .hawksbill, migrationDeltaLat: 0.28, migrationDeltaLon: -0.35),
+            .init(code: "MX-AK", site: "Akumal & Cozumel Reef", lat: 20.420, lon: -87.180, turtleCount: 13, spreadDeg: 0.40, primarySpecies: .loggerhead, secondarySpecies: .green, migrationDeltaLat: 0.30, migrationDeltaLon: 0.22),
+            .init(code: "MX-BJ", site: "Magdalena Bay, Baja", lat: 24.680, lon: -112.150, turtleCount: 10, spreadDeg: 0.55, primarySpecies: .loggerhead, secondarySpecies: .oliveRidley, migrationDeltaLat: -0.40, migrationDeltaLon: 0.20),
+            .init(code: "US-FL", site: "Florida Keys & Dry Tortugas", lat: 24.650, lon: -81.420, turtleCount: 14, spreadDeg: 0.60, primarySpecies: .loggerhead, secondarySpecies: .green, migrationDeltaLat: 0.45, migrationDeltaLon: 0.38),
+            .init(code: "BQ-BN", site: "Bonaire & Klein Reef", lat: 12.160, lon: -68.290, turtleCount: 10, spreadDeg: 0.28, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: 0.14, migrationDeltaLon: -0.18),
+            .init(code: "BR-FN", site: "Fernando de Noronha", lat: -3.850, lon: -32.420, turtleCount: 11, spreadDeg: 0.30, primarySpecies: .hawksbill, secondarySpecies: .green, migrationDeltaLat: -0.25, migrationDeltaLon: -0.30),
+
+            // East Atlantic & Mediterranean
+            .init(code: "CV-BV", site: "Boa Vista & Sal Reefs", lat: 16.120, lon: -22.840, turtleCount: 11, spreadDeg: 0.42, primarySpecies: .loggerhead, secondarySpecies: .green, migrationDeltaLat: 0.30, migrationDeltaLon: -0.22),
+            .init(code: "GR-ZK", site: "Laganas Bay, Zakynthos", lat: 37.720, lon: 20.900, turtleCount: 10, spreadDeg: 0.30, primarySpecies: .loggerhead, secondarySpecies: .green, migrationDeltaLat: -0.18, migrationDeltaLon: 0.22),
+            .init(code: "TR-DL", site: "Dalyan & Iztuzu Shore", lat: 36.790, lon: 28.610, turtleCount: 9, spreadDeg: 0.28, primarySpecies: .loggerhead, secondarySpecies: .green, migrationDeltaLat: -0.16, migrationDeltaLon: 0.24),
+        ]
+
+        let turtleNames = [
+            "Amina", "Chewie", "Kaveri", "Sipadan", "Kerama", "Derawan", "Misool", "Surya",
+            "Aikane", "Hoku", "Moana", "Nalu", "Koa", "Zizo", "Kai", "Lani",
+            "Coral", "Taro", "Raja", "Sagara", "Bintang", "Nusa", "Koral", "Tirta",
+            "Marina", "Vela", "Solis", "Nereus", "Calypso", "Tethys", "Pelagia", "Onda",
+            "Paz", "Brisa", "Cielo", "Lumi", "Sora", "Umi", "Kala", "Malia"
+        ]
+        let leftPhotos = ["Amina1_L.jpg", "Aikane1_L.jpg", "Ghost1_L.jpg", "Hoku1_L.jpg", "Amina2_L.jpg", "Ghost2_L.jpg", "Hoku2_L.jpg", "Amina3_L.jpg"]
+        let rightPhotos = ["Amina1_R.jpg", "Zizo1_R.jpg", "Amina2_R.jpg", "Zizo2_R.jpg"]
+        let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov"]
+
+        // Deterministic seeded generator (Knuth LCG) for reproducible global coordinates & counts
+        var rng: UInt64 = 2026_0518_42
+        func nextUnit() -> Double {
+            rng = rng &* 6364136223846793005 &+ 1442695040888963407
+            return Double((rng >> 33) & 0x7FFF_FFFF) / Double(0x7FFF_FFFF)
+        }
+        func nextSigned() -> Double { (nextUnit() * 2.0) - 1.0 }
+
+        var turtles: [Turtle] = []
+        var sightings: [Sighting] = []
+        var globalSeq = 0
+
+        for habitat in habitats {
+            for localIdx in 0..<habitat.turtleCount {
+                globalSeq += 1
+                let id = String(format: "WLD-%@-%03d", habitat.code, localIdx + 1)
+                let baseName = turtleNames[(globalSeq - 1) % turtleNames.count]
+                let displayName = "\(baseName) #\(globalSeq)"
+                let species = (localIdx % 3 == 2) ? habitat.secondarySpecies : habitat.primarySpecies
+                let conditionRoll = nextUnit()
+                let condition: TurtleCondition = conditionRoll < 0.68 ? .healthy : (conditionRoll < 0.86 ? .scarred : (conditionRoll < 0.96 ? .injured : .unknown))
+
+                let baseLat = max(-80.0, min(80.0, habitat.lat + nextSigned() * habitat.spreadDeg))
+                let baseLon = habitat.lon + nextSigned() * habitat.spreadDeg
+
+                let encounterCount = 3 + Int(nextUnit() * 4.0) // 3...6 sightings per turtle!
+                let latestMonthIdx = min(months.count - 1, 7 + Int(nextUnit() * 4.0))
+                let firstMonthIdx = max(0, latestMonthIdx - encounterCount)
+                let latestDay = 1 + Int(nextUnit() * 27.0)
+                let firstDay = 1 + Int(nextUnit() * 27.0)
+                let lastSeen = String(format: "%02d %@ 2026", latestDay, months[latestMonthIdx])
+                let firstRecorded = String(format: "%02d %@ 2026", firstDay, months[firstMonthIdx])
+
+                let backendUUID = UUID(uuidString: String(format: "00000000-0000-4000-8200-%012d", globalSeq))
+                let turtle = Turtle(
+                    id: id,
+                    species: species,
+                    location: habitat.site,
+                    lastSeen: lastSeen,
+                    sightings: encounterCount,
+                    condition: condition,
+                    firstRecorded: firstRecorded,
+                    isFavorite: globalSeq <= 8,
+                    coordinate: TurtleCoordinate(latitude: baseLat, longitude: baseLon),
+                    backendID: backendUUID,
+                    leftPhotoURL: leftPhotos[globalSeq % leftPhotos.count],
+                    rightPhotoURL: rightPhotos[globalSeq % rightPhotos.count],
+                    name: displayName,
+                    profileCode: String(format: "%@-%03d", habitat.code, localIdx + 1)
+                )
+                turtles.append(turtle)
+
+                for hop in 0..<encounterCount {
+                    let progress = Double(hop) / Double(max(encounterCount - 1, 1))
+                    let hopLat = baseLat + habitat.migrationDeltaLat * progress + nextSigned() * 0.06
+                    let hopLon = baseLon + habitat.migrationDeltaLon * progress + nextSigned() * 0.06
+                    let monthIdx = min(months.count - 1, max(0, latestMonthIdx - hop))
+                    let day = 1 + Int(nextUnit() * 27.0)
+                    let dateStr = hop == 0 ? lastSeen : (hop == encounterCount - 1 ? firstRecorded : String(format: "%02d %@ 2026", day, months[monthIdx]))
+                    sightings.append(
+                        Sighting(
+                            name: displayName,
+                            id: "wld-s-\(globalSeq)-\(hop)",
+                            turtleID: id,
+                            species: species,
+                            location: habitat.site,
+                            date: dateStr,
+                            condition: condition,
+                            coordinate: TurtleCoordinate(latitude: hopLat, longitude: hopLon)
+                        )
+                    )
+                }
+            }
+        }
+
+        return (turtles, sightings)
     }()
 }

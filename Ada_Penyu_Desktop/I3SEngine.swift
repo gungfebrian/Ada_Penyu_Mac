@@ -672,54 +672,33 @@ enum I3SSurfExtractor {
         return selected
     }
 
-    /// Places a fixed proportional template, not detected anatomical landmarks.
-    /// The user must adjust its references and ROI to the actual photo.
+    /// Automatically locates the facial scale pattern cluster in `image` using local melanin contrast
+    /// and extracts I3S keypoints strictly inside the detected cheek ROI.
+    @MainActor
     static func autoAnnotateHead(
         image: NSImage,
         side: TurtlePhotoSide,
-        params: I3SExpertParameters = .default
+        params: I3SExpertParameters? = nil
     ) -> I3SFingerprint {
-        let w = max(100.0, Double(image.size.width))
-        let h = max(100.0, Double(image.size.height))
+        let resolvedParams = params ?? I3SExpertParameters.default
+        let pxSize: NSSize = {
+            if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), cg.width > 0, cg.height > 0 {
+                return NSSize(width: cg.width, height: cg.height)
+            }
+            return NSSize(width: max(100.0, image.size.width), height: max(100.0, image.size.height))
+        }()
+        let w = Double(pxSize.width)
+        let h = Double(pxSize.height)
 
-        let ref1: I3SPoint2D
-        let ref2: I3SPoint2D
-        let ref3: I3SPoint2D
-        let polyPoints: [I3SPoint2D]
-
-        if side == .left {
-            ref1 = I3SPoint2D(x: w * 0.20, y: h * 0.56)
-            ref2 = I3SPoint2D(x: w * 0.36, y: h * 0.36)
-            ref3 = I3SPoint2D(x: w * 0.78, y: h * 0.45)
-            polyPoints = [
-                I3SPoint2D(x: w * 0.36, y: h * 0.38),
-                I3SPoint2D(x: w * 0.52, y: h * 0.31),
-                I3SPoint2D(x: w * 0.72, y: h * 0.34),
-                I3SPoint2D(x: w * 0.80, y: h * 0.46),
-                I3SPoint2D(x: w * 0.76, y: h * 0.64),
-                I3SPoint2D(x: w * 0.58, y: h * 0.69),
-                I3SPoint2D(x: w * 0.40, y: h * 0.63),
-                I3SPoint2D(x: w * 0.33, y: h * 0.50),
-            ]
-        } else {
-            ref1 = I3SPoint2D(x: w * 0.80, y: h * 0.56)
-            ref2 = I3SPoint2D(x: w * 0.64, y: h * 0.36)
-            ref3 = I3SPoint2D(x: w * 0.22, y: h * 0.45)
-            polyPoints = [
-                I3SPoint2D(x: w * 0.64, y: h * 0.38),
-                I3SPoint2D(x: w * 0.48, y: h * 0.31),
-                I3SPoint2D(x: w * 0.28, y: h * 0.34),
-                I3SPoint2D(x: w * 0.20, y: h * 0.46),
-                I3SPoint2D(x: w * 0.24, y: h * 0.64),
-                I3SPoint2D(x: w * 0.42, y: h * 0.69),
-                I3SPoint2D(x: w * 0.60, y: h * 0.63),
-                I3SPoint2D(x: w * 0.67, y: h * 0.50),
-            ]
-        }
+        let detected = PatternContourEngine.detectFacialPatternROI(from: image, side: side)
+        let ref1 = I3SPoint2D(x: detected.ref1.x * w, y: detected.ref1.y * h)
+        let ref2 = I3SPoint2D(x: detected.ref2.x * w, y: detected.ref2.y * h)
+        let ref3 = I3SPoint2D(x: detected.ref3.x * w, y: detected.ref3.y * h)
+        let polyPoints = detected.roi.map { I3SPoint2D(x: $0.x * w, y: $0.y * h) }
 
         var roi = I3SRoi(vertices: polyPoints)
         _ = roi.closePolygonIfPossible()
-        let kps = extractKeypoints(from: image, roi: roi, params: params)
+        let kps = extractKeypoints(from: image, roi: roi, params: resolvedParams)
         return I3SFingerprint(
             ref1: ref1,
             ref2: ref2,

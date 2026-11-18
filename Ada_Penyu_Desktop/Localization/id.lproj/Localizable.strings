@@ -1,0 +1,151 @@
+/* Navigation & Shell */
+"Overview" = "Ringkasan";
+"Map" = "Peta";
+"Sea Turtles" = "Penyu Laut";
+"Not Sure Review" = "Tinjauan Belum Yakin";
+"I3S Pattern ID" = "ID Pola I3S";
+"Favorites" = "Favorit";
+"Sightings" = "Penampakan";
+"Settings" = "Pengaturan";
+"Settings…" = "Pengaturan…";
+"More workspaces" = "Ruang kerja lainnya";
+"Export report" = "Ekspor laporan";
+"Sign Out" = "Keluar";
+"Developer API Settings…" = "Pengaturan API Pengembang…";
+"Collapse sidebar" = "Tutup bilah samping";
+"Expand sidebar" = "Buka bilah samping";
+"Back" = "Kembali";
+"Cancel" = "Batal";
+"Done" = "Selesai";
+"Retry" = "Coba lagi";
+"Dismiss" = "Tutup";
+"Save changes" = "Simpan perubahan";
+
+/* Login */
+"Sign in" = "Masuk";
+"Signing in…" = "Sedang masuk…";
+"Sign in to AdaPenyu" = "Masuk ke AdaPenyu";
+"Use your conservation organisation account to continue." = "Gunakan akun organisasi konservasi Anda untuk melanjutkan.";
+"Email" = "Email";
+"Enter your email" = "Masukkan email Anda";
+"Password" = "Kata sandi";
+"Enter your password" = "Masukkan kata sandi Anda";
+"Keep me signed in on this Mac" = "Tetap masuk di Mac ini";
+"Show password" = "Tampilkan kata sandi";
+"Hide password" = "Sembunyikan kata sandi";
+"Restoring sign-in…" = "Memulihkan sesi masuk…";
+"Password updated. Please sign in with your new password." = "Kata sandi diperbarui. Silakan masuk dengan kata sandi baru Anda.";
+
+/* Settings Overview */
+"Account" = "Akun";
+"Password & Security" = "Kata Sandi & Keamanan";
+"Organisation" = "Organisasi";
+"Organisation Profile" = "Profil Organisasi";
+"Manage Rangers" = "Kelola Ranger";
+"Preferences & Permissions" = "Preferensi & Izin";
+"Language" = "Bahasa";
+"App Permissions" = "Izin Aplikasi";
+"Contour Review" = "Tinjauan Kontur";
+"Defaults for new photo comparisons" = "Bawaan untuk perbandingan foto baru";
+"Support" = "Dukungan";
+"Software version" = "Versi perangkat lunak";
+"Help & Support" = "Bantuan & Dukungan";
+"Developer Options" = "Opsi Pengembang";
+"Connect external tools to your organization's data." = "Hubungkan alat eksternal ke data organisasi Anda.";
+"Organization API Key" = "Kunci API Organisasi";
+"Read-only credentials for external scripts and dashboards" = "Kredensial baca-saja untuk skrip dan dasbor eksternal";
+"Log out" = "Keluar";
+"Owner" = "Pemilik";
+"Ranger" = "Ranger";
+"Demo" = "Demo";
+"Owner only" = "Khusus pemilik";
+"Active" = "Aktif";
+"Invited" = "Diundang";
+"Revoked" = "Dicabut";
+"Not configured" = "Belum diatur";
+
+/* Password & Security */
+"Update the password for your AdaPenyu account." = "Perbarui kata sandi untuk akun AdaPenyu Anda.";
+"Current Password" = "Kata Sandi Saat Ini";
+"Enter current password" = "Masukkan kata sandi saat ini";
+"New Password" = "Kata Sandi Baru";
+"Enter new password" = "Masukkan kata sandi baru";
+"Your password must be at least 8 characters with a mix of letters, number, and symbols" = "Kata sandi minimal 8 karakter dengan kombinasi huruf, angka, dan simbol";
+"Confirm New Password" = "Konfirmasi Kata Sandi Baru";
+"Confirm new password" = "Konfirmasi kata sandi baru";
+"After changing your password, you will be signed out on this Mac so you can sign in again with your new password." = "Setelah mengubah kata sandi, sesi Anda di Mac ini akan keluar agar Anda dapat masuk kembali dengan kata sandi baru.";
+"Update password" = "Perbarui kata sandi";
+
+/* Organisation & Rangers */
+"View and update your organisation's details." = "Lihat dan perbarui detail organisasi Anda.";
+"Organisation details for your current account." = "Detail organisasi untuk akun Anda saat ini.";
+"Loading organisation profile…" = "Memuat profil organisasi…";
+"Organisation Name" = "Nama Organisasi";
+"Enter organisation name" = "Masukkan nama organisasi";
+"Organisation Email" = "Email Organisasi";
+"Optional contact email" = "Email kontak opsional";
+"Location" = "Lokasi";
+"Optional location" = "Lokasi opsional";
+"Members" = "Anggota";
+"member" = "anggota";
+"members" = "anggota";
+"Not set" = "Belum diatur";
+"Only the organisation owner can edit organisation details." = "Hanya pemilik organisasi yang dapat mengubah detail organisasi.";
+"Search, invite, and manage ranger access for your organisation." = "Cari, undang, dan kelola akses ranger untuk organisasi Anda.";
+"Search rangers" = "Cari ranger";
+"Add" = "Tambah";
+"Add Ranger" = "Tambah Ranger";
+"Invite a new ranger to join your organisation." = "Undang ranger baru untuk bergabung dengan organisasi Anda.";
+"Full Name" = "Nama Lengkap";
+"Enter ranger name" = "Masukkan nama ranger";
+"Enter ranger email" = "Masukkan email ranger";
+"Ranger Details" = "Detail Ranger";
+"Loading ranger details…" = "Memuat detail ranger…";
+"Status" = "Status";
+"Resend invitation" = "Kirim ulang undangan";
+"Remove Access" = "Hapus Akses";
+"Load more" = "Muat lebih banyak";
+"No rangers yet" = "Belum ada ranger";
+"No matching rangers" = "Tidak ada ranger yang cocok";
+"Use Add to invite a ranger to your organisation." = "Gunakan Tambah untuk mengundang ranger ke organisasi Anda.";
+"Try a different name or email." = "Coba nama atau email lain.";
+
+/* Preferences & Permissions */
+"Choose the display language for AdaPenyu on this Mac." = "Pilih bahasa tampilan AdaPenyu di Mac ini.";
+"Language changes apply immediately and are saved on this Mac." = "Perubahan bahasa langsung berlaku dan disimpan di Mac ini.";
+"How AdaPenyu Mac uses macOS sandbox and file permissions." = "Cara AdaPenyu Mac menggunakan sandbox macOS dan izin berkas.";
+"Selected Files & Folders" = "Berkas & Folder Terpilih";
+"AdaPenyu Mac imports turtle photos and exports reports only for files and folders you explicitly choose through the macOS file picker." = "AdaPenyu Mac hanya mengimpor foto penyu dan mengekspor laporan untuk berkas dan folder yang Anda pilih melalui pemilih berkas macOS.";
+"Open Files & Folders in System Settings" = "Buka Berkas & Folder di Pengaturan Sistem";
+"Network Access" = "Akses Jaringan";
+"Used to sign in and sync organisation records with your configured AdaPenyu backend." = "Digunakan untuk masuk dan menyinkronkan data organisasi dengan backend AdaPenyu yang dikonfigurasi.";
+"Phone-Only Permissions Not Used" = "Izin Khusus Ponsel Tidak Digunakan";
+"AdaPenyu Mac does not request Camera, Photos Library, Location, or Push Notification permissions." = "AdaPenyu Mac tidak meminta izin Kamera, Perpustakaan Foto, Lokasi, atau Notifikasi Push.";
+
+/* Contour Review */
+"Show scale numbers" = "Tampilkan nomor sisik";
+"Edge threshold" = "Ambang tepi";
+"Overlay opacity" = "Opasitas hamparan";
+"Line weight" = "Ketebalan garis";
+"Reduce noise" = "Kurangi derau";
+"Reset Defaults" = "Atur Ulang Bawaan";
+"These values initialize newly opened photo comparisons in Photo ID and Not Sure. Open comparisons keep their current session settings." = "Nilai ini menginisialisasi perbandingan foto baru di ID Pola I3S dan Tinjauan Belum Yakin. Perbandingan yang sedang terbuka tetap mempertahankan pengaturannya.";
+
+/* Support */
+"Organisation Administrator Support" = "Dukungan Administrator Organisasi";
+"For assistance with AdaPenyu or your organisation account, please contact your organisation administrator." = "Untuk bantuan mengenai AdaPenyu atau akun organisasi Anda, silakan hubungi administrator organisasi Anda.";
+"Signed-in account" = "Akun yang masuk";
+"More workspaces" = "Ruang kerja lainnya";
+"Encounter log & timeline" = "Catatan & linimasa pengamatan";
+"Bookmarked sea turtles" = "Penyu yang ditandai";
+"Spot-matching workbench" = "Meja pencocokan pola I3S";
+"API Endpoint" = "Endpoint API";
+"Debug backend server" = "Server backend debug";
+"Live" = "Aktif";
+"Need help with your organisation account?" = "Butuh bantuan dengan akun organisasi Anda?";
+"Switch desktop interface language immediately." = "Ganti bahasa antarmuka desktop secara langsung.";
+"Default scale numbers, threshold, opacity, and noise reduction." = "Pengaturan awal nomor sisik, ambang batas, opasitas, dan pengurangan noise.";
+"Configure defaults" = "Atur bawaan";
+"Review macOS Photo Library, Files, and Privacy settings." = "Tinjau izin Perpustakaan Foto, Berkas, dan Privasi macOS.";
+"Review permissions" = "Tinjau izin";
+"Read-only credentials for external scripts and dashboards." = "Kredensial baca-saja untuk skrip dan dasbor eksternal.";
