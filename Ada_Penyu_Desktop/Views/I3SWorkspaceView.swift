@@ -910,23 +910,16 @@ struct I3SWorkspaceView: View {
 
             if queryImageData != nil {
                 VStack(spacing: 7) {
-                    if !candidates.isEmpty {
-                        Button {
-                            Task {
-                                await preloadMultiCompareCandidates()
-                                escalateCurrentCaseToNotSureReview()
-                            }
-                        } label: {
-                            Label("Not Sure → Review", systemImage: "questionmark.circle")
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundStyle(AdaColors.navy)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 30)
-                                .background(AdaColors.canvas, in: Capsule())
-                                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
+                    Button(action: escalateCurrentCaseToNotSureReview) {
+                        Label("Send to Not Sure", systemImage: "questionmark.circle")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(AdaColors.navy)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 30)
+                            .background(AdaColors.canvas, in: Capsule())
+                            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
                     }
+                    .buttonStyle(.plain)
 
                     Button {
                         enrollName = "Turtle #\(String(format: "%03d", store.turtles.count + 1))"
@@ -1141,50 +1134,60 @@ struct I3SWorkspaceView: View {
     }
 
     private func escalateCurrentCaseToNotSureReview() {
-        let activeSide = comparisonUsesSecondary ? secondaryPhotoSide : querySide
-        let qImage = comparisonImage ?? activeImage
-        let qROI: [ScalePoint] = {
-            guard let img = qImage, img.size.width > 0, img.size.height > 0,
-                  comparisonFingerprint.roi.vertices.count >= 3 else { return [] }
-            let w = Double(img.size.width)
-            let h = Double(img.size.height)
-            let raw = comparisonFingerprint.roi.vertices.dropLast(comparisonFingerprint.roi.isFinal ? 1 : 0)
-            return raw.map { ScalePoint(x: $0.x / w, y: $0.y / h) }
+        let useSecondary = isDualMode && (selectedCandidate.map { $0.matchedPhotoSide == .right } ?? editingSecondary)
+        guard let data = useSecondary ? secondaryImageData : queryImageData else {
+            statusBannerMessage = "Load a photograph for this side before sending it to Not Sure."
+            return
+        }
+        let activeSide = useSecondary ? secondaryPhotoSide : querySide
+        let activeFingerprint = useSecondary ? secondaryFingerprint : fingerprint
+        let photo = NotSureReviewPhoto(data: data)
+        let companionData = isDualMode && photoInputs.hasValidPair && primaryIsBundled == secondaryIsBundled
+            ? (useSecondary ? queryImageData : secondaryImageData) : nil
+        let isExample = store.isDemoBypassActive || (useSecondary ? secondaryIsBundled : primaryIsBundled)
+        let roi: [ScalePoint] = {
+            guard let image = photo.image, image.size.width > 0, image.size.height > 0,
+                  activeFingerprint.roi.vertices.count >= 3 else { return [] }
+            let vertices = activeFingerprint.roi.vertices
+            let unique = vertices.first == vertices.last ? vertices.dropLast() : vertices[...]
+            return unique.map {
+                ScalePoint(x: $0.x / Double(image.size.width), y: $0.y / Double(image.size.height))
+            }
         }()
-
-        let escalatedCandidates: [EscalatedNotSureCandidate] = candidates.prefix(4).map { cand in
-            let sample = cand.isBundledExample
-                ? I3SSampleLibrary.sample(forFilenameOrID: cand.photoURL ?? cand.profileCode ?? cand.name)
+        let escalatedCandidates = candidates.filter { $0.matchedPhotoSide == activeSide }.prefix(4).map { candidate in
+            let isSampleReference = candidate.isBundledExample || store.isDemoBypassActive
+            let sample = isSampleReference
+                ? I3SSampleLibrary.sample(forFilenameOrID: candidate.photoURL ?? candidate.profileCode ?? candidate.name)
                 : nil
-            let cachedImg = candidateImagesCache[cand.individualID] ?? sample.flatMap { I3SSampleLibrary.loadImage(for: $0) }
-            let cachedFgp = candidateFingerprintsCache[cand.individualID] ?? sample?.fingerprint
+            let reference: NotSureReviewPhoto?
+            if let sample, let bytes = I3SSampleLibrary.loadImageData(for: sample) {
+                reference = NotSureReviewPhoto(data: bytes)
+            } else {
+                reference = NotSureReviewPhoto(snapshot: candidateImagesCache[candidate.id])
+            }
             return EscalatedNotSureCandidate(
-                id: cand.individualID.uuidString,
-                rank: cand.rank,
-                name: cand.name,
-                profileCode: cand.profileCode ?? "RANK-\(cand.rank)",
-                side: cand.matchedPhotoSide,
-                sideMatches: cand.matchedPhotoSide == activeSide,
-                dateText: cand.lastSeenDate ?? "Gallery",
-                location: cand.lastSeenLocation ?? "Catalog",
-                confidencePercent: cand.confidencePercent,
-                image: cachedImg,
-                sampleImageName: sample?.imageFile,
-                fingerprint: cachedFgp
+                id: candidate.id.uuidString, rank: candidate.rank, name: candidate.name,
+                profileCode: candidate.profileCode ?? "", side: candidate.matchedPhotoSide,
+                sideMatches: true, dateText: candidate.lastSeenDate ?? "",
+                location: candidate.lastSeenLocation ?? "", confidencePercent: candidate.confidencePercent,
+                photo: reference, sampleImageName: sample?.imageFile,
+                fingerprint: candidateFingerprintsCache[candidate.id] ?? sample?.fingerprint,
+                isBundledExample: isSampleReference
             )
         }
-
         let item = EscalatedNotSureCase(
-            title: comparisonUsesSecondary ? secondaryTitle : queryTitle,
-            side: activeSide,
-            queryImage: qImage,
-            queryFingerprint: comparisonFingerprint.readyForProcessing ? comparisonFingerprint : nil,
-            queryROI: qROI,
-            candidates: escalatedCandidates
+            title: useSecondary ? secondaryTitle : queryTitle, side: activeSide, photo: photo,
+            companion: companionData.map { NotSureReviewPhoto(data: $0) },
+            queryFingerprint: activeFingerprint.readyForProcessing ? activeFingerprint : nil,
+            queryROI: roi, candidates: escalatedCandidates, submittedBy: store.accountName, isExample: isExample
         )
-        isComparisonModalPresented = false
-        inlineCompareMode = false
-        store.escalateToNotSureReview(item)
+        do {
+            try store.escalateToNotSureReview(item)
+            isComparisonModalPresented = false
+            inlineCompareMode = false
+        } catch {
+            statusBannerMessage = error.localizedDescription
+        }
     }
 
     // MARK: - Spacious Visual Comparison Modal (`CompareResults.java`)
@@ -1349,13 +1352,8 @@ struct I3SWorkspaceView: View {
                 .buttonStyle(.plain)
                 .disabled(!canWriteGallery)
 
-                Button {
-                    Task {
-                        await preloadMultiCompareCandidates()
-                        escalateCurrentCaseToNotSureReview()
-                    }
-                } label: {
-                    Label("Not Sure → Review", systemImage: "questionmark.circle")
+                Button(action: escalateCurrentCaseToNotSureReview) {
+                    Label("Send to Not Sure", systemImage: "questionmark.circle")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(AdaColors.navy)
                         .padding(.horizontal, 14)
@@ -1838,7 +1836,7 @@ struct I3SWorkspaceView: View {
         invalidateSearchResults()
         let revision = queryRevision
         isSearching = true
-        statusBannerMessage = "Searching gallery via MiewID + XFeat LighterGlue…"
+        statusBannerMessage = store.isDemoBypassActive ? "Opening sample references…" : "Searching the gallery…"
         defer { isSearching = false }
 
         do {
@@ -1858,7 +1856,9 @@ struct I3SWorkspaceView: View {
                 if let top = candidates.first {
                     await selectCandidate(top)
                     guard queryRevision == revision else { return }
-                    statusBannerMessage = "Found \(candidates.count) candidates — Top match: \(top.name) (\(top.confidencePercent)% confidence). Click 'Compare Visually' or 'Compare Multiple'."
+                    statusBannerMessage = top.isBundledExample
+                        ? "\(candidates.count) sample references are ready to compare."
+                        : "Found \(candidates.count) candidates. Compare the photos before deciding."
                 }
             } else {
                 candidates = []

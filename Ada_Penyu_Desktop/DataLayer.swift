@@ -1092,7 +1092,7 @@ final class DemoTurtleRepository: TurtleRepository {
             let conf = idx == 0 ? 0.94 : max(0.08, 0.82 - Double(idx) * 0.14)
             let defaultPhoto = side == .right ? "Zizo1_R.jpg" : "Amina1_L.jpg"
             let candidatePhoto = side == .right ? (t.rightPhotoURL ?? defaultPhoto) : (t.leftPhotoURL ?? defaultPhoto)
-            return MatchCandidateItem(
+            var candidate = MatchCandidateItem(
                 individualID: t.backendID ?? UUID(),
                 name: t.displayName,
                 profileCode: t.profileCode ?? String(format: "000%03d", idx + 1),
@@ -1110,11 +1110,13 @@ final class DemoTurtleRepository: TurtleRepository {
                 lastSeenLocation: t.location,
                 condition: t.condition
             )
+            candidate.isBundledExample = true
+            return candidate
         }
         return MatchSearchOutcome(
             querySide: side,
             gallerySize: turtles.count,
-            matchState: "likely_match",
+            matchState: "bundled_examples",
             candidates: Array(items),
             isDualPair: false,
             pairAgreed: nil
@@ -1126,10 +1128,10 @@ final class DemoTurtleRepository: TurtleRepository {
         return MatchSearchOutcome(
             querySide: .left,
             gallerySize: single.gallerySize * 2,
-            matchState: "likely_match",
+            matchState: "bundled_examples",
             candidates: single.candidates,
             isDualPair: true,
-            pairAgreed: true
+            pairAgreed: nil
         )
     }
 
