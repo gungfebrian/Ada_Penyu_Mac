@@ -8,10 +8,26 @@ struct ScaleReviewComparisonView: View {
     @ObservedObject var store: ScaleReviewStore
     var querySampleName: String? = nil
     var gallerySampleName: String? = nil
-    @State private var showsNumbers = true
+    @State private var showsNumbers: Bool
     @State private var queryColor = Color.cyan
     @State private var galleryColor = AdaColors.orange
     @State private var exportMessage: String?
+
+    init(
+        queryImage: NSImage?,
+        galleryImage: NSImage?,
+        store: ScaleReviewStore,
+        querySampleName: String? = nil,
+        gallerySampleName: String? = nil,
+        initialShowsNumbers: Bool = true
+    ) {
+        self.queryImage = queryImage
+        self.galleryImage = galleryImage
+        self.store = store
+        self.querySampleName = querySampleName
+        self.gallerySampleName = gallerySampleName
+        self._showsNumbers = State(initialValue: initialShowsNumbers)
+    }
 
     var body: some View {
         VStack(spacing: 0) {

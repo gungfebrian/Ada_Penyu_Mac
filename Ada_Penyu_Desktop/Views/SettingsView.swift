@@ -101,6 +101,22 @@ struct SettingsView: View {
                     }
                 }
 
+                // Contour Review section (Mac-only defaults)
+                SettingsSectionGroup(
+                    title: "Contour Review",
+                    subtitle: "Defaults for new photo comparisons"
+                ) {
+                    SettingsNavigationRow(
+                        icon: "viewfinder.circle",
+                        title: "Contour Review",
+                        subtitle: "Scale numbers, edge threshold, opacity, line weight, and noise reduction",
+                        trailingValue: store.contourPreferences.summaryText,
+                        accessibilityID: "settings.row.contourReview"
+                    ) {
+                        store.requestSettingsDetail(.contourReview)
+                    }
+                }
+
                 // Support section
                 SettingsSectionGroup(title: "Support") {
                     SettingsInfoRow(
@@ -285,6 +301,11 @@ struct SettingsView: View {
         case .appPermissions:
             AppPermissionsView(
                 store: store,
+                onBack: { store.requestSettingsBack() }
+            )
+        case .contourReview:
+            ContourReviewSettingsView(
+                store: store.contourPreferences,
                 onBack: { store.requestSettingsBack() }
             )
         case .helpSupport:

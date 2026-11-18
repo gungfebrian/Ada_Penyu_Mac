@@ -111,6 +111,8 @@ struct I3SWorkspaceView: View {
     @State private var isComparisonModalPresented = false
     @State private var comparisonTab: I3SComparisonTab = .patternStudio
     @State private var contourSettings = ContourSettings()
+    @State private var comparisonSessionID = UUID()
+    @State private var comparisonInitialShowNumbers = true
     @State private var multiCompareLimit: Int = 4
     @State private var candidateImagesCache: [UUID: NSImage] = [:]
     @State private var candidateFingerprintsCache: [UUID: I3SFingerprint] = [:]
@@ -361,6 +363,7 @@ struct I3SWorkspaceView: View {
                 .frame(width: 190)
                 .onChange(of: inlineCompareMode) { _, enabled in
                     if enabled {
+                        seedNewComparisonDefaults()
                         Task { await preloadMultiCompareCandidates() }
                     }
                 }
@@ -1020,6 +1023,7 @@ struct I3SWorkspaceView: View {
                     Task {
                         await selectCandidate(item)
                         comparisonTab = .patternStudio
+                        seedNewComparisonDefaults()
                         isComparisonModalPresented = true
                     }
                 } label: {
@@ -1125,12 +1129,14 @@ struct I3SWorkspaceView: View {
             candidates: targets,
             selectedCandidateID: selectedBinding,
             mode: $studioMode,
+            initialShowNumbers: comparisonInitialShowNumbers,
             onSelectCandidateID: { nextID in
                 if let cand = candidates.first(where: { $0.individualID.uuidString == nextID }) {
                     Task { await selectCandidate(cand) }
                 }
             }
         )
+        .id(comparisonSessionID)
     }
 
     private func escalateCurrentCaseToNotSureReview() {
@@ -1245,7 +1251,13 @@ struct I3SWorkspaceView: View {
                 case .patternStudio:
                     i3sPatternStudioView
                 case .scales:
-                    ScaleReviewComparisonView(queryImage: comparisonImage, galleryImage: candidateImage, store: scaleReviews)
+                    ScaleReviewComparisonView(
+                        queryImage: comparisonImage,
+                        galleryImage: candidateImage,
+                        store: scaleReviews,
+                        initialShowsNumbers: comparisonInitialShowNumbers
+                    )
+                    .id(comparisonSessionID)
                 case .bothImages:
                     ContourComparisonView(queryImage: comparisonImage, galleryImage: candidateImage,
                         settings: $contourSettings,
@@ -1936,9 +1948,20 @@ struct I3SWorkspaceView: View {
         }
     }
 
+    private func seedNewComparisonDefaults() {
+        comparisonSessionID = UUID()
+        comparisonInitialShowNumbers = store.contourPreferences.preferences.showScaleNumbers
+        contourSettings = store.contourPreferences.makeContourSettings(
+            enabled: true,
+            querySide: querySide,
+            gallerySide: selectedCandidate?.matchedPhotoSide ?? querySide
+        )
+    }
+
     private func populateBundledSampleCandidatesAndOpen(multiMode: Bool) async {
         await populateBundledSampleCandidates(excludingSampleID: nil, side: querySide)
         guard let selectedCandidate, selectedCandidate.isBundledExample else { return }
+        seedNewComparisonDefaults()
         if multiMode {
             studioMode = .oneVsThree
             inlineCompareMode = true

@@ -177,7 +177,12 @@ struct NotSureWorkspaceView: View {
 }
 
 private struct NotSureCaseDetail: View {
-    private enum Evidence: String, CaseIterable { case photos = "Photos", contours = "Pattern studio", scales = "Numbered scales" }
+    private enum Evidence: String, CaseIterable {
+        case photos = "Photos"
+        case contours = "Pattern studio"
+        case photoContours = "Photo contours"
+        case scales = "Numbered scales"
+    }
     private enum CandidateFilter: String, CaseIterable { case available = "Available", sameSide = "Same side", rejected = "Rejected" }
     private enum Decision: Identifiable {
         case match(id: String, name: String), unknown
@@ -220,6 +225,7 @@ private struct NotSureCaseDetail: View {
     @State private var candidateFilter: CandidateFilter = .available
     @State private var selectedCandidateID = ""
     @State private var studioMode: PatternStudioMode = .oneToOne
+    @State private var contourSettings: ContourSettings
     @State private var noteDraft: String
     @State private var inlineError: String?
     @State private var foundNoCandidates = false
@@ -228,12 +234,20 @@ private struct NotSureCaseDetail: View {
     @State private var confirmation: Decision?
     @State private var showsCompanion = false
     @State private var showsUnsavedNoteAlert = false
+    private let initialShowScaleNumbers: Bool
 
     init(store: AppStore, item: EscalatedNotSureCase, onBack: @escaping () -> Void) {
         self.store = store
         self.item = item
         self.onBack = onBack
         self._noteDraft = State(initialValue: item.note)
+        let defaults = store.contourPreferences.preferences
+        self.initialShowScaleNumbers = defaults.showScaleNumbers
+        self._contourSettings = State(initialValue: defaults.makeContourSettings(
+            enabled: true,
+            querySide: item.side,
+            gallerySide: item.side
+        ))
     }
 
     private var isPending: Bool { item.decision == .pending }
@@ -393,12 +407,29 @@ private struct NotSureCaseDetail: View {
                 ),
                 candidates: studioCandidates.map(studioTarget),
                 selectedCandidateID: Binding(get: { selectedCandidate?.id ?? "" }, set: { selectedCandidateID = $0 }),
-                mode: $studioMode
+                mode: $studioMode,
+                initialShowNumbers: initialShowScaleNumbers
             )
             .frame(height: 390)
             .clipShape(RoundedRectangle(cornerRadius: 12))
+        case .photoContours:
+            ContourComparisonView(
+                queryImage: item.queryImage,
+                galleryImage: selectedCandidate?.image,
+                settings: $contourSettings,
+                queryTitle: "\(item.title) · \(item.side.title)",
+                galleryTitle: selectedCandidate.map { "\($0.name) · \($0.side.title)" } ?? "Gallery reference",
+                showsVisibilityControl: false
+            )
+            .frame(height: 410)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         case .scales:
-            ScaleReviewComparisonView(queryImage: item.queryImage, galleryImage: selectedCandidate?.image, store: scaleReviews)
+            ScaleReviewComparisonView(
+                queryImage: item.queryImage,
+                galleryImage: selectedCandidate?.image,
+                store: scaleReviews,
+                initialShowsNumbers: initialShowScaleNumbers
+            )
                 .frame(height: 440)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
         }

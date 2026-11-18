@@ -70,15 +70,16 @@ struct PatternContourStudioView: View {
     @Binding var selectedCandidateID: String
     @Binding var mode: PatternStudioMode
     var linesOnlyInitial: Bool = false
+    var initialShowNumbers: Bool = true
     var onSelectCandidateID: ((String) -> Void)? = nil
     var onConfirmCandidate: ((PatternComparisonTarget) -> Void)? = nil
     var onRejectCandidate: ((PatternComparisonTarget) -> Void)? = nil
 
     @State private var arrangement: PatternOneVsThreeArrangement = .quad
     @State private var displayStyle: PatternContourDisplayStyle = .scaleMesh
-    @State private var linesOnly = false
+    @State private var linesOnly: Bool
     @State private var patternOnlyMask = false
-    @State private var showNumbers = true
+    @State private var showNumbers: Bool
     @State private var showMatchThreads = true
     @State private var config = PatternExtractionConfig()
     @State private var meshColor: Color = Color(red: 0.94, green: 0.16, blue: 0.14)
@@ -110,6 +111,7 @@ struct PatternContourStudioView: View {
         selectedCandidateID: Binding<String>,
         mode: Binding<PatternStudioMode>,
         linesOnlyInitial: Bool = false,
+        initialShowNumbers: Bool = true,
         onSelectCandidateID: ((String) -> Void)? = nil,
         onConfirmCandidate: ((PatternComparisonTarget) -> Void)? = nil,
         onRejectCandidate: ((PatternComparisonTarget) -> Void)? = nil
@@ -119,10 +121,12 @@ struct PatternContourStudioView: View {
         self._selectedCandidateID = selectedCandidateID
         self._mode = mode
         self.linesOnlyInitial = linesOnlyInitial
+        self.initialShowNumbers = initialShowNumbers
         self.onSelectCandidateID = onSelectCandidateID
         self.onConfirmCandidate = onConfirmCandidate
         self.onRejectCandidate = onRejectCandidate
         self._linesOnly = State(initialValue: linesOnlyInitial)
+        self._showNumbers = State(initialValue: initialShowNumbers)
     }
 
     private var selectedCandidate: PatternComparisonTarget? {

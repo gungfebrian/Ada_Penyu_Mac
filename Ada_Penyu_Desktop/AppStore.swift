@@ -21,6 +21,7 @@ final class AppStore: ObservableObject {
     let passwordSecurity: PasswordSecurityModel
     let organisationSettings: OrganisationSettingsModel
     let localization: LocalizationManager
+    let contourPreferences: DesktopContourPreferencesStore
     @Published private var currentSection: AppSection = .dashboard
     @Published var settingsDetail: SettingsDetailRoute? = nil
     @Published var pendingSettingsDetailTarget: SettingsDetailTarget? = nil
@@ -122,6 +123,7 @@ final class AppStore: ObservableObject {
     private var photoCache: [String: NSImage] = [:]
     private var keySettingsObservation: AnyCancellable?
     private var localizationObservation: AnyCancellable?
+    private var contourPreferencesObservation: AnyCancellable?
     private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
     init(
@@ -129,7 +131,8 @@ final class AppStore: ObservableObject {
         client: APIClient? = nil,
         dashboardLayoutStore: DashboardLayoutStore? = nil,
         reviewJournal: NotSureReviewJournal? = nil,
-        localization: LocalizationManager? = nil
+        localization: LocalizationManager? = nil,
+        contourPreferences: DesktopContourPreferencesStore? = nil
     ) {
         let client = client ?? APIClient()
         self.client = client
@@ -137,6 +140,7 @@ final class AppStore: ObservableObject {
         self.passwordSecurity = PasswordSecurityModel(client: client)
         self.organisationSettings = OrganisationSettingsModel(client: client)
         self.localization = localization ?? LocalizationManager()
+        self.contourPreferences = contourPreferences ?? DesktopContourPreferencesStore()
         self.dashboardLayoutStore = dashboardLayoutStore ?? DashboardLayoutStore()
         self.reviewJournal = reviewJournal ?? NotSureReviewJournal()
         self.apiBaseURLString = client.baseURL.absoluteString
@@ -146,6 +150,9 @@ final class AppStore: ObservableObject {
             self?.objectWillChange.send()
         }
         localizationObservation = self.localization.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        contourPreferencesObservation = self.contourPreferences.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
         observeSession()
@@ -271,6 +278,12 @@ final class AppStore: ObservableObject {
         organizationKeySettings.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
         passwordSecurity.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
         organisationSettings.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
+        contourPreferences.configure(
+            baseURLString: apiBaseURLString,
+            user: client.account,
+            isDemo: isDemoBypassActive,
+            demoPersonaKey: demoPersona.accountStorageKey
+        )
         if isDemoBypassActive {
             isAuthenticated = true
             authEmail = demoPersona.email
