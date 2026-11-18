@@ -154,6 +154,25 @@ struct AccountLoginView: View {
             }
             .disabled(isSigningIn)
 
+            if let notice = store.sessionNotice, errorMessage == nil, store.lastError == nil, !isSigningIn {
+                Label {
+                    Text(notice)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                        .accessibilityHidden(true)
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(AdaColors.navy)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(AdaColors.navy.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(notice)
+                .accessibilityIdentifier("login.sessionNotice")
+            }
+
             if let message = errorMessage ?? store.lastError, !isSigningIn {
                 Label {
                     Text(message)

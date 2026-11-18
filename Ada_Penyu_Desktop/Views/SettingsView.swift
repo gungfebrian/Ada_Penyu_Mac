@@ -38,6 +38,18 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 accountSummaryHeader
 
+                // Account section
+                SettingsSectionGroup(title: "Account") {
+                    SettingsNavigationRow(
+                        icon: "lock",
+                        title: "Password & Security",
+                        trailingValue: store.isDemoBypassActive ? "Demo" : nil,
+                        accessibilityID: "settings.row.passwordSecurity"
+                    ) {
+                        store.requestSettingsDetail(.passwordSecurity)
+                    }
+                }
+
                 // Support section
                 SettingsSectionGroup(title: "Support") {
                     SettingsInfoRow(
@@ -180,6 +192,8 @@ struct SettingsView: View {
     @ViewBuilder
     private func detailView(for detail: SettingsDetailRoute) -> some View {
         switch detail {
+        case .passwordSecurity:
+            PasswordSecurityView(store: store, model: store.passwordSecurity, onBack: { store.requestSettingsBack() })
         case .helpSupport:
             HelpSupportDetailView(store: store, onBack: { store.requestSettingsBack() })
         case .developerAPIKey:

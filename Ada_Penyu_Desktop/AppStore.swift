@@ -18,6 +18,7 @@ enum SettingsDetailTarget: Equatable, Identifiable {
 @MainActor
 final class AppStore: ObservableObject {
     let organizationKeySettings: OrganizationAPIKeySettings
+    let passwordSecurity: PasswordSecurityModel
     @Published private var currentSection: AppSection = .dashboard
     @Published var settingsDetail: SettingsDetailRoute? = nil
     @Published var pendingSettingsDetailTarget: SettingsDetailTarget? = nil
@@ -77,6 +78,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var totalIndividuals = 0
     @Published private(set) var isLoading = false
     @Published private(set) var lastError: String?
+    @Published private(set) var sessionNotice: String?
     @Published var isAuthSheetPresented = false
     @Published private(set) var authEmail = ""
     @Published private(set) var accountName = "Researcher"
@@ -128,6 +130,7 @@ final class AppStore: ObservableObject {
         let client = client ?? APIClient()
         self.client = client
         self.organizationKeySettings = OrganizationAPIKeySettings(client: client)
+        self.passwordSecurity = PasswordSecurityModel(client: client)
         self.dashboardLayoutStore = dashboardLayoutStore ?? DashboardLayoutStore()
         self.reviewJournal = reviewJournal ?? NotSureReviewJournal()
         self.apiBaseURLString = client.baseURL.absoluteString
@@ -257,6 +260,7 @@ final class AppStore: ObservableObject {
 
     private func updateAccount() {
         organizationKeySettings.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
+        passwordSecurity.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
         if isDemoBypassActive {
             isAuthenticated = true
             authEmail = demoPersona.email
@@ -516,8 +520,10 @@ final class AppStore: ObservableObject {
 
     private func clearPrivateState(keepDemoMode: Bool = false) {
         organizationKeySettings.leave()
+        passwordSecurity.invalidateAndClear()
         settingsDetail = nil
         pendingSettingsDetailTarget = nil
+        sessionNotice = nil
         if !keepDemoMode {
             isDemoBypassActive = false
         }
@@ -776,6 +782,11 @@ final class AppStore: ObservableObject {
         client.logout()
         clearPrivateState()
         updateAccount()
+    }
+
+    func completePasswordChangeSignOut() {
+        signOut()
+        sessionNotice = "Password updated. Please sign in with your new password."
     }
 
     #if DEBUG
