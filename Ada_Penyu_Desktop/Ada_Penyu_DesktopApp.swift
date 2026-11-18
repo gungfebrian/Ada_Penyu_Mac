@@ -31,6 +31,15 @@ struct Ada_Penyu_DesktopApp: App {
             height: AdaLayout.defaultWindowSize.height
         )
         .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    store.openSettings()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+                .disabled(!store.isAuthenticated || store.organizationKeySettings.isChanging)
+            }
+        }
     }
 }
 

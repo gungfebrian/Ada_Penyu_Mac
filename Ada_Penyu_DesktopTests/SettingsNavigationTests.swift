@@ -62,6 +62,68 @@ final class SettingsNavigationTests: XCTestCase {
         XCTAssertNil(store.organizationKeySettings.newSecret)
     }
 
+    func testOpenSettingsRequiresSignedInSessionAndUsesSharedRoute() async throws {
+        let signedOut = AppStore(client: makeKeyTestClient())
+        XCTAssertFalse(signedOut.isAuthenticated)
+        signedOut.openSettings()
+        XCTAssertEqual(signedOut.activeSection, .dashboard)
+
+        let live = try await ownerStore()
+        live.select(TestTurtleRepository.turtle)
+        live.openSettings()
+        XCTAssertEqual(live.activeSection, .settings)
+        XCTAssertNil(live.selectedTurtle)
+        XCTAssertNil(live.settingsDetail)
+    }
+
+    func testLeavingDeveloperOptionsDetailGuardsUnsavedSecretAndInFlightMutation() async throws {
+        let store = try await ownerStore()
+        store.openSettings()
+        XCTAssertTrue(store.requestSettingsDetail(.developerAPIKey))
+        await store.organizationKeySettings.enter()
+        await store.organizationKeySettings.rotate()
+
+        XCTAssertFalse(store.requestSettingsBack())
+        XCTAssertEqual(store.settingsDetail, .developerAPIKey)
+        XCTAssertEqual(store.pendingSettingsDetailTarget, .overview)
+
+        store.cancelPendingSettingsDetailNavigation()
+        XCTAssertNil(store.pendingSettingsDetailTarget)
+        XCTAssertNotNil(store.organizationKeySettings.newSecret)
+
+        store.openSettings()
+        XCTAssertEqual(store.pendingSettingsDetailTarget, .overview)
+        store.discardKeyAndCompleteSettingsDetailNavigation()
+        XCTAssertNil(store.settingsDetail)
+        XCTAssertNil(store.organizationKeySettings.newSecret)
+    }
+
+    func testAccountMenuSeparatesProductSettingsFromDebugAPISettings() {
+        let model = SidebarAccountMenuModel()
+        var openedProduct = false
+        model.onOpenProductSettings = { openedProduct = true }
+        model.onOpenAuthSettings = {}
+        model.onSignOut = {}
+
+        let menu = model.makeMenu()
+        let settingsItem = menu.items.first { $0.title == "Settings…" }
+        XCTAssertNotNil(settingsItem)
+        XCTAssertEqual(settingsItem?.keyEquivalent, ",")
+        XCTAssertTrue(settingsItem?.isEnabled == true)
+        _ = settingsItem.map { model.openProductSettings($0) }
+        XCTAssertTrue(openedProduct)
+
+        model.isSettingsNavigationDisabled = true
+        let lockedMenu = model.makeMenu()
+        XCTAssertEqual(lockedMenu.items.first { $0.title == "Settings…" }?.isEnabled, false)
+        XCTAssertEqual(lockedMenu.items.first { $0.title == "Sign Out" }?.isEnabled, true)
+    }
+
+    func testAppVersionInfoReadsBundleVersion() {
+        let version = AppVersionInfo.displayString()
+        XCTAssertTrue(version.hasPrefix("AdaPenyu v"), version)
+    }
+
     private func ownerStore() async throws -> AppStore {
         BackendStub.handler = { request in
             if let auth = APIFixtures.auth(request) { return auth }

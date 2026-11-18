@@ -88,6 +88,7 @@ struct ContentView: View {
                         store.selectedSpecies = species
                         store.activeSection = .individuals
                     },
+                    onOpenProductSettings: store.isAuthenticated ? { store.openSettings() } : nil,
                     onOpenAuthSettings: debugSettingsAction,
                     accountName: store.accountName,
                     accountEmail: store.authEmail,
@@ -170,6 +171,8 @@ struct ContentView: View {
                 exportQueryOverride = nil
             } else if store.selectedTurtle != nil {
                 store.dismissDetail()
+            } else if store.activeSection == .settings && store.settingsDetail != nil {
+                store.requestSettingsBack()
             }
         }
         .safeAreaInset(edge: .top) {

@@ -3,10 +3,24 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum SettingsDetailTarget: Equatable, Identifiable {
+    case overview
+    case detail(SettingsDetailRoute)
+
+    var id: String {
+        switch self {
+        case .overview: "overview"
+        case .detail(let route): route.id
+        }
+    }
+}
+
 @MainActor
 final class AppStore: ObservableObject {
     let organizationKeySettings: OrganizationAPIKeySettings
     @Published private var currentSection: AppSection = .dashboard
+    @Published var settingsDetail: SettingsDetailRoute? = nil
+    @Published var pendingSettingsDetailTarget: SettingsDetailTarget? = nil
     var activeSection: AppSection {
         get { currentSection }
         set { requestNavigation(to: newValue) }
@@ -141,15 +155,87 @@ final class AppStore: ObservableObject {
         if currentSection == .settings {
             guard organizationKeySettings.requestLeave(to: section) else { return }
             organizationKeySettings.leave()
+            settingsDetail = nil
+            pendingSettingsDetailTarget = nil
         }
         dismissDetail()
         currentSection = section
+    }
+
+    func openSettings() {
+        guard isAuthenticated else { return }
+        if currentSection == .settings {
+            if settingsDetail != nil {
+                requestSettingsDetail(nil)
+            }
+            return
+        }
+        requestNavigation(to: .settings)
+    }
+
+    @discardableResult
+    func requestSettingsDetail(_ route: SettingsDetailRoute?) -> Bool {
+        guard route != settingsDetail else { return true }
+        if settingsDetail == .developerAPIKey && route != .developerAPIKey {
+            if organizationKeySettings.isChanging {
+                return false
+            }
+            if organizationKeySettings.newSecret != nil && !organizationKeySettings.hasSavedSecret {
+                pendingSettingsDetailTarget = route.map(SettingsDetailTarget.detail) ?? .overview
+                return false
+            }
+            organizationKeySettings.leave()
+        }
+        pendingSettingsDetailTarget = nil
+        settingsDetail = route
+        return true
+    }
+
+    @discardableResult
+    func requestSettingsBack() -> Bool {
+        switch settingsDetail {
+        case .addRanger, .rangerDetails:
+            return requestSettingsDetail(.manageRangers)
+        case .none:
+            return true
+        default:
+            return requestSettingsDetail(nil)
+        }
+    }
+
+    func discardKeyAndCompleteSettingsDetailNavigation() {
+        guard let target = pendingSettingsDetailTarget else { return }
+        pendingSettingsDetailTarget = nil
+        organizationKeySettings.acknowledgeSaved()
+        organizationKeySettings.leave()
+        switch target {
+        case .overview:
+            settingsDetail = nil
+        case .detail(let route):
+            settingsDetail = route
+        }
+    }
+
+    func cancelPendingSettingsDetailNavigation() {
+        pendingSettingsDetailTarget = nil
     }
 
     func discardKeyAndNavigate(to destination: AppSection? = nil) {
         guard let destination = destination ?? organizationKeySettings.pendingDestination else { return }
         organizationKeySettings.acknowledgeSaved()
         requestNavigation(to: destination)
+    }
+
+    var currentLiveUser: AppUser? {
+        isDemoBypassActive ? nil : client.account
+    }
+
+    var isLiveOwner: Bool {
+        currentLiveUser?.role == .owner && currentLiveUser?.organisationID != nil
+    }
+
+    var isLiveRanger: Bool {
+        currentLiveUser?.role == .ranger && currentLiveUser?.organisationID != nil
     }
 
     var currentDashboardAccountKey: String {
@@ -430,6 +516,8 @@ final class AppStore: ObservableObject {
 
     private func clearPrivateState(keepDemoMode: Bool = false) {
         organizationKeySettings.leave()
+        settingsDetail = nil
+        pendingSettingsDetailTarget = nil
         if !keepDemoMode {
             isDemoBypassActive = false
         }

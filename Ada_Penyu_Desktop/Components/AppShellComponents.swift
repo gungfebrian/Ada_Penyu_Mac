@@ -20,6 +20,7 @@ struct SidebarView: View {
     let onSelectSpecies: (TurtleSpecies?) -> Void
 
     // Account actions live in the sidebar user menu.
+    var onOpenProductSettings: (() -> Void)? = nil
     var onOpenAuthSettings: (() -> Void)? = nil
     var accountName = "Researcher"
     var accountEmail = ""
@@ -114,7 +115,11 @@ struct SidebarView: View {
 
     private func navigationRow(_ section: AppSection) -> some View {
         Button {
-            selection = section
+            if section == .settings, let onOpenProductSettings {
+                onOpenProductSettings()
+            } else {
+                selection = section
+            }
             expandIfCollapsed()
         } label: {
             HStack(spacing: 14) {
@@ -229,6 +234,8 @@ struct SidebarView: View {
             SidebarAccountMenu(
                 label: accountLabel,
                 accessibilityLabel: accountAccessibilityLabel,
+                onOpenProductSettings: onOpenProductSettings,
+                isSettingsNavigationDisabled: isNavigationLocked,
                 onOpenAuthSettings: onOpenAuthSettings,
                 onSignOut: onSignOut
             )
@@ -317,6 +324,8 @@ struct SidebarView: View {
 private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
     var label: Label
     var accessibilityLabel: String
+    var onOpenProductSettings: (() -> Void)?
+    var isSettingsNavigationDisabled = false
     var onOpenAuthSettings: (() -> Void)?
     var onSignOut: (() -> Void)?
 
@@ -346,14 +355,20 @@ private struct SidebarAccountMenu<Label: View>: NSViewRepresentable {
     }
 
     private func apply(_ model: SidebarAccountMenuModel) {
+        model.onOpenProductSettings = onOpenProductSettings
+        model.isSettingsNavigationDisabled = isSettingsNavigationDisabled
         model.onOpenAuthSettings = onOpenAuthSettings
         model.onSignOut = onSignOut
     }
 }
 
 final class SidebarAccountMenuModel: NSObject {
+    var onOpenProductSettings: (() -> Void)?
+    var isSettingsNavigationDisabled = false
     var onOpenAuthSettings: (() -> Void)?
     var onSignOut: (() -> Void)?
+
+    @objc func openProductSettings(_ sender: NSMenuItem) { onOpenProductSettings?() }
 
     @objc func openSettings(_ sender: NSMenuItem) { onOpenAuthSettings?() }
 
@@ -362,6 +377,15 @@ final class SidebarAccountMenuModel: NSObject {
     func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+
+        if onOpenProductSettings != nil {
+            let item = NSMenuItem(title: "Settings…", action: #selector(openProductSettings(_:)), keyEquivalent: ",")
+            item.keyEquivalentModifierMask = [.command]
+            item.target = self
+            item.isEnabled = !isSettingsNavigationDisabled
+            item.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+            menu.addItem(item)
+        }
 
         #if DEBUG
         if onOpenAuthSettings != nil {
