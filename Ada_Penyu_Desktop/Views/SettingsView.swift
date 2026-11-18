@@ -3,6 +3,13 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var store: AppStore
     @ObservedObject var model: OrganizationAPIKeySettings
+    @ObservedObject var organisation: OrganisationSettingsModel
+
+    init(store: AppStore, model: OrganizationAPIKeySettings) {
+        self.store = store
+        self.model = model
+        self.organisation = store.organisationSettings
+    }
 
     var body: some View {
         Group {
@@ -50,6 +57,30 @@ struct SettingsView: View {
                     }
                 }
 
+                // Organisation section
+                SettingsSectionGroup(title: "Organisation") {
+                    SettingsNavigationRow(
+                        icon: "building.2",
+                        title: "Organisation Profile",
+                        trailingValue: store.isDemoBypassActive ? "Demo" : nil,
+                        accessibilityID: "settings.row.organisationProfile"
+                    ) {
+                        store.requestSettingsDetail(.organisationProfile)
+                    }
+
+                    if organisation.canManageRangers {
+                        SettingsRowDivider()
+                        SettingsNavigationRow(
+                            icon: "person.2",
+                            title: "Manage Rangers",
+                            trailingValue: organisation.memberCountSummary,
+                            accessibilityID: "settings.row.manageRangers"
+                        ) {
+                            store.requestSettingsDetail(.manageRangers)
+                        }
+                    }
+                }
+
                 // Support section
                 SettingsSectionGroup(title: "Support") {
                     SettingsInfoRow(
@@ -92,6 +123,11 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, AdaLayout.pagePadding)
             .padding(.bottom, 36)
+        }
+        .task(id: store.sessionGeneration) {
+            if organisation.canViewProfile && organisation.profile == nil {
+                await organisation.loadProfile()
+            }
         }
     }
 
@@ -194,6 +230,33 @@ struct SettingsView: View {
         switch detail {
         case .passwordSecurity:
             PasswordSecurityView(store: store, model: store.passwordSecurity, onBack: { store.requestSettingsBack() })
+        case .organisationProfile:
+            OrganisationProfileView(
+                store: store,
+                model: organisation,
+                onBack: { store.requestSettingsBack() },
+                onOpenManageRangers: { store.requestSettingsDetail(.manageRangers) }
+            )
+        case .manageRangers:
+            ManageRangersView(
+                store: store,
+                model: organisation,
+                onBack: { store.requestSettingsBack() },
+                onAddRanger: { store.requestSettingsDetail(.addRanger) },
+                onSelectRanger: { memberID in store.requestSettingsDetail(.rangerDetails(memberID)) }
+            )
+        case .addRanger:
+            AddRangerView(
+                model: organisation,
+                onBack: { store.requestSettingsBack() },
+                onCreated: { store.requestSettingsDetail(.manageRangers) }
+            )
+        case .rangerDetails(let memberID):
+            RangerDetailsView(
+                memberID: memberID,
+                model: organisation,
+                onBack: { store.requestSettingsBack() }
+            )
         case .helpSupport:
             HelpSupportDetailView(store: store, onBack: { store.requestSettingsBack() })
         case .developerAPIKey:

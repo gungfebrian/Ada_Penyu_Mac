@@ -43,18 +43,27 @@ struct AccountDTO: Decodable {
     let email: String
     let status: String
     let role: UserRole
+    let pendingEmail: String?
     let isSelf: Bool
+    let canRemove: Bool?
     enum CodingKeys: String, CodingKey {
         case id, email, status, role
-        case organizationID = "organization_id", fullName = "full_name", isSelf = "is_self"
+        case organizationID = "organization_id", fullName = "full_name"
+        case pendingEmail = "pending_email", isSelf = "is_self", canRemove = "can_remove"
     }
 }
 
 struct OrganizationDTO: Decodable {
     let id: UUID
     let name: String
+    let email: String?
+    let location: String?
     let ownerUserID: UUID
-    enum CodingKeys: String, CodingKey { case id, name, ownerUserID = "owner_user_id" }
+    let membersCount: Int?
+    enum CodingKeys: String, CodingKey {
+        case id, name, email, location
+        case ownerUserID = "owner_user_id", membersCount = "members_count"
+    }
 }
 
 enum CurrentAccountPolicy {

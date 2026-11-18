@@ -235,6 +235,23 @@ final class SessionCoordinator {
         }
     }
 
+    /// Updates only the displayed organisation name in the active session after
+    /// a verified `PATCH /api/v1/organization` response for the same org ID.
+    func updateOrganisationName(_ name: String, organizationID: UUID) {
+        guard let current = context, current.user.organisationID == organizationID else { return }
+        let u = current.user
+        let updated = AuthSession(user: AppUser(
+            id: u.id,
+            email: u.email,
+            displayName: u.displayName,
+            role: u.role,
+            organisationID: u.organisationID,
+            organisationName: name
+        ))
+        context = updated
+        onContextChanged?(updated)
+    }
+
     func check(_ captured: UUID) throws {
         try Task.checkCancellation()
         guard captured == generation else { throw CancellationError() }

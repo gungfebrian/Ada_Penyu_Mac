@@ -19,6 +19,7 @@ enum SettingsDetailTarget: Equatable, Identifiable {
 final class AppStore: ObservableObject {
     let organizationKeySettings: OrganizationAPIKeySettings
     let passwordSecurity: PasswordSecurityModel
+    let organisationSettings: OrganisationSettingsModel
     @Published private var currentSection: AppSection = .dashboard
     @Published var settingsDetail: SettingsDetailRoute? = nil
     @Published var pendingSettingsDetailTarget: SettingsDetailTarget? = nil
@@ -131,6 +132,7 @@ final class AppStore: ObservableObject {
         self.client = client
         self.organizationKeySettings = OrganizationAPIKeySettings(client: client)
         self.passwordSecurity = PasswordSecurityModel(client: client)
+        self.organisationSettings = OrganisationSettingsModel(client: client)
         self.dashboardLayoutStore = dashboardLayoutStore ?? DashboardLayoutStore()
         self.reviewJournal = reviewJournal ?? NotSureReviewJournal()
         self.apiBaseURLString = client.baseURL.absoluteString
@@ -261,6 +263,7 @@ final class AppStore: ObservableObject {
     private func updateAccount() {
         organizationKeySettings.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
         passwordSecurity.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
+        organisationSettings.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
         if isDemoBypassActive {
             isAuthenticated = true
             authEmail = demoPersona.email
@@ -521,6 +524,7 @@ final class AppStore: ObservableObject {
     private func clearPrivateState(keepDemoMode: Bool = false) {
         organizationKeySettings.leave()
         passwordSecurity.invalidateAndClear()
+        organisationSettings.reset()
         settingsDetail = nil
         pendingSettingsDetailTarget = nil
         sessionNotice = nil
