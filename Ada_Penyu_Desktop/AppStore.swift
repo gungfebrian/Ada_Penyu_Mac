@@ -5,7 +5,12 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppStore: ObservableObject {
-    @Published var activeSection: AppSection = .dashboard
+    let organizationKeySettings: OrganizationAPIKeySettings
+    @Published private var currentSection: AppSection = .dashboard
+    var activeSection: AppSection {
+        get { currentSection }
+        set { requestNavigation(to: newValue) }
+    }
     @Published var searchText = "" {
         didSet { scheduleIndividualsReload() }
     }
@@ -90,6 +95,7 @@ final class AppStore: ObservableObject {
     private var dashboardRequest = 0
     private var allRequest = 0
     private var photoCache: [String: NSImage] = [:]
+    private var keySettingsObservation: AnyCancellable?
     private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
     init(
@@ -99,10 +105,14 @@ final class AppStore: ObservableObject {
     ) {
         let client = client ?? APIClient()
         self.client = client
+        self.organizationKeySettings = OrganizationAPIKeySettings(client: client)
         self.dashboardLayoutStore = dashboardLayoutStore
         self.apiBaseURLString = client.baseURL.absoluteString
         self.hasInjectedRepository = repository != nil
         self.repository = repository ?? RemoteTurtleRepository(client: client)
+        keySettingsObservation = organizationKeySettings.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         observeSession()
         updateAccount()
     }
@@ -115,6 +125,22 @@ final class AppStore: ObservableObject {
             self?.lastError = message
         }
         client.authorization?.onContextFailure = { [weak self] error in self?.lastError = error.localizedDescription }
+    }
+
+    func requestNavigation(to section: AppSection) {
+        guard section != currentSection else { return }
+        if currentSection == .settings {
+            guard organizationKeySettings.requestLeave(to: section) else { return }
+            organizationKeySettings.leave()
+        }
+        dismissDetail()
+        currentSection = section
+    }
+
+    func discardKeyAndNavigate(to destination: AppSection? = nil) {
+        guard let destination = destination ?? organizationKeySettings.pendingDestination else { return }
+        organizationKeySettings.acknowledgeSaved()
+        requestNavigation(to: destination)
     }
 
     var currentDashboardAccountKey: String {
@@ -135,6 +161,7 @@ final class AppStore: ObservableObject {
     }
 
     private func updateAccount() {
+        organizationKeySettings.configure(client: client, user: client.account, isDemo: isDemoBypassActive)
         if isDemoBypassActive {
             isAuthenticated = true
             authEmail = demoPersona.email
@@ -262,6 +289,7 @@ final class AppStore: ObservableObject {
     }
 
     private func clearPrivateState(keepDemoMode: Bool = false) {
+        organizationKeySettings.leave()
         if !keepDemoMode {
             isDemoBypassActive = false
         }

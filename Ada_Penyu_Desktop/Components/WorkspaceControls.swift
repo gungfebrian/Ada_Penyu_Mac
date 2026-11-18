@@ -126,7 +126,7 @@ struct WorkspaceHeader: View {
                     .fixedSize().accessibilityLabel("Sighting time window")
                 }
             }
-            if store.activeSection != .map && store.selectedTurtle == nil {
+            if store.activeSection != .map && store.activeSection != .settings && store.selectedTurtle == nil {
                 Button(action: onExport) { Label("Export report", systemImage: "arrow.up.arrow.down").font(.system(size: 12)) }
                     .buttonStyle(AdaPillButtonStyle())
             }

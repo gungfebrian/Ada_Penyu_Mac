@@ -22,6 +22,16 @@ The v2 summary supplies exact sighting counts, latest encounter context, and the
 
 Favorites, dashboard/map summaries, exports, authentication, overlays, and current matching retain their v1 routes. This is intentional version coexistence, not an automatic fallback when v2 fails. Backend errors remain visible with a Retry action; no demo records are substituted.
 
+## Organization integration API keys
+
+Settings in the sidebar contains Developer Options → Organization API Key in both Debug and Release. Live organization owners can inspect key status, generate or rotate a key, and revoke it. Other members see an owner-only explanation; demo accounts do not send management requests. The Mac app continues to authenticate with bearer sessions; organization keys are for external read-only integrations.
+
+Management uses `GET /api/v1/organization/api-key`, `POST /api/v1/organization/api-key/rotate` (no body), and `DELETE /api/v1/organization/api-key` (empty 204). Only a newly issued key can be revealed or copied; an existing key's full secret cannot be retrieved. Rotation immediately invalidates the previous key. A lost issuance response is not automatically replayed; reload metadata and explicitly rotate again if needed.
+
+Secrets start masked and are never persisted by the app. Leaving Settings clears the secret; an unacknowledged secret requires a discard confirmation. Key-changing requests block ordinary navigation and use a 30-second timeout. Sign-out, backend changes, and account/permission changes clear state and invalidate late responses. Copy schedules clipboard clearing after 60 seconds only if its ownership has not changed; the timer survives page navigation. External clipboard history cannot be erased.
+
+Earlier November 17 checks found no advertised key routes, a public management GET returned 404, and trusted-host SSH inspection failed authentication. A later standalone Mac build was opened successfully, Settings navigation was verified, and the user-provided [screenshot](screenshots/settings-organization-api-key.png) shows active organization key metadata. This confirms the live metadata UI, not the complete isolated-QA issuance/read/rotate/revoke lifecycle. The [backend readiness package](superpowers/plans/2026-11-17-organization-key-backend-readiness.md) records the earlier candidate and migration findings and the approved QA organization. This client change performs no backend deployment or database migration.
+
 ## Deferred matching migration
 
 The implementation plan records the complete follow-up checklist. Gung must confirm how a Mac photo search selects or creates its parent sighting. Until then, current single/pair matching remains on v1. Its v2 replacement must use stable sighting/attempt IDs, frozen retry bytes, saved snapshots/history, and explicit sighting identity confirmation rather than silently replacing identity photos.

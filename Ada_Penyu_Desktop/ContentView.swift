@@ -22,6 +22,9 @@ struct ContentView: View {
         }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
         .task { await store.bootstrap() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            store.organizationKeySettings.clipboard.clearIfOwned()
+        }
         .onChange(of: store.sessionGeneration) { _, _ in
             showingExport = false
             exportQueryOverride = nil
@@ -75,6 +78,7 @@ struct ContentView: View {
                     accountOrganization: store.accountOrganization,
                     onSignOut: signOutAction,
                     isCollapsed: isSidebarCollapsed,
+                    isNavigationLocked: store.organizationKeySettings.isChanging,
                     onToggleSidebar: toggleSidebar,
                     onExpandSidebar: { setSidebarCollapsed(false) }
                 )
@@ -97,7 +101,7 @@ struct ContentView: View {
                                 onRetry: { Task { await store.loadDetail(for: turtle) } })
                         } else { pageView }
 
-                        if store.isLoading || (store.isIndividualsLoading && store.activeSection == .individuals) {
+                        if store.activeSection != .settings && (store.isLoading || (store.isIndividualsLoading && store.activeSection == .individuals)) {
                             ProgressView("Loading records…")
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 12)
@@ -217,6 +221,8 @@ struct ContentView: View {
             I3SWorkspaceView(store: store)
         case .favorites:
             FavoritesView(turtles: store.favoriteTurtles, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select, onBrowseIndividuals: { store.searchText = ""; store.selectedCondition = nil; store.activeSection = .individuals })
+        case .settings:
+            SettingsView(store: store, model: store.organizationKeySettings)
         }
     }
 }
