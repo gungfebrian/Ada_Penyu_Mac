@@ -119,6 +119,33 @@ final class SettingsNavigationTests: XCTestCase {
         XCTAssertEqual(lockedMenu.items.first { $0.title == "Sign Out" }?.isEnabled, true)
     }
 
+    func testCustomAccountPopupRespectsNavigationLockAndHierarchy() {
+        let model = SidebarAccountMenuModel()
+        var openedProduct = false
+        var signedOut = false
+        model.onOpenProductSettings = { openedProduct = true }
+        model.onOpenAuthSettings = {}
+        model.onSignOut = { signedOut = true }
+
+        let actions = model.popupActions()
+        let settingsAction = actions.first { $0.kind == .settings }
+        let signOutAction = actions.first { $0.kind == .signOut }
+        XCTAssertNotNil(settingsAction)
+        XCTAssertEqual(settingsAction?.shortcut, "⌘,")
+        XCTAssertEqual(settingsAction?.isEnabled, true)
+        XCTAssertEqual(signOutAction?.isDestructive, true)
+
+        settingsAction?.perform()
+        XCTAssertTrue(openedProduct)
+
+        model.isSettingsNavigationDisabled = true
+        let lockedActions = model.popupActions()
+        XCTAssertEqual(lockedActions.first { $0.kind == .settings }?.isEnabled, false)
+        XCTAssertEqual(lockedActions.first { $0.kind == .signOut }?.isEnabled, true)
+        lockedActions.first { $0.kind == .signOut }?.perform()
+        XCTAssertTrue(signedOut)
+    }
+
     func testAppVersionInfoReadsBundleVersion() {
         let version = AppVersionInfo.displayString()
         XCTAssertTrue(version.hasPrefix("AdaPenyu v"), version)

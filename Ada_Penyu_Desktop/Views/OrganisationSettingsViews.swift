@@ -450,6 +450,7 @@ struct AddRangerView: View {
             subtitle: "Invite a new ranger to join your organisation.",
             backLabel: "Manage Rangers",
             isBackDisabled: model.isPerformingAction,
+            isNestedRoute: true,
             onBack: onBack
         ) {
             VStack(alignment: .leading, spacing: 18) {
@@ -566,6 +567,7 @@ struct RangerDetailsView: View {
             title: "Ranger Details",
             backLabel: "Manage Rangers",
             isBackDisabled: model.isPerformingAction,
+            isNestedRoute: true,
             onBack: onBack
         ) {
             VStack(alignment: .leading, spacing: 18) {

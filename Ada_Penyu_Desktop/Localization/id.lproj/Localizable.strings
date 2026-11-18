@@ -135,3 +135,17 @@
 "Organisation Administrator Support" = "Dukungan Administrator Organisasi";
 "For assistance with AdaPenyu or your organisation account, please contact your organisation administrator." = "Untuk bantuan mengenai AdaPenyu atau akun organisasi Anda, silakan hubungi administrator organisasi Anda.";
 "Signed-in account" = "Akun yang masuk";
+"More workspaces" = "Ruang kerja lainnya";
+"Encounter log & timeline" = "Catatan & linimasa pengamatan";
+"Bookmarked sea turtles" = "Penyu yang ditandai";
+"Spot-matching workbench" = "Meja pencocokan pola I3S";
+"API Endpoint" = "Endpoint API";
+"Debug backend server" = "Server backend debug";
+"Live" = "Aktif";
+"Need help with your organisation account?" = "Butuh bantuan dengan akun organisasi Anda?";
+"Switch desktop interface language immediately." = "Ganti bahasa antarmuka desktop secara langsung.";
+"Default scale numbers, threshold, opacity, and noise reduction." = "Pengaturan awal nomor sisik, ambang batas, opasitas, dan pengurangan noise.";
+"Configure defaults" = "Atur bawaan";
+"Review macOS Photo Library, Files, and Privacy settings." = "Tinjau izin Perpustakaan Foto, Berkas, dan Privasi macOS.";
+"Review permissions" = "Tinjau izin";
+"Read-only credentials for external scripts and dashboards." = "Kredensial baca-saja untuk skrip dan dasbor eksternal.";

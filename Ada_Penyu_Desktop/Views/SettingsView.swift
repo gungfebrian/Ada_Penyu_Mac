@@ -12,14 +12,26 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Group {
-            if let detail = store.settingsDetail {
-                detailView(for: detail)
-            } else {
-                overview
+        GeometryReader { geometry in
+            let isSplit = geometry.size.width >= 820
+
+            Group {
+                if isSplit {
+                    splitLayout(availableWidth: geometry.size.width)
+                } else if let detail = store.settingsDetail {
+                    detailView(for: detail)
+                        .environment(\.settingsSplitMode, false)
+                } else {
+                    compactSingleColumnOverview
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .task(id: store.sessionGeneration) {
+            if organisation.canViewProfile && organisation.profile == nil {
+                await organisation.loadProfile()
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .alert(item: Binding(get: { model.pendingDestination }, set: { if $0 == nil { model.cancelNavigation() } })) { destination in
             Alert(
                 title: Text("Leave without saving your API key?"),
@@ -38,133 +50,547 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Overview
+    // MARK: - Adaptive Split & Compact Layouts
 
-    private var overview: some View {
+    private func splitLayout(availableWidth: CGFloat) -> some View {
+        let railWidth: CGFloat = availableWidth >= 1120 ? 352 : 302
+        return HStack(alignment: .top, spacing: 28) {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    sectionList(compact: true)
+                    logoutButton(compact: true)
+                }
+                .padding(.bottom, 32)
+            }
+            .frame(width: railWidth)
+
+            Group {
+                if let detail = store.settingsDetail {
+                    detailView(for: detail)
+                } else {
+                    overviewSummaryPane
+                }
+            }
+            .environment(\.settingsSplitMode, true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .padding(.horizontal, AdaLayout.pagePadding)
+    }
+
+    private var compactSingleColumnOverview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 accountSummaryHeader
-
-                // Account section
-                SettingsSectionGroup(title: "Account") {
-                    SettingsNavigationRow(
-                        icon: "lock",
-                        title: "Password & Security",
-                        trailingValue: store.isDemoBypassActive ? "Demo" : nil,
-                        accessibilityID: "settings.row.passwordSecurity"
-                    ) {
-                        store.requestSettingsDetail(.passwordSecurity)
-                    }
-                }
-
-                // Organisation section
-                SettingsSectionGroup(title: "Organisation") {
-                    SettingsNavigationRow(
-                        icon: "building.2",
-                        title: "Organisation Profile",
-                        trailingValue: store.isDemoBypassActive ? "Demo" : nil,
-                        accessibilityID: "settings.row.organisationProfile"
-                    ) {
-                        store.requestSettingsDetail(.organisationProfile)
-                    }
-
-                    if organisation.canManageRangers {
-                        SettingsRowDivider()
-                        SettingsNavigationRow(
-                            icon: "person.2",
-                            title: "Manage Rangers",
-                            trailingValue: localizedMemberCount,
-                            accessibilityID: "settings.row.manageRangers"
-                        ) {
-                            store.requestSettingsDetail(.manageRangers)
-                        }
-                    }
-                }
-
-                // Preferences & Permissions section
-                SettingsSectionGroup(title: "Preferences & Permissions") {
-                    SettingsNavigationRow(
-                        icon: "globe",
-                        title: "Language",
-                        trailingValue: store.localization.language.displayName,
-                        accessibilityID: "settings.row.language"
-                    ) {
-                        store.requestSettingsDetail(.language)
-                    }
-                    SettingsRowDivider()
-                    SettingsNavigationRow(
-                        icon: "hand.raised",
-                        title: "App Permissions",
-                        accessibilityID: "settings.row.appPermissions"
-                    ) {
-                        store.requestSettingsDetail(.appPermissions)
-                    }
-                }
-
-                // Contour Review section (Mac-only defaults)
-                SettingsSectionGroup(
-                    title: "Contour Review",
-                    subtitle: "Defaults for new photo comparisons"
-                ) {
-                    SettingsNavigationRow(
-                        icon: "viewfinder.circle",
-                        title: "Contour Review",
-                        subtitle: "Scale numbers, edge threshold, opacity, line weight, and noise reduction",
-                        trailingValue: store.contourPreferences.summaryText,
-                        accessibilityID: "settings.row.contourReview"
-                    ) {
-                        store.requestSettingsDetail(.contourReview)
-                    }
-                }
-
-                // Support section
-                SettingsSectionGroup(title: "Support") {
-                    SettingsInfoRow(
-                        icon: "info.circle",
-                        title: "Software version",
-                        value: AppVersionInfo.displayString(),
-                        accessibilityID: "settings.row.softwareVersion"
-                    )
-                    SettingsRowDivider()
-                    SettingsNavigationRow(
-                        icon: "questionmark.circle",
-                        title: "Help & Support",
-                        accessibilityID: "settings.row.helpSupport"
-                    ) {
-                        store.requestSettingsDetail(.helpSupport)
-                    }
-                }
-
-                // Developer Options section (visually secondary, preserving PR #14 API key controls)
-                SettingsSectionGroup(
-                    title: "Developer Options",
-                    subtitle: "Connect external tools to your organization's data.",
-                    secondary: true
-                ) {
-                    SettingsNavigationRow(
-                        icon: "key.horizontal",
-                        title: "Organization API Key",
-                        subtitle: "Read-only credentials for external scripts and dashboards",
-                        trailingValue: apiKeyRowStatus,
-                        isSecondary: true,
-                        accessibilityID: "settings.row.organizationAPIKey"
-                    ) {
-                        store.requestSettingsDetail(.developerAPIKey)
-                    }
-                }
-
-                logoutButton
+                sectionList(compact: false)
+                logoutButton(compact: false)
             }
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, AdaLayout.pagePadding)
             .padding(.bottom, 36)
         }
-        .task(id: store.sessionGeneration) {
-            if organisation.canViewProfile && organisation.profile == nil {
-                await organisation.loadProfile()
+    }
+
+    private func isRowSelected(_ route: SettingsDetailRoute) -> Bool {
+        guard let current = store.settingsDetail else { return false }
+        if route == .manageRangers {
+            switch current {
+            case .manageRangers, .addRanger, .rangerDetails: return true
+            default: return false
             }
         }
+        return current == route
+    }
+
+    @ViewBuilder
+    private func sectionList(compact: Bool) -> some View {
+        let dividerInset: CGFloat = compact ? 47 : 56
+
+        // Account section
+        SettingsSectionGroup(title: "Account", compact: compact) {
+            SettingsNavigationRow(
+                icon: "lock",
+                title: "Password & Security",
+                trailingValue: store.isDemoBypassActive ? store.localization.localized("Demo") : nil,
+                isSelected: isRowSelected(.passwordSecurity),
+                compact: compact,
+                accessibilityID: "settings.row.passwordSecurity"
+            ) {
+                store.requestSettingsDetail(.passwordSecurity)
+            }
+        }
+
+        // Organisation section
+        SettingsSectionGroup(title: "Organisation", compact: compact) {
+            SettingsNavigationRow(
+                icon: "building.2",
+                title: "Organisation Profile",
+                trailingValue: store.isDemoBypassActive ? store.localization.localized("Demo") : nil,
+                isSelected: isRowSelected(.organisationProfile),
+                compact: compact,
+                accessibilityID: "settings.row.organisationProfile"
+            ) {
+                store.requestSettingsDetail(.organisationProfile)
+            }
+
+            if organisation.canManageRangers {
+                SettingsRowDivider(inset: dividerInset)
+                SettingsNavigationRow(
+                    icon: "person.2",
+                    title: "Manage Rangers",
+                    trailingValue: localizedMemberCount,
+                    isSelected: isRowSelected(.manageRangers),
+                    compact: compact,
+                    accessibilityID: "settings.row.manageRangers"
+                ) {
+                    store.requestSettingsDetail(.manageRangers)
+                }
+            }
+        }
+
+        // Preferences & Permissions section
+        SettingsSectionGroup(title: "Preferences & Permissions", compact: compact) {
+            SettingsNavigationRow(
+                icon: "globe",
+                title: "Language",
+                trailingValue: store.localization.language.displayName,
+                isSelected: isRowSelected(.language),
+                compact: compact,
+                accessibilityID: "settings.row.language"
+            ) {
+                store.requestSettingsDetail(.language)
+            }
+            SettingsRowDivider(inset: dividerInset)
+            SettingsNavigationRow(
+                icon: "hand.raised",
+                title: "App Permissions",
+                isSelected: isRowSelected(.appPermissions),
+                compact: compact,
+                accessibilityID: "settings.row.appPermissions"
+            ) {
+                store.requestSettingsDetail(.appPermissions)
+            }
+        }
+
+        // Contour Review section (Mac-only defaults)
+        SettingsSectionGroup(
+            title: "Contour Review",
+            subtitle: compact ? nil : "Defaults for new photo comparisons",
+            compact: compact
+        ) {
+            SettingsNavigationRow(
+                icon: "viewfinder.circle",
+                title: "Contour Review",
+                subtitle: compact ? nil : "Scale numbers, edge threshold, opacity, line weight, and noise reduction",
+                trailingValue: store.contourPreferences.summaryText,
+                isSelected: isRowSelected(.contourReview),
+                compact: compact,
+                accessibilityID: "settings.row.contourReview"
+            ) {
+                store.requestSettingsDetail(.contourReview)
+            }
+        }
+
+        // Support section
+        SettingsSectionGroup(title: "Support", compact: compact) {
+            SettingsInfoRow(
+                icon: "info.circle",
+                title: "Software version",
+                value: AppVersionInfo.displayString(),
+                compact: compact,
+                accessibilityID: "settings.row.softwareVersion"
+            )
+            SettingsRowDivider(inset: dividerInset)
+            SettingsNavigationRow(
+                icon: "questionmark.circle",
+                title: "Help & Support",
+                isSelected: isRowSelected(.helpSupport),
+                compact: compact,
+                accessibilityID: "settings.row.helpSupport"
+            ) {
+                store.requestSettingsDetail(.helpSupport)
+            }
+        }
+
+        // Developer Options section (visually secondary, preserving PR #14 API key controls)
+        SettingsSectionGroup(
+            title: "Developer Options",
+            subtitle: compact ? nil : "Connect external tools to your organization's data.",
+            secondary: true,
+            compact: compact
+        ) {
+            SettingsNavigationRow(
+                icon: "key.horizontal",
+                title: "Organization API Key",
+                subtitle: compact ? nil : "Read-only credentials for external scripts and dashboards",
+                trailingValue: apiKeyRowStatus,
+                isSelected: isRowSelected(.developerAPIKey),
+                isSecondary: true,
+                compact: compact,
+                accessibilityID: "settings.row.organizationAPIKey"
+            ) {
+                store.requestSettingsDetail(.developerAPIKey)
+            }
+        }
+    }
+
+    // MARK: - Split Desktop Overview Panel (Right Column when no detail is selected)
+
+    private var overviewSummaryPane: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
+                // FigCraft deep-navy hero summary card matching Dashboard identity
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(alignment: .center, spacing: 14) {
+                        Circle()
+                            .fill(.white.opacity(0.14))
+                            .frame(width: 50, height: 50)
+                            .overlay {
+                                Text(accountInitial)
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundStyle(.white)
+                            }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(store.accountName)
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                Text(accountBadgeText)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(AdaColors.navy)
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 22)
+                                    .background(.white.opacity(0.92), in: Capsule())
+                            }
+                            HStack(spacing: 6) {
+                                if !store.authEmail.isEmpty {
+                                    Text(store.authEmail)
+                                }
+                                if !store.accountOrganization.isEmpty {
+                                    Text("·")
+                                    Text(store.accountOrganization)
+                                }
+                            }
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                    }
+
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            heroActionPill(icon: "lock", title: "Password & Security") {
+                                store.requestSettingsDetail(.passwordSecurity)
+                            }
+                            heroActionPill(icon: "building.2", title: "Organisation Profile") {
+                                store.requestSettingsDetail(.organisationProfile)
+                            }
+                            if organisation.canManageRangers {
+                                heroActionPill(icon: "person.2", title: "Manage Rangers") {
+                                    store.requestSettingsDetail(.manageRangers)
+                                }
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                heroActionPill(icon: "lock", title: "Password & Security") {
+                                    store.requestSettingsDetail(.passwordSecurity)
+                                }
+                                heroActionPill(icon: "building.2", title: "Organisation Profile") {
+                                    store.requestSettingsDetail(.organisationProfile)
+                                }
+                            }
+                            if organisation.canManageRangers {
+                                heroActionPill(icon: "person.2", title: "Manage Rangers") {
+                                    store.requestSettingsDetail(.manageRangers)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AdaColors.navy, in: RoundedRectangle(cornerRadius: AdaLayout.cardRadius, style: .continuous))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("settings.accountSummary")
+
+                // Quick settings 2x2 FigCraft cards
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
+                    spacing: 16
+                ) {
+                    quickLanguageCard
+                    quickContourCard
+                    quickPermissionsCard
+                    quickDeveloperCard
+                }
+
+                // Compact Support strip
+                HStack(spacing: 14) {
+                    Image(systemName: "lifepreserver")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(AdaColors.navy)
+                        .frame(width: 38, height: 38)
+                        .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Need help with your organisation account?")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(AdaColors.ink)
+                        Text(AppVersionInfo.displayString())
+                            .font(.system(size: 12))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                    }
+
+                    Spacer(minLength: 10)
+
+                    Button {
+                        store.requestSettingsDetail(.helpSupport)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text("Help & Support")
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AdaColors.navy)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(AdaColors.canvas, in: Capsule())
+                        .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(18)
+                .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(AdaColors.line, lineWidth: 1)
+                )
+            }
+            .frame(maxWidth: 720, alignment: .leading)
+            .padding(.bottom, 32)
+        }
+    }
+
+    private func heroActionPill(icon: String, title: LocalizedStringKey, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11.5, weight: .medium))
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 13)
+            .frame(height: 34)
+            .background(.white.opacity(0.12), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var quickLanguageCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: "globe")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(AdaColors.navy)
+                    .frame(width: 34, height: 34)
+                    .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Spacer()
+                Button {
+                    store.requestSettingsDetail(.language)
+                } label: {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                }
+                .buttonStyle(.plain)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Language")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
+                Text("Switch desktop interface language immediately.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                    .lineLimit(2)
+            }
+
+            HStack(spacing: 6) {
+                ForEach(AppLanguage.allCases) { lang in
+                    let active = store.localization.language == lang
+                    Button {
+                        store.localization.language = lang
+                    } label: {
+                        Text(lang.displayName)
+                            .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+                            .foregroundStyle(active ? .white : AdaColors.ink)
+                            .padding(.horizontal, 11)
+                            .frame(height: 30)
+                            .background(active ? AdaColors.navy : AdaColors.canvas, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 162, alignment: .topLeading)
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(AdaColors.line, lineWidth: 1))
+    }
+
+    private var quickContourCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: "viewfinder.circle")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(AdaColors.navy)
+                    .frame(width: 34, height: 34)
+                    .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Spacer()
+                Text(store.contourPreferences.summaryText)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AdaColors.navy)
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .background(AdaColors.canvas, in: Capsule())
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Contour Review")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
+                Text("Default scale numbers, threshold, opacity, and noise reduction.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button {
+                store.requestSettingsDetail(.contourReview)
+            } label: {
+                HStack(spacing: 5) {
+                    Text("Configure defaults")
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 13)
+                .frame(height: 30)
+                .background(AdaColors.navy, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 162, alignment: .topLeading)
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(AdaColors.line, lineWidth: 1))
+    }
+
+    private var quickPermissionsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: "hand.raised")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(AdaColors.navy)
+                    .frame(width: 34, height: 34)
+                    .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("App Permissions")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
+                Text("Review macOS Photo Library, Files, and Privacy settings.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                    .lineLimit(2)
+            }
+
+            Button {
+                store.requestSettingsDetail(.appPermissions)
+            } label: {
+                HStack(spacing: 5) {
+                    Text("Review permissions")
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AdaColors.navy)
+                .padding(.horizontal, 13)
+                .frame(height: 30)
+                .background(AdaColors.canvas, in: Capsule())
+                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 162, alignment: .topLeading)
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(AdaColors.line, lineWidth: 1))
+    }
+
+    private var quickDeveloperCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: "key.horizontal")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                    .frame(width: 34, height: 34)
+                    .background(AdaColors.canvas, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Spacer()
+                if let status = apiKeyRowStatus {
+                    Text(status)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                        .padding(.horizontal, 9)
+                        .frame(height: 24)
+                        .background(AdaColors.canvas, in: Capsule())
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Organization API Key")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
+                Text("Read-only credentials for external scripts and dashboards.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                    .lineLimit(2)
+            }
+
+            Button {
+                store.requestSettingsDetail(.developerAPIKey)
+            } label: {
+                HStack(spacing: 5) {
+                    Text("Developer Options")
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AdaColors.navy)
+                .padding(.horizontal, 13)
+                .frame(height: 30)
+                .background(AdaColors.canvas, in: Capsule())
+                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 162, alignment: .topLeading)
+        .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(AdaColors.line, lineWidth: 1))
     }
 
     private var accountSummaryHeader: some View {
@@ -250,20 +676,20 @@ struct SettingsView: View {
         return nil
     }
 
-    private var logoutButton: some View {
+    private func logoutButton(compact: Bool) -> some View {
         Button {
             store.signOut()
         } label: {
             Text("Log out")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: compact ? 13.5 : 14, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 46)
+                .frame(height: compact ? 42 : 46)
                 .background(AdaColors.navy, in: Capsule())
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .padding(.top, 4)
+        .padding(.top, compact ? 2 : 4)
         .accessibilityIdentifier("settings.logoutButton")
     }
 
@@ -320,8 +746,6 @@ struct SettingsView: View {
             HelpSupportDetailView(store: store, onBack: { store.requestSettingsBack() })
         case .developerAPIKey:
             DeveloperAPIKeyDetailView(store: store, model: model, onBack: { store.requestSettingsBack() })
-        default:
-            overview
         }
     }
 }

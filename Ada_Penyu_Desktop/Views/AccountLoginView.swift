@@ -254,9 +254,20 @@ struct AccountLoginView: View {
                 .keyboardShortcut("d", modifiers: .command)
                 .accessibilityHint("Opens a workspace with sample records")
 
-                ActionDropdown(items: DemoDashboardPersona.allCases.map { persona in
-                    DropdownAction(title: persona.displayName, selected: false, action: { openDemo(persona) })
-                }) {
+                ActionDropdown(
+                    items: DemoDashboardPersona.allCases.map { persona in
+                        DropdownAction(
+                            title: persona.displayName,
+                            subtitle: persona.roleLabel,
+                            icon: "person.crop.circle",
+                            selected: false,
+                            action: { openDemo(persona) }
+                        )
+                    },
+                    header: "Demo workspaces",
+                    placement: .aboveLeading,
+                    minWidth: 232
+                ) {
                     HStack(spacing: 6) {
                         Text("Demo roles")
                         Image(systemName: "chevron.down")
@@ -284,48 +295,204 @@ struct AccountLoginView: View {
 
             Spacer(minLength: 16)
 
-            VStack(alignment: .leading, spacing: 16) {
-                GeometryReader { bounds in
-                    Image("TurtleSamples/Chewie_2019_r")
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: bounds.size.width, height: bounds.size.height)
-                        .clipped()
-                }
-                .frame(height: min(max(height * 0.32, 160), 300))
-                .clipShape(RoundedRectangle(cornerRadius: AdaLayout.cardRadius))
-                .accessibilityHidden(true)
+            conservationArtwork(height: min(max(height * 0.36, 210), 300))
 
+            VStack(alignment: .leading, spacing: 10) {
                 Text("Sea turtle photo ID")
-                    .font(.system(size: 37, weight: .semibold))
-                    .tracking(-0.8)
+                    .font(.system(size: 34, weight: .semibold))
+                    .tracking(-0.7)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
 
-                Text("Compare head patterns, review sightings, and follow individual turtles over time.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.82))
+                Text("Track sightings, match scale patterns, and follow individuals over time.")
+                    .font(.system(size: 14.5))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
             Spacer(minLength: 16)
+
+            speciesFooterStrip
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 40)
         .padding(.top, 52)
-        .padding(.bottom, 40)
+        .padding(.bottom, 34)
         .frame(maxHeight: .infinity)
         .background {
-            GeometryReader { bounds in
-                Image("bg_satu")
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: bounds.size.width, height: bounds.size.height)
-                    .clipped()
-                    .opacity(0.28)
+            ZStack {
+                AdaColors.navy
+                GeometryReader { bounds in
+                    Image("bg_satu")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: bounds.size.width, height: bounds.size.height)
+                        .clipped()
+                        .opacity(0.36)
+                }
+                RadialGradient(
+                    colors: [AdaColors.accent.opacity(0.22), Color.clear],
+                    center: .init(x: 0.78, y: 0.24),
+                    startRadius: 20,
+                    endRadius: 360
+                )
             }
             .accessibilityHidden(true)
         }
         .clipped()
+    }
+
+    private func conservationArtwork(height: CGFloat) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.08), Color.white.opacity(0.03)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            // Concentric bathymetric rings + migration arc connecting sighting nodes
+            GeometryReader { geo in
+                let w = geo.size.width
+                let h = geo.size.height
+                let center = CGPoint(x: w * 0.5, y: h * 0.44)
+                let p1 = CGPoint(x: w * 0.20, y: h * 0.62)
+                let p2 = CGPoint(x: w * 0.50, y: h * 0.44)
+                let p3 = CGPoint(x: w * 0.80, y: h * 0.30)
+
+                ZStack {
+                    RadialGradient(
+                        colors: [AdaColors.accent.opacity(0.28), Color.clear],
+                        center: UnitPoint(x: 0.5, y: 0.44),
+                        startRadius: 12,
+                        endRadius: min(w, h) * 0.55
+                    )
+
+                    ForEach([0.42, 0.66, 0.90], id: \.self) { scale in
+                        let diameter = min(w, h) * scale
+                        Circle()
+                            .stroke(Color.white.opacity(scale == 0.42 ? 0.16 : 0.08), lineWidth: 1)
+                            .frame(width: diameter, height: diameter)
+                            .position(center)
+                    }
+
+                    // Dashed migration track connecting reef sighting pins
+                    Path { path in
+                        path.move(to: p1)
+                        path.addQuadCurve(to: p2, control: CGPoint(x: w * 0.33, y: h * 0.36))
+                        path.addQuadCurve(to: p3, control: CGPoint(x: w * 0.68, y: h * 0.52))
+                    }
+                    .stroke(
+                        Color.white.opacity(0.32),
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [5, 5])
+                    )
+
+                    // Supporting reef sighting pins (teardrop penyu silhouette)
+                    loginRoutePin(size: 24)
+                        .position(p1)
+                    loginRoutePin(size: 26)
+                        .position(p3)
+
+                    // Central AdaPenyu fingerprint-turtle emblem
+                    ZStack {
+                        Circle()
+                            .fill(AdaColors.navy.opacity(0.88))
+                            .frame(width: 82, height: 82)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white.opacity(0.24), lineWidth: 1.2)
+                            )
+                            .shadow(color: AdaColors.accent.opacity(0.30), radius: 20, y: 8)
+
+                        Image("AdaPenyuMark")
+                            .resizable()
+                            .renderingMode(.template)
+                            .scaledToFit()
+                            .frame(width: 46, height: 46)
+                            .foregroundStyle(.white)
+                    }
+                    .position(p2)
+                }
+            }
+
+            // Minimal bottom capability pills
+            VStack {
+                Spacer()
+                HStack(spacing: 8) {
+                    artworkPill(icon: "viewfinder.circle", label: "Pattern ID")
+                    artworkPill(icon: "map", label: "Sighting Map")
+                    artworkPill(icon: "checkmark.seal", label: "Review")
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 16)
+            }
+        }
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .accessibilityHidden(true)
+    }
+
+    private func loginRoutePin(size: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(AdaColors.accent.opacity(0.25))
+                .frame(width: size * 1.45, height: size * 1.45)
+
+            ZStack {
+                PenyuMapPinShape()
+                    .fill(.white.opacity(0.92))
+                Image("AdaPenyuMark")
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .foregroundStyle(AdaColors.navy)
+                    .frame(width: size * 0.44, height: size * 0.44)
+                    .offset(y: -size * 0.14)
+            }
+            .frame(width: size, height: size * 1.24)
+            .shadow(color: Color.black.opacity(0.24), radius: 6, y: 3)
+        }
+    }
+
+    private func artworkPill(icon: String, label: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10.5, weight: .semibold))
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white.opacity(0.88))
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(AdaColors.navy.opacity(0.72), in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
+    }
+
+    private var speciesFooterStrip: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                ForEach(["GreenSpecies", "HawksbillSpecies", "RidleySpecies"], id: \.self) { asset in
+                    Image(asset)
+                        .resizable()
+                        .renderingMode(.template)
+                        .scaledToFit()
+                        .frame(width: 14, height: 18)
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+            }
+            Text("Indo-Pacific Sea Turtle Research")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.48))
+        }
+        .accessibilityHidden(true)
     }
 
     private func brandLockup(color: Color) -> some View {

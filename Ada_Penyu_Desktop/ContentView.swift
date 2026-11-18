@@ -94,6 +94,7 @@ struct ContentView: View {
                     accountName: store.accountName,
                     accountEmail: store.authEmail,
                     accountOrganization: store.accountOrganization,
+                    accountRole: store.isDemoBypassActive ? "Demo" : (store.isLiveOwner ? "Owner" : (store.isLiveRanger ? "Ranger" : store.accountRoleLabel)),
                     isDemoWorkspace: store.isDemoBypassActive,
                     onSignOut: signOutAction,
                     isCollapsed: isSidebarCollapsed,

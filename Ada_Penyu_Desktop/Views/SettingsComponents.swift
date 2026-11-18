@@ -29,22 +29,38 @@ enum SettingsDetailRoute: Hashable, Identifiable {
     }
 }
 
+private struct SettingsSplitModeKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var settingsSplitMode: Bool {
+        get { self[SettingsSplitModeKey.self] }
+        set { self[SettingsSplitModeKey.self] = newValue }
+    }
+}
+
 /// Shared Settings section with an external title and a grouped white FigCraft card.
 struct SettingsSectionGroup<Content: View>: View {
     let title: LocalizedStringKey
     var subtitle: LocalizedStringKey? = nil
     var secondary: Bool = false
+    var compact: Bool = false
     @ViewBuilder let content: Content
 
+    private var radius: CGFloat {
+        compact ? 18 : AdaLayout.cardRadius
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: compact ? 7 : 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: secondary ? 13 : 14, weight: .semibold))
+                    .font(.system(size: secondary ? 12.5 : (compact ? 13 : 14), weight: .semibold))
                     .foregroundStyle(secondary ? AdaColors.secondaryInk : AdaColors.ink)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(.system(size: compact ? 11 : 12))
                         .foregroundStyle(AdaColors.secondaryInk)
                 }
             }
@@ -54,9 +70,9 @@ struct SettingsSectionGroup<Content: View>: View {
                 content
             }
             .background(AdaColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: AdaLayout.cardRadius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: AdaLayout.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .stroke(AdaColors.line, lineWidth: 1)
             )
         }
@@ -79,62 +95,84 @@ struct SettingsNavigationRow: View {
     var subtitle: LocalizedStringKey? = nil
     var trailingValue: String? = nil
     var showsChevron: Bool = true
+    var isSelected: Bool = false
     var isSecondary: Bool = false
     var isDisabled: Bool = false
+    var compact: Bool = false
     var accessibilityID: String? = nil
     let action: () -> Void
 
     @State private var isHovered = false
 
+    private var rowBackground: Color {
+        guard !isDisabled else { return .clear }
+        if isSelected {
+            return AdaColors.navy.opacity(0.08)
+        }
+        if isHovered {
+            return AdaColors.canvas.opacity(0.75)
+        }
+        return .clear
+    }
+
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 14) {
+            HStack(spacing: compact ? 11 : 14) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(isSecondary ? AdaColors.secondaryInk : AdaColors.navy)
-                    .frame(width: 24, height: 24)
+                    .font(.system(size: compact ? 14.5 : 16, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? AdaColors.navy : (isSecondary ? AdaColors.secondaryInk : AdaColors.navy))
+                    .frame(width: compact ? 22 : 24, height: compact ? 22 : 24)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 1.5) {
                     Text(title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(isDisabled ? AdaColors.secondaryInk : AdaColors.ink)
+                        .font(.system(size: compact ? 13.5 : 14, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isDisabled ? AdaColors.secondaryInk : (isSelected ? AdaColors.navy : AdaColors.ink))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let subtitle {
                         Text(subtitle)
-                            .font(.system(size: 12))
+                            .font(.system(size: compact ? 11 : 12))
                             .foregroundStyle(AdaColors.secondaryInk)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 10)
 
                 if let trailingValue, !trailingValue.isEmpty {
                     Text(trailingValue)
-                        .font(.system(size: 13))
-                        .foregroundStyle(AdaColors.secondaryInk)
+                        .font(.system(size: compact ? 12 : 13, weight: isSelected ? .medium : .regular))
+                        .foregroundStyle(isSelected ? AdaColors.navy : AdaColors.secondaryInk)
                         .lineLimit(1)
                 }
 
                 if showsChevron {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(AdaColors.secondaryInk.opacity(0.65))
+                        .font(.system(size: compact ? 10.5 : 12, weight: .semibold))
+                        .foregroundStyle(isSelected ? AdaColors.navy : AdaColors.secondaryInk.opacity(0.6))
                         .accessibilityHidden(true)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-            .background(isHovered && !isDisabled ? AdaColors.canvas.opacity(0.7) : Color.clear)
+            .padding(.horizontal, compact ? 14 : 18)
+            .padding(.vertical, compact ? 10.5 : 14)
+            .frame(maxWidth: .infinity, minHeight: compact ? 44 : 52, alignment: .leading)
+            .background(rowBackground)
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Capsule()
+                        .fill(AdaColors.navy)
+                        .frame(width: 3, height: 22)
+                        .padding(.leading, 4)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .onHover { isHovered = $0 }
         .accessibilityValue(trailingValue ?? "")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .modifier(OptionalAccessibilityIdentifier(id: accessibilityID))
     }
 }
@@ -144,29 +182,30 @@ struct SettingsInfoRow: View {
     let icon: String
     let title: LocalizedStringKey
     let value: String
+    var compact: Bool = false
     var accessibilityID: String? = nil
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: compact ? 11 : 14) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: compact ? 14.5 : 16, weight: .medium))
                 .foregroundStyle(AdaColors.navy)
-                .frame(width: 24, height: 24)
+                .frame(width: compact ? 22 : 24, height: compact ? 22 : 24)
 
             Text(title)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: compact ? 13.5 : 14, weight: .medium))
                 .foregroundStyle(AdaColors.ink)
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 10)
 
             Text(value)
-                .font(.system(size: 13))
+                .font(.system(size: compact ? 12 : 13))
                 .foregroundStyle(AdaColors.secondaryInk)
                 .textSelection(.enabled)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .padding(.horizontal, compact ? 14 : 18)
+        .padding(.vertical, compact ? 10.5 : 14)
+        .frame(maxWidth: .infinity, minHeight: compact ? 44 : 52, alignment: .leading)
         .accessibilityElement(children: .combine)
         .modifier(OptionalAccessibilityIdentifier(id: accessibilityID))
     }
@@ -178,15 +217,19 @@ struct SettingsDetailScaffold<Trailing: View, Content: View>: View {
     var subtitle: LocalizedStringKey? = nil
     var backLabel: LocalizedStringKey = "Settings"
     var isBackDisabled: Bool = false
+    var isNestedRoute: Bool = false
     let onBack: () -> Void
     @ViewBuilder let trailing: Trailing
     @ViewBuilder let content: Content
+
+    @Environment(\.settingsSplitMode) private var isSplitMode
 
     init(
         title: LocalizedStringKey,
         subtitle: LocalizedStringKey? = nil,
         backLabel: LocalizedStringKey = "Settings",
         isBackDisabled: Bool = false,
+        isNestedRoute: Bool = false,
         onBack: @escaping () -> Void,
         @ViewBuilder trailing: () -> Trailing = { EmptyView() },
         @ViewBuilder content: () -> Content
@@ -195,34 +238,41 @@ struct SettingsDetailScaffold<Trailing: View, Content: View>: View {
         self.subtitle = subtitle
         self.backLabel = backLabel
         self.isBackDisabled = isBackDisabled
+        self.isNestedRoute = isNestedRoute
         self.onBack = onBack
         self.trailing = trailing()
         self.content = content()
+    }
+
+    private var showsBackButton: Bool {
+        !isSplitMode || isNestedRoute
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .center, spacing: 14) {
-                    Button(action: onBack) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(backLabel)
-                                .font(.system(size: 13, weight: .medium))
+                    if showsBackButton {
+                        Button(action: onBack) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text(backLabel)
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .foregroundStyle(isBackDisabled ? AdaColors.secondaryInk : AdaColors.navy)
+                            .padding(.horizontal, 14)
+                            .frame(height: 36)
+                            .background(AdaColors.card, in: Capsule())
+                            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                            .contentShape(Capsule())
                         }
-                        .foregroundStyle(isBackDisabled ? AdaColors.secondaryInk : AdaColors.navy)
-                        .padding(.horizontal, 14)
-                        .frame(height: 36)
-                        .background(AdaColors.card, in: Capsule())
-                        .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-                        .contentShape(Capsule())
+                        .buttonStyle(.plain)
+                        .disabled(isBackDisabled)
+                        .help("Back")
+                        .accessibilityLabel("Back")
+                        .accessibilityIdentifier("settings.detail.backButton")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isBackDisabled)
-                    .help("Back")
-                    .accessibilityLabel("Back")
-                    .accessibilityIdentifier("settings.detail.backButton")
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
@@ -241,9 +291,9 @@ struct SettingsDetailScaffold<Trailing: View, Content: View>: View {
 
                 content
             }
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: isSplitMode ? 720 : 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, AdaLayout.pagePadding)
+            .padding(.horizontal, isSplitMode ? 0 : AdaLayout.pagePadding)
             .padding(.bottom, 32)
         }
     }
