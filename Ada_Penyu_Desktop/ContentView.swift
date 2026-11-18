@@ -75,6 +75,7 @@ struct ContentView: View {
                     accountOrganization: store.accountOrganization,
                     onSignOut: signOutAction,
                     isCollapsed: isSidebarCollapsed,
+                    notSurePendingCount: 2 + store.escalatedNotSureCases.count,
                     onToggleSidebar: toggleSidebar,
                     onExpandSidebar: { setSidebarCollapsed(false) }
                 )
@@ -182,7 +183,11 @@ struct ContentView: View {
     private var pageView: some View {
         switch store.activeSection {
         case .dashboard:
-            DashboardView(store: store, snapshot: store.dashboard, turtles: store.turtles, recentSightings: store.sightings,
+            DashboardView(
+                store: store,
+                snapshot: store.dashboard,
+                turtles: store.analyticsTurtles.isEmpty ? store.turtles : store.analyticsTurtles,
+                recentSightings: store.sightings,
                 chartMode: $store.chartMode, chartSpecies: $store.chartSpecies,
                 onExport: { showingExport = true }, onSelect: store.select,
                 onBrowseTurtles: { store.activeSection = .individuals },

@@ -159,4 +159,35 @@ final class DashboardWidgetTests: XCTestCase {
         XCTAssertFalse(analytics.hotspots.isEmpty)
         XCTAssertTrue(analytics.hotspots.contains(where: { $0.location == "Kuta Beach" && $0.injuredOrScarredCount > 0 }))
     }
+
+    func testSuperAsiaAccountDemoLoadsMultiRegionIndoPacificTurtlesAndSightings() async throws {
+        let defaults = makeIsolatedDefaults()
+        let layoutStore = DashboardLayoutStore(defaults: defaults)
+        let store = AppStore(
+            repository: DemoTurtleRepository(),
+            dashboardLayoutStore: layoutStore
+        )
+
+        store.enterDemoWorkspace(persona: .superAsiaNetwork)
+        XCTAssertEqual(store.demoPersona, .superAsiaNetwork)
+        XCTAssertEqual(store.accountOrganization, "Indo-Pacific Turtle Network")
+        XCTAssertEqual(store.selectedMapPeriod, .allTime)
+
+        // General overview matches Picture 2 core 5 cards + 2 operational cards
+        let kinds = store.dashboardLayout.widgets.map(\.kind)
+        XCTAssertEqual(Array(kinds.prefix(5)), [.kpiOverview, .sightingsTrend, .geographicMap, .recentSightings, .speciesBreakdown])
+        XCTAssertTrue(kinds.contains(.notSureQueue))
+        XCTAssertTrue(kinds.contains(.photoIDReadiness))
+
+        let repo = DemoTurtleRepository(dataset: .panAsiaSuperAccount)
+        let page = try await repo.listIndividuals(query: IndividualQuery(page: PageRequest(limit: 50)))
+        XCTAssertGreaterThanOrEqual(page.total, 20)
+        XCTAssertTrue(page.items.contains(where: { $0.location.contains("India") }))
+        XCTAssertTrue(page.items.contains(where: { $0.location.contains("Indonesia") }))
+        XCTAssertTrue(page.items.contains(where: { $0.location.contains("Malaysia") }))
+        XCTAssertTrue(page.items.contains(where: { $0.location.contains("Japan") }))
+
+        let asiaSightings = try await repo.mapSightings(query: MapQuery(period: .allTime, page: PageRequest(limit: 200)))
+        XCTAssertGreaterThanOrEqual(asiaSightings.count, 30)
+    }
 }

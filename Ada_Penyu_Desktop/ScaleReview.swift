@@ -138,22 +138,66 @@ final class ScaleReviewStore: ObservableObject {
     }
     static func photoHash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
-    /// Seeds realistic mock Head ROI and polygonal cheek scale annotations from bundled `.fgp` coordinates
-    /// (or a standard postocular grid if no sample entry is matched) so Numbered Scale Review works out of the box.
-    func seedMockAnnotations(for hash: String, sample: I3SSampleEntry? = nil) {
+    /// Seeds Head ROI and real extracted scale polygons from the photograph inside the cheek ROI
+    /// (falling back to `.fgp` keypoint coordinates only when no pixel image is supplied).
+    func seedMockAnnotations(for hash: String, sample: I3SSampleEntry? = nil, image: NSImage? = nil) {
         update(hash) { doc in
-            if let sample, sample.imageWidth > 0, sample.imageHeight > 0, !sample.roi.isEmpty {
-                let w = Double(sample.imageWidth)
-                let h = Double(sample.imageHeight)
-                let xs = sample.roi.compactMap { $0.first.map { $0 / w } }
-                let ys = sample.roi.compactMap { $0.count > 1 ? $0[1] / h : nil }
-                let minX = max(0.02, (xs.min() ?? 0.25) - 0.04)
-                let minY = max(0.02, (ys.min() ?? 0.25) - 0.04)
-                let maxX = min(0.98, (xs.max() ?? 0.75) + 0.04)
-                let maxY = min(0.98, (ys.max() ?? 0.75) + 0.04)
-                let roi = ScaleRect(x: minX, y: minY, width: max(0.15, maxX - minX), height: max(0.15, maxY - minY))
-                doc.setHeadROI(roi)
+            let w = Double(max(1, sample?.imageWidth ?? doc.pixelWidth))
+            let h = Double(max(1, sample?.imageHeight ?? doc.pixelHeight))
 
+            let roiPolygon: [ScalePoint]
+            if let sample, sample.imageWidth > 0, sample.imageHeight > 0, !sample.roi.isEmpty {
+                roiPolygon = sample.roi.compactMap { pair in
+                    guard pair.count >= 2 else { return nil }
+                    return ScalePoint(x: min(0.98, max(0.02, pair[0] / w)), y: min(0.98, max(0.02, pair[1] / h)))
+                }
+            } else if let image {
+                roiPolygon = PatternContourEngine.detectFacialPatternROI(from: image, side: .left).roi
+            } else {
+                roiPolygon = []
+            }
+
+            let roiRect: ScaleRect
+            if !roiPolygon.isEmpty {
+                let minX = max(0.02, (roiPolygon.map(\.x).min() ?? 0.25) - 0.02)
+                let minY = max(0.02, (roiPolygon.map(\.y).min() ?? 0.25) - 0.02)
+                let maxX = min(0.98, (roiPolygon.map(\.x).max() ?? 0.75) + 0.02)
+                let maxY = min(0.98, (roiPolygon.map(\.y).max() ?? 0.75) + 0.02)
+                roiRect = ScaleRect(x: minX, y: minY, width: max(0.15, maxX - minX), height: max(0.15, maxY - minY))
+            } else {
+                roiRect = ScaleRect(x: 0.28, y: 0.24, width: 0.44, height: 0.48)
+            }
+            doc.setHeadROI(roiRect)
+
+            if let image {
+                let effectivePoly = roiPolygon.count >= 3 ? roiPolygon : [
+                    ScalePoint(x: roiRect.x, y: roiRect.y),
+                    ScalePoint(x: roiRect.x + roiRect.width, y: roiRect.y),
+                    ScalePoint(x: roiRect.x + roiRect.width, y: roiRect.y + roiRect.height),
+                    ScalePoint(x: roiRect.x, y: roiRect.y + roiRect.height),
+                ]
+                let extracted = PatternContourEngine.extractPatterns(from: image, roiPolygon: effectivePoly)
+                if !extracted.isEmpty {
+                    var addedCount = 0
+                    for pat in extracted {
+                        let clipped = pat.polygon.map { p in
+                            ScalePoint(
+                                x: min(roiRect.x + roiRect.width - 0.002, max(roiRect.x + 0.002, p.x)),
+                                y: min(roiRect.y + roiRect.height - 0.002, max(roiRect.y + 0.002, p.y))
+                            )
+                        }
+                        if let addedID = doc.add(polygon: clipped, source: .proposal) {
+                            addedCount += 1
+                            if addedCount <= max(4, extracted.count - 3) {
+                                doc.setStatus(addedID, .confirmed)
+                            }
+                        }
+                    }
+                    return
+                }
+            }
+
+            if let sample, !sample.keypoints.isEmpty {
                 var placedCenters: [(Double, Double, Double)] = []
                 for kp in sample.keypoints {
                     guard kp.count >= 3 else { continue }
@@ -163,11 +207,10 @@ final class ScaleReviewStore: ObservableObject {
                     let rY = max(0.018, min(0.040, (kp[2] / h) * 0.85))
                     let radius = max(rX, rY)
 
-                    // Keep polygon strictly inside headROI and non-overlapping
-                    guard cx - rX > roi.x + 0.005,
-                          cx + rX < roi.x + roi.width - 0.005,
-                          cy - rY > roi.y + 0.005,
-                          cy + rY < roi.y + roi.height - 0.005 else { continue }
+                    guard cx - rX > roiRect.x + 0.005,
+                          cx + rX < roiRect.x + roiRect.width - 0.005,
+                          cy - rY > roiRect.y + 0.005,
+                          cy + rY < roiRect.y + roiRect.height - 0.005 else { continue }
 
                     let overlaps = placedCenters.contains { ox, oy, orad in
                         hypot(cx - ox, cy - oy) < (radius + orad) * 1.05
@@ -176,10 +219,7 @@ final class ScaleReviewStore: ObservableObject {
 
                     let poly: [ScalePoint] = (0..<6).map { i in
                         let angle = Double(i) * (.pi / 3.0) + 0.2
-                        return ScalePoint(
-                            x: cx + cos(angle) * rX,
-                            y: cy + sin(angle) * rY
-                        )
+                        return ScalePoint(x: cx + cos(angle) * rX, y: cy + sin(angle) * rY)
                     }
                     if let addedID = doc.add(polygon: poly, source: .proposal) {
                         placedCenters.append((cx, cy, radius))
@@ -188,23 +228,6 @@ final class ScaleReviewStore: ObservableObject {
                         }
                     }
                     if placedCenters.count >= 12 { break }
-                }
-            } else {
-                let roi = ScaleRect(x: 0.28, y: 0.24, width: 0.44, height: 0.48)
-                doc.setHeadROI(roi)
-                let centers: [(Double, Double)] = [
-                    (0.38, 0.34), (0.46, 0.34), (0.54, 0.35), (0.62, 0.36),
-                    (0.39, 0.45), (0.47, 0.45), (0.55, 0.46), (0.63, 0.47),
-                    (0.41, 0.56), (0.49, 0.56), (0.57, 0.57), (0.64, 0.58),
-                ]
-                for (idx, (cx, cy)) in centers.enumerated() {
-                    let poly: [ScalePoint] = (0..<6).map { i in
-                        let angle = Double(i) * (.pi / 3.0)
-                        return ScalePoint(x: cx + cos(angle) * 0.026, y: cy + sin(angle) * 0.030)
-                    }
-                    if let addedID = doc.add(polygon: poly, source: .proposal), idx < 8 {
-                        doc.setStatus(addedID, .confirmed)
-                    }
                 }
             }
         }
