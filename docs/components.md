@@ -24,7 +24,11 @@ Use for the compact navy turtle template mark when the app icon is not appropria
 
 ### `TurtleMapPin`
 
-Use only for map annotations. It combines the turtle pin artwork, selected outline, pointer triangle, and shadow so map callouts remain consistent.
+Use only for detailed map annotations and dashboard map previews. It renders the FigCraft teardrop pin artwork (`PenyuMapPinShape`) with centered turtle emblem, selected/linked/other styling, optional multi-turtle count badge, and shadow.
+
+### `AdaFloatingPopup`, `AdaPopupCardSurface`, and `AdaPopupRow`
+
+Custom borderless floating `NSPanel` menu container (`Components/AdaFloatingPopup.swift`) used by `ActionDropdown`, the sidebar account menu, and map region presets to maintain crisp FigCraft white cards, deep navy typography, and hairline shadows without native macOS popover/menu chrome.
 
 ### `FilterChip`, `ConditionPill`, and `SectionTitle`
 
