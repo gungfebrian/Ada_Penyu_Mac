@@ -9,20 +9,39 @@ struct ProfileWorkspaceView: View {
     let onBack: () -> Void
     let onMap: () -> Void
     let onExport: () -> Void
+    var originTitle: String = "Sea Turtles"
+    var isFavorite: Bool = false
+    var onToggleFavorite: (() -> Void)? = nil
     var onRetry: () -> Void = {}
     @State private var bodyCondition = false
 
     private var sighting: TurtleLogSummary? { detail?.sightingLogs.first { $0.id == selectedSightingID } }
+    private var bodyConditionCount: Int { detail?.logs.filter(\.isBodyConditionRecord).count ?? 0 }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                HStack {
+                HStack(spacing: 12) {
                     Button {
                         if selectedSightingID != nil { selectedSightingID = nil } else { onBack() }
-                    } label: { Label(selectedSightingID == nil ? "Back to Sea Turtles" : "Back to \(turtle.displayName)", systemImage: "chevron.left") }
+                    } label: { Label(selectedSightingID == nil ? "Back to \(originTitle)" : "Back to \(turtle.displayName)", systemImage: "chevron.left") }
                         .buttonStyle(.plain).font(.system(size: 12))
                     Spacer()
+                    if let onToggleFavorite {
+                        Button(action: onToggleFavorite) {
+                            Label(isFavorite ? "Favorited" : "Favorite", systemImage: isFavorite ? "heart.fill" : "heart")
+                                .font(.system(size: 12))
+                                .foregroundStyle(isFavorite ? AdaColors.accent : AdaColors.ink)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
+                    }
+                    Button(action: onExport) {
+                        Label("Export", systemImage: "arrow.down.doc")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Export this individual's records")
                     Button("View on map", action: onMap).buttonStyle(.plain).font(.system(size: 12))
                 }
                 if isLoading {
@@ -40,7 +59,9 @@ struct ProfileWorkspaceView: View {
                     summary
                     HStack(spacing: 10) {
                         Button("Overview") { bodyCondition = false }.buttonStyle(AdaPillButtonStyle(secondary: bodyCondition))
-                        Button("Body Condition") { bodyCondition = true }.buttonStyle(AdaPillButtonStyle(secondary: !bodyCondition))
+                        Button(bodyConditionCount > 0 ? "Body Condition (\(bodyConditionCount))" : "Body Condition") {
+                            bodyCondition = true
+                        }.buttonStyle(AdaPillButtonStyle(secondary: !bodyCondition))
                         Spacer()
                     }
                     if bodyCondition {
@@ -53,6 +74,9 @@ struct ProfileWorkspaceView: View {
             .padding(.horizontal, AdaLayout.pagePadding).padding(.top, 12).padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
+        .onChange(of: turtle.id) { _, _ in
+            bodyCondition = false
+        }
     }
 
     private var summary: some View {
@@ -178,9 +202,20 @@ private struct SightingDetailsView: View {
     }
 
     private var photos: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            SectionTitle("Identity reference photos", subtitle: "Profile photos · encounter photos unavailable")
-            IdentityPhotoPair(turtle: turtle, size: 155)
+        VStack(alignment: .leading, spacing: 18) {
+            if !sighting.photoPaths.isEmpty {
+                SectionTitle("Encounter photos", subtitle: "\(sighting.photoPaths.count) attached photo\(sighting.photoPaths.count == 1 ? "" : "s")")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(Array(sighting.photoPaths.enumerated()), id: \.offset) { _, path in
+                            TurtlePhoto(paths: [path], size: 155)
+                        }
+                    }
+                }
+            } else {
+                SectionTitle("Identity reference photos", subtitle: "Profile photos · encounter photos unavailable")
+                IdentityPhotoPair(turtle: turtle, size: 155)
+            }
         }.frame(maxWidth: .infinity, minHeight: 285, alignment: .topLeading).adaCard(padding: 22)
     }
 
@@ -226,3 +261,52 @@ private struct SightingDetailsView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Turtle Profile · Overview & Body Condition") {
+    @Previewable @State var selectedSightingID: String? = nil
+    @Previewable @State var isFavorite = true
+    let detail = PreviewFixtures.makeSampleDetail()
+
+    ProfileWorkspaceView(
+        turtle: PreviewFixtures.injuredTurtle,
+        detail: detail,
+        isLoading: false,
+        error: nil,
+        selectedSightingID: $selectedSightingID,
+        onBack: {},
+        onMap: {},
+        onExport: {},
+        originTitle: "Map",
+        isFavorite: isFavorite,
+        onToggleFavorite: { isFavorite.toggle() }
+    )
+    .background(AdaColors.canvas)
+    .environment(\.turtlePhotoLoader, PreviewFixtures.photoLoader)
+    .frame(width: 1220, height: 860)
+    .preferredColorScheme(.light)
+}
+
+#Preview("Sighting Details") {
+    @Previewable @State var selectedSightingID: String? = PreviewFixtures.makeSampleDetail().sightingLogs.first?.id
+    let detail = PreviewFixtures.makeSampleDetail()
+
+    ProfileWorkspaceView(
+        turtle: PreviewFixtures.injuredTurtle,
+        detail: detail,
+        isLoading: false,
+        error: nil,
+        selectedSightingID: $selectedSightingID,
+        onBack: {},
+        onMap: {},
+        onExport: {},
+        originTitle: "Sightings",
+        isFavorite: false,
+        onToggleFavorite: {}
+    )
+    .background(AdaColors.canvas)
+    .environment(\.turtlePhotoLoader, PreviewFixtures.photoLoader)
+    .frame(width: 1220, height: 860)
+    .preferredColorScheme(.light)
+}
+#endif

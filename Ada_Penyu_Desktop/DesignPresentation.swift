@@ -62,8 +62,9 @@ extension TurtleLogSummary {
     var markingCondition: TurtleCondition? {
         guard isBodyConditionRecord else { return nil }
         switch status.lowercased() {
-        case "wound", "injury", "injured": return .injured
-        case "scar", "scarred", "tag scar": return .scarred
+        case "wound", "injury", "injured", "missing limb", "fibropapilloma": return .injured
+        case "scar", "scarred", "tag scar", "scratch", "deformity", "barnacles", "barnacle", "other": return .scarred
+        case "healthy": return .healthy
         default: return nil
         }
     }

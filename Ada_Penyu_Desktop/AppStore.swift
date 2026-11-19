@@ -80,7 +80,9 @@ final class AppStore: ObservableObject {
     @Published private(set) var detailError: String?
     @Published private(set) var totalIndividuals = 0
     @Published private(set) var isLoading = false
+    @Published private(set) var isExporting = false
     @Published private(set) var lastError: String?
+    @Published private(set) var statusMessage: String?
     @Published private(set) var sessionNotice: String?
     @Published var isAuthSheetPresented = false
     @Published private(set) var authEmail = ""
@@ -570,7 +572,9 @@ final class AppStore: ObservableObject {
         notSureQueueError = nil
         isReviewPracticePresented = false
         isLoading = false
+        isExporting = false
         lastError = nil
+        statusMessage = nil
         let demoDataset = demoPersona.demoDataset
         repository = isDemoBypassActive ? DemoTurtleRepository(dataset: demoDataset) : RemoteTurtleRepository(client: client)
     }
@@ -673,8 +677,26 @@ final class AppStore: ObservableObject {
         }
     }
 
+    var allKnownTurtles: [Turtle] {
+        var seen = Set<String>()
+        var combined: [Turtle] = []
+        for source in [analyticsTurtles, turtles, favoriteTurtles] {
+            for turtle in source where seen.insert(turtle.id).inserted {
+                combined.append(turtle)
+            }
+        }
+        return combined
+    }
+
+    func turtle(forID id: String) -> Turtle? {
+        turtles.first(where: { $0.id == id })
+            ?? analyticsTurtles.first(where: { $0.id == id })
+            ?? favoriteTurtles.first(where: { $0.id == id })
+    }
+
     func reloadMap() async {
         guard canLoadRecords else { return }
+        mapTask?.cancel()
         let generation = sessionGeneration
         let query = currentMapQuery
         mapRequest += 1
@@ -774,23 +796,38 @@ final class AppStore: ObservableObject {
         guard canLoadRecords else { return }
         let generation = sessionGeneration
         let repository = repository
+        isExporting = true
+        statusMessage = nil
         Task {
+            defer {
+                if sessionGeneration == generation { isExporting = false }
+            }
             guard sessionGeneration == generation else { return }
             do {
                 let file = try await repository.export(request)
                 guard sessionGeneration == generation else { return }
                 let panel = NSSavePanel()
                 panel.nameFieldStringValue = file.filename
-                panel.allowedContentTypes = [.data]
+                panel.allowedContentTypes = Self.allowedContentTypes(for: request.format)
                 guard panel.runModal() == .OK, let url = panel.url else { return }
                 try file.data.write(to: url, options: .atomic)
+                statusMessage = "Exported \(url.lastPathComponent)"
             } catch {
                 if sessionGeneration == generation, !(error is CancellationError) { lastError = error.localizedDescription }
             }
         }
     }
 
+    static func allowedContentTypes(for format: ExportFormat) -> [UTType] {
+        switch format {
+        case .csv: [.commaSeparatedText]
+        case .xlsx: [UTType(filenameExtension: "xlsx") ?? .data]
+        case .pdf: [.pdf]
+        }
+    }
+
     func clearError() { lastError = nil }
+    func clearStatusMessage() { statusMessage = nil }
 
     func signIn(email: String, password: String, rememberMe: Bool) async throws {
         clearPrivateState()

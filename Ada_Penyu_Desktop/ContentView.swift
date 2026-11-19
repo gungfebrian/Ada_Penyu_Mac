@@ -98,16 +98,33 @@ struct ContentView: View {
                     ZStack {
                         AdaColors.canvas
                         if let turtle = store.selectedTurtle {
-                            ProfileWorkspaceView(turtle: store.selectedDetail?.turtle ?? turtle,
-                                detail: store.selectedDetail, isLoading: store.isDetailLoading, error: store.detailError,
+                            let displayedTurtle = store.selectedDetail?.turtle ?? turtle
+                            let isFavorite = store.favoriteTurtles.contains { $0.id == displayedTurtle.id }
+                            ProfileWorkspaceView(
+                                turtle: displayedTurtle,
+                                detail: store.selectedDetail,
+                                isLoading: store.isDetailLoading,
+                                error: store.detailError,
                                 selectedSightingID: $selectedSightingID,
                                 onBack: { selectedSightingID = nil; store.dismissDetail() },
-                                onMap: { openMap(turtleID: turtle.id) },
-                                onExport: { exportQueryOverride = IndividualQuery(search: turtle.displayName); showingExport = true },
-                                onRetry: { Task { await store.loadDetail(for: turtle) } })
+                                onMap: { openMap(turtleID: displayedTurtle.id) },
+                                onExport: {
+                                    exportQueryOverride = IndividualQuery(search: displayedTurtle.profileCode ?? displayedTurtle.displayName)
+                                    showingExport = true
+                                },
+                                originTitle: store.detailOrigin.title,
+                                isFavorite: isFavorite,
+                                onToggleFavorite: { store.toggleFavorite(displayedTurtle) },
+                                onRetry: { Task { await store.loadDetail(for: turtle) } }
+                            )
                         } else { pageView }
 
-                        if store.activeSection != .settings && (store.isLoading || (store.isIndividualsLoading && store.activeSection == .individuals)) {
+                        if store.isExporting {
+                            ProgressView("Preparing export…")
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(.regularMaterial, in: Capsule())
+                        } else if store.activeSection != .settings && (store.isLoading || (store.isIndividualsLoading && store.activeSection == .individuals)) {
                             ProgressView("Loading records…")
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 12)
@@ -133,11 +150,11 @@ struct ContentView: View {
                     .fill(.ultraThinMaterial)
                     .overlay(Color.black.opacity(0.16))
                     .ignoresSafeArea()
-                    .onTapGesture { showingExport = false }
+                    .onTapGesture { showingExport = false; exportQueryOverride = nil }
 
                 ExportSheet(
                     query: exportQueryOverride ?? store.currentIndividualQuery,
-                    resultCount: exportQueryOverride == nil ? store.turtles.count : 1,
+                    resultCount: exportQueryOverride == nil ? max(store.totalIndividuals, store.turtles.count) : 1,
                     onCancel: { showingExport = false; exportQueryOverride = nil }
                 ) { request in
                     showingExport = false
@@ -216,7 +233,13 @@ struct ContentView: View {
             }
         }
         .background(AdaColors.navy)
-        .onChange(of: store.activeSection) { _, _ in selectedSightingID = nil; store.dismissDetail() }
+        .onChange(of: store.activeSection) { _, nextSection in
+            selectedSightingID = nil
+            store.dismissDetail()
+            if nextSection != .map {
+                focusedMapTurtleID = nil
+            }
+        }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
         .animation(.easeOut(duration: 0.16), value: showingExport)
         .animation(.easeOut(duration: 0.16), value: store.isReviewPracticePresented)
@@ -227,6 +250,8 @@ struct ContentView: View {
             } else if showingExport {
                 showingExport = false
                 exportQueryOverride = nil
+            } else if selectedSightingID != nil {
+                selectedSightingID = nil
             } else if store.selectedTurtle != nil {
                 store.dismissDetail()
             } else if store.activeSection == .settings && store.settingsDetail != nil {
@@ -234,16 +259,30 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .top) {
-            if let error = store.lastError {
-                HStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle")
-                    Text(error).font(.callout).textSelection(.enabled)
-                    Spacer()
-                    Button("Retry") { Task { await store.reloadAll() } }
-                    Button("Dismiss") { store.clearError() }
+            VStack(spacing: 0) {
+                if let error = store.lastError {
+                    HStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(AdaColors.red)
+                        Text(error).font(.callout).textSelection(.enabled)
+                        Spacer()
+                        Button("Retry") { Task { await store.reloadAll() } }
+                        Button("Dismiss") { store.clearError() }
+                    }
+                    .padding(12)
+                    .background(AdaColors.card)
                 }
-                .padding(12)
-                .background(AdaColors.card)
+                if let status = store.statusMessage {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(AdaColors.green)
+                        Text(status).font(.callout).foregroundStyle(AdaColors.ink)
+                        Spacer()
+                        Button("Dismiss") { store.clearStatusMessage() }
+                    }
+                    .padding(12)
+                    .background(AdaColors.card)
+                }
             }
         }
     }
@@ -275,7 +314,7 @@ struct ContentView: View {
                 turtles: store.analyticsTurtles.isEmpty ? store.turtles : store.analyticsTurtles,
                 recentSightings: store.sightings,
                 chartMode: $store.chartMode, chartSpecies: $store.chartSpecies,
-                onExport: { showingExport = true }, onSelect: store.select,
+                onExport: { exportQueryOverride = nil; showingExport = true }, onSelect: store.select,
                 onBrowseTurtles: { store.activeSection = .individuals },
                 onShowSightings: {
                     store.selectedMapPeriod = .twelveMonths
@@ -284,11 +323,13 @@ struct ContentView: View {
                     store.activeSection = .sightings
                 }, onOpenMap: { openMap(turtleID: nil) })
         case .map:
-            MapPageView(turtles: store.analyticsTurtles.isEmpty ? store.turtles : store.analyticsTurtles,
+            MapPageView(turtles: store.allKnownTurtles,
                 sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod,
                 selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition,
                 onReload: { Task { await store.reloadMap() } }, onSelect: store.select,
-                focusTurtleID: focusedMapTurtleID, onOpenSighting: openSighting)
+                focusTurtleID: focusedMapTurtleID,
+                onFocusConsumed: { focusedMapTurtleID = nil },
+                onOpenSighting: openSighting)
         case .individuals:
             VStack(spacing: 0) {
                 catalogTabs
@@ -318,9 +359,7 @@ struct ContentView: View {
     }
     private func openSighting(_ sighting: Sighting) {
         selectedSightingID = sighting.id
-        store.select(store.turtles.first { $0.id == sighting.turtleID }
-            ?? store.analyticsTurtles.first { $0.id == sighting.turtleID }
-            ?? sighting.turtleReference)
+        store.select(store.turtle(forID: sighting.turtleID) ?? sighting.turtleReference)
     }
 
     private var catalogTabs: some View {
@@ -357,7 +396,7 @@ struct ContentView: View {
 
 }
 
-private struct ExportSheet: View {
+struct ExportSheet: View {
     let query: IndividualQuery
     let resultCount: Int
     let onCancel: () -> Void
@@ -675,3 +714,20 @@ private struct RightPaneAutoMinimizeObserver: NSViewRepresentable {
         }
     }
 }
+
+#if DEBUG
+#Preview("App · World Super Account") {
+    PreviewDemoShell(persona: .worldSuperNetwork, section: .dashboard)
+        .frame(width: 1440, height: 900)
+        .preferredColorScheme(.light)
+}
+
+#Preview("Export Data Modal") {
+    ZStack {
+        AdaColors.canvas
+        ExportSheet(query: IndividualQuery(), resultCount: 45, onCancel: {}, onExport: { _ in })
+    }
+    .frame(width: 640, height: 600)
+    .preferredColorScheme(.light)
+}
+#endif

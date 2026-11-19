@@ -16,6 +16,7 @@ struct MapPageView: View {
     let onReload: () -> Void
     let onSelect: (Turtle) -> Void
     var focusTurtleID: String? = nil
+    var onFocusConsumed: (() -> Void)? = nil
     var onOpenSighting: ((Sighting) -> Void)? = nil
 
     @State private var displayMode: DisplayMode = .h3Grid
@@ -222,9 +223,18 @@ struct MapPageView: View {
                 } description: {
                     Text("Try All Time or clear filters.")
                 } actions: {
-                    Button("Reload map", action: onReload).buttonStyle(AdaPillButtonStyle())
+                    HStack(spacing: 8) {
+                        Button("Reset filters") {
+                            selectedPeriod = .allTime
+                            selectedSpecies = nil
+                            selectedCondition = nil
+                        }
+                        .buttonStyle(AdaPillButtonStyle())
+                        Button("Reload map", action: onReload)
+                            .buttonStyle(AdaPillButtonStyle(secondary: true))
+                    }
                 }
-                .frame(width: 320, height: 170)
+                .frame(width: 340, height: 185)
                 .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 20))
             }
         }
@@ -827,12 +837,24 @@ struct MapPageView: View {
     private func updateSightings() {
         if selected == nil { selectedSightingID = nil }
         if drilledCountry == nil { clearDrillDown() }
-        if let focusTurtleID, consumedFocusID != focusTurtleID,
-           let record = sightings.first(where: { $0.turtleID == focusTurtleID }) {
-            consumedFocusID = focusTurtleID
-            hasFittedInitial = true
-            focus(record)
-        } else if !hasFittedInitial, !sightings.isEmpty {
+        if let focusTurtleID, consumedFocusID != focusTurtleID {
+            let latestMatch = sightings
+                .filter { $0.turtleID == focusTurtleID }
+                .sorted {
+                    let lhs = APIFormatters.display.date(from: $0.date) ?? .distantPast
+                    let rhs = APIFormatters.display.date(from: $1.date) ?? .distantPast
+                    return lhs > rhs
+                }
+                .first
+            if let record = latestMatch {
+                consumedFocusID = focusTurtleID
+                hasFittedInitial = true
+                onFocusConsumed?()
+                focus(record)
+                return
+            }
+        }
+        if !hasFittedInitial, !sightings.isEmpty {
             hasFittedInitial = true
             fitAll()
         }
@@ -846,8 +868,8 @@ struct MapPageView: View {
         }
         move(to: MKCoordinateRegion(
             center: .init(latitude: sighting.coordinate.latitude, longitude: sighting.coordinate.longitude),
-            span: .init(latitudeDelta: min(visibleRegion.span.latitudeDelta, 0.28),
-                        longitudeDelta: min(visibleRegion.span.longitudeDelta, 0.42))
+            span: .init(latitudeDelta: min(visibleRegion.span.latitudeDelta, 0.22),
+                        longitudeDelta: min(visibleRegion.span.longitudeDelta, 0.30))
         ))
     }
 
@@ -975,3 +997,50 @@ private struct MapCountryMarker: View {
         .contentShape(Rectangle())
     }
 }
+
+#if DEBUG
+#Preview("Map · World H3 Hex Grid") {
+    @Previewable @State var period: MapPeriod = .allTime
+    @Previewable @State var species: TurtleSpecies? = nil
+    @Previewable @State var condition: TurtleCondition? = nil
+    let world = DemoFixtures.worldSuperDataset
+
+    MapPageView(
+        turtles: world.turtles,
+        sightings: world.sightings.filter {
+            (species == nil || $0.species == species) && (condition == nil || $0.condition == condition)
+        },
+        selectedPeriod: $period,
+        selectedSpecies: $species,
+        selectedCondition: $condition,
+        onReload: {},
+        onSelect: { _ in }
+    )
+    .background(AdaColors.canvas)
+    .environment(\.turtlePhotoLoader, PreviewFixtures.photoLoader)
+    .frame(width: 1320, height: 840)
+    .preferredColorScheme(.light)
+}
+
+#Preview("Map · Bali Local Pins") {
+    @Previewable @State var period: MapPeriod = .allTime
+    @Previewable @State var species: TurtleSpecies? = nil
+    @Previewable @State var condition: TurtleCondition? = nil
+
+    MapPageView(
+        turtles: DemoFixtures.turtles,
+        sightings: DemoFixtures.sightings.filter {
+            (species == nil || $0.species == species) && (condition == nil || $0.condition == condition)
+        },
+        selectedPeriod: $period,
+        selectedSpecies: $species,
+        selectedCondition: $condition,
+        onReload: {},
+        onSelect: { _ in }
+    )
+    .background(AdaColors.canvas)
+    .environment(\.turtlePhotoLoader, PreviewFixtures.photoLoader)
+    .frame(width: 1320, height: 840)
+    .preferredColorScheme(.light)
+}
+#endif

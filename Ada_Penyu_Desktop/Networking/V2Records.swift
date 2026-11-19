@@ -114,9 +114,11 @@ struct V2Sighting: Decodable {
 
     var logs: [TurtleLogSummary] {
         let date = APIFormatters.display.string(from: observedAt)
+        let allPhotoPaths = photos.map(\.fetchPath).filter { !$0.isEmpty }
         let encounter = TurtleLogSummary(id: id.uuidString, date: date, location: location.name,
             status: event.type.replacingOccurrences(of: "_", with: " ").capitalized,
-            condition: TurtleCondition(apiValue: condition?.status), notes: notes, coordinate: location.coordinate, sourceSightingID: id.uuidString)
+            condition: TurtleCondition(apiValue: condition?.status), notes: notes, coordinate: location.coordinate,
+            sourceSightingID: id.uuidString, photoPaths: allPhotoPaths)
         let parts: [String: TurtleBodyPart] = ["head": .head, "carapace": .carapace,
             "front_flipper_left": .flipperLeft, "front_flipper_right": .flipperRight,
             "rear_flipper_left": .footLeft, "rear_flipper_right": .footRight, "tail": .tail]

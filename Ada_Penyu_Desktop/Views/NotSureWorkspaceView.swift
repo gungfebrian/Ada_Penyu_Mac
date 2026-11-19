@@ -294,6 +294,9 @@ private struct NotSureCaseDetail: View {
             guard searchRequest != nil else { return }
             await findCandidates()
         }
+        .onChange(of: selectedCandidate?.side) { _, newSide in
+            contourSettings.gallerySide = newSide ?? item.side
+        }
         .sheet(item: $confirmation) { decision in
             decisionSheet(decision)
         }
@@ -710,3 +713,23 @@ private struct NotSureStatusPill: View {
             .fixedSize()
     }
 }
+
+#if DEBUG
+#Preview("Not Sure Queue · Inbox") {
+    NotSureWorkspaceView(
+        store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork, section: .scientistReview, withNotSureCases: true),
+        onOpenPractice: {}
+    )
+    .frame(width: 1280, height: 840)
+    .preferredColorScheme(.light)
+}
+
+#Preview("Not Sure Queue · Case Detail") {
+    NotSureWorkspaceView(
+        store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork, section: .scientistReview, withNotSureCases: true, openFirstNotSureCase: true),
+        onOpenPractice: {}
+    )
+    .frame(width: 1280, height: 840)
+    .preferredColorScheme(.light)
+}
+#endif
