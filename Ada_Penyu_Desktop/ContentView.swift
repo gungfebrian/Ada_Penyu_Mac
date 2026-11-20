@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var store: AppStore
     @State private var showingExport = false
+    @State private var showingImport = false
     @State private var exportQueryOverride: IndividualQuery?
     @State private var isSidebarCollapsed = false
     @State private var selectedSightingID: String?
@@ -28,6 +29,7 @@ struct ContentView: View {
         }
         .onChange(of: store.sessionGeneration) { _, _ in
             showingExport = false
+            showingImport = false
             exportQueryOverride = nil
             selectedSightingID = nil
             focusedMapTurtleID = nil
@@ -91,6 +93,7 @@ struct ContentView: View {
 
                 VStack(spacing: 0) {
                     WorkspaceHeader(store: store, title: pageTitle,
+                        onImport: { showingImport = true },
                         onExport: { exportQueryOverride = nil; showingExport = true },
                         isSidebarCollapsed: isSidebarCollapsed,
                         onToggleSidebar: toggleSidebar)
@@ -119,7 +122,12 @@ struct ContentView: View {
                             )
                         } else { pageView }
 
-                        if store.isExporting {
+                        if store.isImporting {
+                            ProgressView(store.importProgressText ?? "Importing…")
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(.regularMaterial, in: Capsule())
+                        } else if store.isExporting {
                             ProgressView("Preparing export…")
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 12)
@@ -137,12 +145,27 @@ struct ContentView: View {
                 .background(
                     RightPaneAutoMinimizeObserver(
                         isSidebarCollapsed: isSidebarCollapsed,
-                        isBlocked: showingExport,
+                        isBlocked: showingExport || showingImport,
                         onMinimize: { setSidebarCollapsed(true) }
                     )
                 )
                 .background(AdaColors.canvas)
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 40, bottomLeadingRadius: 40, bottomTrailingRadius: 0, topTrailingRadius: 0))
+            }
+
+            if showingImport {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Color.black.opacity(0.16))
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        if !store.isImporting { showingImport = false }
+                    }
+
+                ImportSheetView(store: store, onDismiss: {
+                    showingImport = false
+                })
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
 
             if showingExport {
@@ -242,11 +265,14 @@ struct ContentView: View {
         }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
         .animation(.easeOut(duration: 0.16), value: showingExport)
+        .animation(.easeOut(duration: 0.16), value: showingImport)
         .animation(.easeOut(duration: 0.16), value: store.isReviewPracticePresented)
         .animation(.easeOut(duration: 0.18), value: store.selectedTurtle?.id)
         .onExitCommand {
             if store.isReviewPracticePresented {
                 store.isReviewPracticePresented = false
+            } else if showingImport {
+                if !store.isImporting { showingImport = false }
             } else if showingExport {
                 showingExport = false
                 exportQueryOverride = nil
@@ -291,7 +317,13 @@ struct ContentView: View {
         if store.selectedTurtle != nil {
             return selectedSightingID == nil ? "Turtle Profile" : "Sighting Details"
         }
-        let rawTitle = store.activeSection == .scientistReview ? AppSection.individuals.title : store.activeSection.title
+        let rawTitle: String
+        switch store.activeSection {
+        case .individuals, .favorites, .scientistReview:
+            rawTitle = AppSection.individuals.title
+        default:
+            rawTitle = store.activeSection.title
+        }
         return store.localization.localized(rawTitle)
     }
 
@@ -333,12 +365,21 @@ struct ContentView: View {
         case .individuals:
             VStack(spacing: 0) {
                 catalogTabs
-                IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText,
-                    selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
-                    onToggleFavorite: store.toggleFavorite, onSelect: store.select,
-                    selectedSpecies: $store.selectedSpecies, pageSize: $store.individualsPageSize,
-                    offset: store.individualsOffset, isLoading: store.isIndividualsLoading,
-                    onPage: { page in Task { await store.loadIndividualsPage(page) } })
+                IndividualsView(
+                    turtles: store.turtles,
+                    total: store.totalIndividuals,
+                    searchText: $store.searchText,
+                    selectedCondition: $store.selectedCondition,
+                    favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                    onToggleFavorite: store.toggleFavorite,
+                    onSelect: store.select,
+                    selectedSpecies: $store.selectedSpecies,
+                    pageSize: $store.individualsPageSize,
+                    offset: store.individualsOffset,
+                    isLoading: store.isIndividualsLoading,
+                    onPage: { page in Task { await store.loadIndividualsPage(page) } },
+                    sort: $store.sort
+                )
             }
         case .sightings:
             SightingsListView(sightings: store.sightings, onSelect: openSighting)
@@ -352,7 +393,24 @@ struct ContentView: View {
         case .identification:
             I3SWorkspaceView(store: store)
         case .favorites:
-            FavoritesView(turtles: store.favoriteTurtles, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select, onBrowseIndividuals: { store.searchText = ""; store.selectedCondition = nil; store.activeSection = .individuals })
+            VStack(spacing: 0) {
+                catalogTabs
+                FavoritesView(
+                    turtles: store.favoriteTurtles,
+                    searchText: $store.searchText,
+                    selectedCondition: $store.selectedCondition,
+                    favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                    onToggleFavorite: store.toggleFavorite,
+                    onSelect: store.select,
+                    onBrowseIndividuals: {
+                        store.searchText = ""
+                        store.selectedSpecies = nil
+                        store.selectedCondition = nil
+                        store.activeSection = .individuals
+                    },
+                    selectedSpecies: $store.selectedSpecies
+                )
+            }
         case .settings:
             SettingsView(store: store, model: store.organizationKeySettings)
         }
@@ -363,34 +421,65 @@ struct ContentView: View {
     }
 
     private var catalogTabs: some View {
-        HStack(spacing: 18) {
-            catalogTab("Individuals", count: store.totalIndividuals, selected: store.activeSection == .individuals) {
-                store.activeSection = .individuals
+        HStack(spacing: 12) {
+            HStack(spacing: 3) {
+                catalogTab(
+                    "Individuals",
+                    icon: "tortoise",
+                    count: store.totalIndividuals,
+                    selected: store.activeSection == .individuals
+                ) {
+                    store.activeSection = .individuals
+                }
+                catalogTab(
+                    "Watchlist",
+                    icon: "bookmark",
+                    count: store.favoriteTurtles.count,
+                    selected: store.activeSection == .favorites
+                ) {
+                    store.activeSection = .favorites
+                }
+                catalogTab(
+                    "Not Sure",
+                    icon: "questionmark.circle",
+                    count: store.pendingNotSureCases.count,
+                    selected: store.activeSection == .scientistReview
+                ) {
+                    store.openNotSureReview()
+                }
             }
-            catalogTab("Not Sure", count: store.pendingNotSureCases.count, selected: store.activeSection == .scientistReview) {
-                store.openNotSureReview()
-            }
-            Spacer()
+            .padding(3)
+            .background(AdaColors.card, in: Capsule())
+            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, AdaLayout.pagePadding)
-        .overlay(alignment: .bottom) { Rectangle().fill(AdaColors.line).frame(height: 1) }
+        .padding(.bottom, 10)
     }
 
-    private func catalogTab(_ title: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func catalogTab(_ title: String, icon: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Text(title).font(.system(size: 13, weight: selected ? .semibold : .medium))
-                Text(count.formatted()).font(.caption.monospacedDigit()).foregroundStyle(AdaColors.secondaryInk)
+            HStack(spacing: 7) {
+                Image(systemName: selected && icon == "bookmark" ? "bookmark.fill" : icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
+                Text(count.formatted())
+                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(selected ? .white.opacity(0.92) : AdaColors.secondaryInk)
+                    .padding(.horizontal, 7)
+                    .frame(height: 18)
+                    .background(selected ? .white.opacity(0.18) : AdaColors.surfaceMuted, in: Capsule())
             }
-            .foregroundStyle(selected ? AdaColors.navy : AdaColors.secondaryInk)
-            .padding(.horizontal, 12)
-            .frame(height: 38)
-            .contentShape(Rectangle())
-            .overlay(alignment: .bottom) {
-                if selected { Rectangle().fill(AdaColors.navy).frame(height: 2) }
-            }
+            .foregroundStyle(selected ? .white : AdaColors.secondaryInk)
+            .padding(.horizontal, 13)
+            .frame(height: 32)
+            .background(selected ? AdaColors.navy : .clear, in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.14), value: selected)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

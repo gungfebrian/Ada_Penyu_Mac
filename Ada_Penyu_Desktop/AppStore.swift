@@ -81,6 +81,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var totalIndividuals = 0
     @Published private(set) var isLoading = false
     @Published private(set) var isExporting = false
+    @Published private(set) var isImporting = false
+    @Published private(set) var importProgressText: String?
     @Published private(set) var lastError: String?
     @Published private(set) var statusMessage: String?
     @Published private(set) var sessionNotice: String?
@@ -118,6 +120,7 @@ final class AppStore: ObservableObject {
     private var hasBootstrapped = false
     private var searchTask: Task<Void, Never>?
     private var mapTask: Task<Void, Never>?
+    private var demoReloadTask: Task<Void, Never>?
     private var individualRequest = 0
     private var mapRequest = 0
     private var dashboardRequest = 0
@@ -327,8 +330,9 @@ final class AppStore: ObservableObject {
         }
         updateAccount()
         let generation = sessionGeneration
-        Task {
-            guard sessionGeneration == generation else { return }
+        demoReloadTask?.cancel()
+        demoReloadTask = Task {
+            guard sessionGeneration == generation, !Task.isCancelled else { return }
             await reloadAll()
         }
     }
@@ -345,8 +349,9 @@ final class AppStore: ObservableObject {
             }
             updateAccount()
             let generation = sessionGeneration
-            Task {
-                guard sessionGeneration == generation else { return }
+            demoReloadTask?.cancel()
+            demoReloadTask = Task {
+                guard sessionGeneration == generation, !Task.isCancelled else { return }
                 await reloadAll()
             }
         } else {
@@ -555,6 +560,7 @@ final class AppStore: ObservableObject {
         sessionGeneration = UUID()
         searchTask?.cancel()
         mapTask?.cancel()
+        demoReloadTask?.cancel()
         photoCache.removeAll()
         turtles = []
         analyticsTurtles = []
@@ -573,13 +579,15 @@ final class AppStore: ObservableObject {
         isReviewPracticePresented = false
         isLoading = false
         isExporting = false
+        isImporting = false
+        importProgressText = nil
         lastError = nil
         statusMessage = nil
         let demoDataset = demoPersona.demoDataset
         repository = isDemoBypassActive ? DemoTurtleRepository(dataset: demoDataset) : RemoteTurtleRepository(client: client)
     }
 
-    deinit { searchTask?.cancel(); mapTask?.cancel() }
+    deinit { searchTask?.cancel(); mapTask?.cancel(); demoReloadTask?.cancel() }
 
     func bootstrap() async {
         guard !hasBootstrapped else { return }
@@ -823,6 +831,241 @@ final class AppStore: ObservableObject {
         case .csv: [.commaSeparatedText]
         case .xlsx: [UTType(filenameExtension: "xlsx") ?? .data]
         case .pdf: [.pdf]
+        }
+    }
+
+    // MARK: - Batch Import & Not Sure Queue Handoff
+
+    struct ImportExecutionSummary: Equatable, Sendable {
+        let importedCount: Int
+        let escalatedToNotSureCount: Int
+        let failedCount: Int
+        let summaryText: String
+    }
+
+    var existingProfileCodes: Set<String> {
+        Set(allKnownTurtles.compactMap(\.profileCode))
+    }
+
+    func importPhotoEncounters(
+        _ encounters: [StagedPhotoEncounter],
+        destination: PhotoBatchDestination
+    ) async -> ImportExecutionSummary {
+        guard !encounters.isEmpty else {
+            return ImportExecutionSummary(importedCount: 0, escalatedToNotSureCount: 0, failedCount: 0, summaryText: "Nothing to import")
+        }
+        let generation = sessionGeneration
+        isImporting = true
+        statusMessage = nil
+        lastError = nil
+        defer {
+            if sessionGeneration == generation {
+                isImporting = false
+                importProgressText = nil
+            }
+        }
+
+        var imported = 0
+        var escalated = 0
+        var failed = 0
+        var usedCodes = existingProfileCodes
+        var autoCodeSeed = 200_001
+
+        for (index, encounter) in encounters.enumerated() {
+            guard sessionGeneration == generation, !Task.isCancelled else { break }
+            importProgressText = "Importing \(index + 1) of \(encounters.count)…"
+
+            do {
+                switch destination {
+                case .notSureQueue:
+                    let reviewCase = EscalatedNotSureCase(
+                        title: encounter.title,
+                        side: encounter.primary.side,
+                        photo: NotSureReviewPhoto(data: encounter.primary.jpegData),
+                        companion: encounter.companion.map { NotSureReviewPhoto(data: $0.jpegData) },
+                        queryFingerprint: nil,
+                        queryROI: [],
+                        candidates: [],
+                        submittedBy: accountName,
+                        isExample: isDemoBypassActive
+                    )
+                    try saveNotSureCase(reviewCase)
+                    imported += 1
+                    escalated += 1
+
+                case .matchAndTriage:
+                    let outcome: MatchSearchOutcome
+                    if let left = encounter.leftPhoto, let right = encounter.rightPhoto {
+                        outcome = try await matchPhotoPair(leftData: left.jpegData, rightData: right.jpegData, limit: 6)
+                    } else {
+                        outcome = try await matchPhoto(imageData: encounter.primary.jpegData, side: encounter.primary.side, limit: 6)
+                    }
+                    guard sessionGeneration == generation else { break }
+
+                    var references: [EscalatedNotSureCandidate] = []
+                    for cand in outcome.candidates {
+                        let path = cand.photoURL ?? "/api/v1/individuals/\(cand.id.uuidString)/photos/\(cand.matchedPhotoSide.rawValue)"
+                        let img = await loadPhoto(for: path)
+                        references.append(EscalatedNotSureCandidate(
+                            id: cand.id.uuidString,
+                            rank: cand.rank,
+                            name: cand.name,
+                            profileCode: cand.profileCode ?? "",
+                            side: cand.matchedPhotoSide,
+                            sideMatches: cand.matchedPhotoSide == encounter.primary.side || encounter.isPaired,
+                            dateText: cand.lastSeenDate ?? "",
+                            location: cand.lastSeenLocation ?? "",
+                            confidencePercent: cand.confidencePercent,
+                            photo: NotSureReviewPhoto(snapshot: img),
+                            sampleImageName: isDemoBypassActive ? (path as NSString).lastPathComponent : nil,
+                            fingerprint: nil,
+                            isBundledExample: isDemoBypassActive
+                        ))
+                    }
+
+                    let reviewCase = EscalatedNotSureCase(
+                        title: encounter.title,
+                        side: encounter.primary.side,
+                        photo: NotSureReviewPhoto(data: encounter.primary.jpegData),
+                        companion: encounter.companion.map { NotSureReviewPhoto(data: $0.jpegData) },
+                        queryFingerprint: nil,
+                        queryROI: [],
+                        candidates: references,
+                        submittedBy: accountName,
+                        isExample: isDemoBypassActive
+                    )
+                    try saveNotSureCase(reviewCase)
+                    imported += 1
+                    escalated += 1
+
+                case .enrollNew:
+                    while usedCodes.contains(String(format: "%06d", autoCodeSeed)) { autoCodeSeed += 1 }
+                    let code = String(format: "%06d", autoCodeSeed)
+                    usedCodes.insert(code)
+                    autoCodeSeed += 1
+
+                    let draft = IndividualDraft(
+                        profileCode: code,
+                        name: encounter.title,
+                        species: TurtleSpecies.unknown.apiValue,
+                        sex: "unknown",
+                        firstSeenAt: encounter.capturedAt ?? Date()
+                    )
+                    let created = try await repository.createIndividual(draft)
+                    guard sessionGeneration == generation else { break }
+                    if let backendID = created.backendID {
+                        if let left = encounter.leftPhoto {
+                            _ = try await repository.uploadIndividualPhoto(individualID: backendID, side: .left, imageData: left.jpegData)
+                        }
+                        if let right = encounter.rightPhoto {
+                            _ = try await repository.uploadIndividualPhoto(individualID: backendID, side: .right, imageData: right.jpegData)
+                        }
+                    }
+                    imported += 1
+                }
+            } catch {
+                failed += 1
+            }
+        }
+
+        if destination == .enrollNew && imported > 0 && sessionGeneration == generation {
+            demoReloadTask?.cancel()
+            await reloadAll()
+        }
+
+        let summaryText: String
+        switch destination {
+        case .matchAndTriage:
+            summaryText = "Matched & sent \(escalated) encounter\(escalated == 1 ? "" : "s") to Not Sure"
+        case .notSureQueue:
+            summaryText = "Added \(escalated) encounter\(escalated == 1 ? "" : "s") to Not Sure"
+        case .enrollNew:
+            summaryText = "Enrolled \(imported) turtle\(imported == 1 ? "" : "s")"
+        }
+        let suffix = failed > 0 ? " (\(failed) failed)" : ""
+        let fullText = summaryText + suffix
+        if sessionGeneration == generation {
+            statusMessage = fullText
+            if escalated > 0 {
+                openNotSureReview(caseID: escalatedNotSureCases.first?.id)
+            }
+        }
+        return ImportExecutionSummary(
+            importedCount: imported,
+            escalatedToNotSureCount: escalated,
+            failedCount: failed,
+            summaryText: fullText
+        )
+    }
+
+    func importCatalogRows(_ rows: [StagedCatalogRow]) async -> ImportExecutionSummary {
+        let validRows = rows.filter(\.isValid)
+        guard !validRows.isEmpty else {
+            return ImportExecutionSummary(importedCount: 0, escalatedToNotSureCount: 0, failedCount: rows.count, summaryText: "No valid rows to import")
+        }
+        let generation = sessionGeneration
+        isImporting = true
+        statusMessage = nil
+        lastError = nil
+        defer {
+            if sessionGeneration == generation {
+                isImporting = false
+                importProgressText = nil
+            }
+        }
+
+        var imported = 0
+        var failed = 0
+        for (idx, row) in validRows.enumerated() {
+            guard sessionGeneration == generation, !Task.isCancelled, let draft = row.draft else { break }
+            importProgressText = "Importing \(idx + 1) of \(validRows.count)…"
+            do {
+                _ = try await repository.createIndividual(draft)
+                imported += 1
+            } catch {
+                failed += 1
+            }
+        }
+
+        if imported > 0 && sessionGeneration == generation {
+            demoReloadTask?.cancel()
+            await reloadAll()
+        }
+
+        let text = "Imported \(imported) individual\(imported == 1 ? "" : "s")" + (failed > 0 ? " (\(failed) failed)" : "")
+        if sessionGeneration == generation { statusMessage = text }
+        return ImportExecutionSummary(importedCount: imported, escalatedToNotSureCount: 0, failedCount: failed, summaryText: text)
+    }
+
+    func importNotSureBundleCases(_ cases: [EscalatedNotSureCase]) -> Int {
+        var imported = 0
+        for item in cases {
+            if (try? saveNotSureCase(item)) != nil {
+                imported += 1
+            }
+        }
+        if imported > 0 {
+            statusMessage = "Imported \(imported) Not Sure case\(imported == 1 ? "" : "s")"
+            openNotSureReview()
+        }
+        return imported
+    }
+
+    func exportNotSureQueue() {
+        guard !escalatedNotSureCases.isEmpty else {
+            statusMessage = "No Not Sure cases to export"
+            return
+        }
+        do {
+            let data = try NotSureReviewBundle.encode(escalatedNotSureCases, account: accountName)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "ada-penyu-not-sure-queue.json"
+            panel.allowedContentTypes = [.json]
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try data.write(to: url, options: .atomic)
+            statusMessage = "Exported \(escalatedNotSureCases.count) Not Sure case\(escalatedNotSureCases.count == 1 ? "" : "s") to \(url.lastPathComponent)"
+        } catch {
+            lastError = error.localizedDescription
         }
     }
 

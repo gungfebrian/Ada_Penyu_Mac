@@ -253,6 +253,92 @@ enum PreviewFixtures {
         image.unlockFocus()
         return NotSureReviewPhoto(snapshot: image) ?? NotSureReviewPhoto(data: Data())
     }
+
+    static func makeSampleImportPhotos() -> [StagedImportPhoto] {
+        let now = Date()
+        let aminaL = samplePhoto(named: "Amina1_L.jpg", fallbackColor: .systemTeal).data
+        let aminaR = samplePhoto(named: "Amina1_R.jpg", fallbackColor: .systemBlue).data
+        let aikaneL = samplePhoto(named: "Aikane2_L.jpg", fallbackColor: .systemOrange).data
+        let zizoR = samplePhoto(named: "Zizo1_R.jpg", fallbackColor: .systemIndigo).data
+
+        return [
+            StagedImportPhoto(
+                filename: "CrystalBay_01_L.HEIC",
+                originalFormat: "HEIC",
+                jpegData: aminaL,
+                pixelWidth: 1600,
+                pixelHeight: 1200,
+                capturedAt: now.addingTimeInterval(-3600),
+                coordinate: TurtleCoordinate(latitude: -8.7142, longitude: 115.4581),
+                side: .left,
+                sideWasInferred: true,
+                pairStem: "CrystalBay_01"
+            ),
+            StagedImportPhoto(
+                filename: "CrystalBay_01_R.HEIC",
+                originalFormat: "HEIC",
+                jpegData: aminaR,
+                pixelWidth: 1600,
+                pixelHeight: 1200,
+                capturedAt: now.addingTimeInterval(-3540),
+                coordinate: TurtleCoordinate(latitude: -8.7142, longitude: 115.4581),
+                side: .right,
+                sideWasInferred: true,
+                pairStem: "CrystalBay_01"
+            ),
+            StagedImportPhoto(
+                filename: "Toyapakeh_Reef.png",
+                originalFormat: "PNG",
+                jpegData: aikaneL,
+                pixelWidth: 1280,
+                pixelHeight: 960,
+                capturedAt: now.addingTimeInterval(-7200),
+                coordinate: nil,
+                side: .left,
+                sideWasInferred: false,
+                pairStem: "Toyapakeh_Reef"
+            ),
+            StagedImportPhoto(
+                filename: "Mangrove_09_R.jpg",
+                originalFormat: "JPG",
+                jpegData: zizoR,
+                pixelWidth: 1400,
+                pixelHeight: 1050,
+                capturedAt: now.addingTimeInterval(-10800),
+                coordinate: TurtleCoordinate(latitude: -8.6725, longitude: 115.4612),
+                side: .right,
+                sideWasInferred: true,
+                pairStem: "Mangrove_09"
+            ),
+        ]
+    }
+
+    static func makeSampleCatalogImportRows() -> [StagedCatalogRow] {
+        let now = Date()
+        return [
+            StagedCatalogRow(
+                id: UUID(), rowNumber: 2, profileCode: "004201", name: "Kadek",
+                species: .green, sex: "female", firstSeenAt: now,
+                location: "Crystal Bay, Bali", coordinate: TurtleCoordinate(latitude: -8.7142, longitude: 115.4581),
+                condition: .healthy, leftPhotoFilename: "Kadek_L.heic", rightPhotoFilename: "Kadek_R.heic",
+                validationError: nil
+            ),
+            StagedCatalogRow(
+                id: UUID(), rowNumber: 3, profileCode: "004202", name: "Nusa",
+                species: .hawksbill, sex: "unknown", firstSeenAt: now,
+                location: "Toyapakeh, Bali", coordinate: TurtleCoordinate(latitude: -8.6850, longitude: 115.4790),
+                condition: .scarred, leftPhotoFilename: "Nusa_L.jpg", rightPhotoFilename: nil,
+                validationError: nil
+            ),
+            StagedCatalogRow(
+                id: UUID(), rowNumber: 4, profileCode: "BAD-ID", name: "Manta",
+                species: .oliveRidley, sex: "male", firstSeenAt: now,
+                location: "Sanur Reef", coordinate: nil,
+                condition: .healthy, leftPhotoFilename: nil, rightPhotoFilename: nil,
+                validationError: "Code must be 6 digits"
+            ),
+        ]
+    }
 }
 
 /// Interactive wrapper that boots a demo `AppStore` on the requested section inside `ContentView`.
@@ -432,6 +518,44 @@ struct PreviewDemoShell: View {
         ExportSheet(query: IndividualQuery(), resultCount: 45, onCancel: {}, onExport: { _ in })
     }
     .frame(width: 640, height: 600)
+    .preferredColorScheme(.light)
+}
+
+#Preview("11b · Import · Dropzone (HEIC / JPG / PNG / CSV / XLSX)") {
+    ZStack {
+        AdaColors.canvas
+        ImportSheetView(
+            store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork),
+            onDismiss: {}
+        )
+    }
+    .frame(width: 820, height: 640)
+    .preferredColorScheme(.light)
+}
+
+#Preview("11c · Import · Batch Photos (Paired L+R + HEIC)") {
+    ZStack {
+        AdaColors.canvas
+        ImportSheetView(
+            store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork),
+            initialPhotos: PreviewFixtures.makeSampleImportPhotos(),
+            onDismiss: {}
+        )
+    }
+    .frame(width: 820, height: 640)
+    .preferredColorScheme(.light)
+}
+
+#Preview("11d · Import · Spreadsheet Validation (CSV / XLSX)") {
+    ZStack {
+        AdaColors.canvas
+        ImportSheetView(
+            store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork),
+            initialCatalogRows: PreviewFixtures.makeSampleCatalogImportRows(),
+            onDismiss: {}
+        )
+    }
+    .frame(width: 820, height: 640)
     .preferredColorScheme(.light)
 }
 

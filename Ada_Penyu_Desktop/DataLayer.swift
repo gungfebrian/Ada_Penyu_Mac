@@ -996,6 +996,7 @@ final class DemoTurtleRepository: TurtleRepository {
     private var turtles: [Turtle]
     private var sightings: [Sighting]
     private var favoriteIDs: Set<String>
+    private var uploadedPhotos: [String: Data] = [:]
 
     var fullCatalogForAnalytics: [Turtle] {
         turtles.map(withFavorite)
@@ -1343,6 +1344,9 @@ final class DemoTurtleRepository: TurtleRepository {
     }
 
     func fetchPhotoData(pathOrURL: String) async throws -> Data {
+        if let stored = uploadedPhotos[pathOrURL] {
+            return stored
+        }
         if let direct = I3SSampleLibrary.loadImageData(named: pathOrURL) {
             return direct
         }
@@ -1435,6 +1439,54 @@ final class DemoTurtleRepository: TurtleRepository {
             }
         }
         return []
+    }
+
+    func createIndividual(_ draft: IndividualDraft) async throws -> Turtle {
+        try draft.validate()
+        let firstSeen = APIFormatters.display.string(from: draft.firstSeenAt)
+        let created = Turtle(
+            id: draft.id.uuidString,
+            species: TurtleSpecies(apiValue: draft.species),
+            location: "Imported",
+            lastSeen: firstSeen,
+            sightings: 1,
+            condition: .unknown,
+            firstRecorded: firstSeen,
+            isFavorite: false,
+            coordinate: nil,
+            backendID: draft.id,
+            leftPhotoURL: nil,
+            rightPhotoURL: nil,
+            name: draft.name,
+            profileCode: draft.profileCode
+        )
+        turtles.insert(created, at: 0)
+        return created
+    }
+
+    func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String {
+        let key = "demo-upload://\(individualID.uuidString)/\(side.rawValue).jpg"
+        uploadedPhotos[key] = imageData
+        if let idx = turtles.firstIndex(where: { $0.backendID == individualID || $0.id == individualID.uuidString }) {
+            let t = turtles[idx]
+            turtles[idx] = Turtle(
+                id: t.id,
+                species: t.species,
+                location: t.location,
+                lastSeen: t.lastSeen,
+                sightings: t.sightings,
+                condition: t.condition,
+                firstRecorded: t.firstRecorded,
+                isFavorite: t.isFavorite,
+                coordinate: t.coordinate,
+                backendID: t.backendID,
+                leftPhotoURL: side == .left ? key : t.leftPhotoURL,
+                rightPhotoURL: side == .right ? key : t.rightPhotoURL,
+                name: t.name,
+                profileCode: t.profileCode
+            )
+        }
+        return key
     }
 
     private func withFavorite(_ turtle: Turtle) -> Turtle {

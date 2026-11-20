@@ -92,6 +92,16 @@ struct NotSureWorkspaceView: View {
 
                 Spacer(minLength: 0)
 
+                if !store.escalatedNotSureCases.isEmpty {
+                    Button {
+                        store.exportNotSureQueue()
+                    } label: {
+                        Label("Export queue", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(NotSurePillButtonStyle(.subtle, height: 34))
+                    .help("Export Not Sure queue as JSON for another Mac")
+                }
+
                 Button(action: onOpenPractice) {
                     Label("Practice", systemImage: "graduationcap")
                 }

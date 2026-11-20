@@ -28,6 +28,7 @@ private struct SidebarToggleExclusionMarker: NSViewRepresentable {
 struct WorkspaceHeader: View {
     @ObservedObject var store: AppStore
     let title: String
+    var onImport: (() -> Void)? = nil
     let onExport: () -> Void
     var isSidebarCollapsed: Bool = false
     let onToggleSidebar: () -> Void
@@ -39,13 +40,22 @@ struct WorkspaceHeader: View {
             VStack(alignment: .leading, spacing: 16) { heading; HStack { Spacer(minLength: 0); controls } }
         }
         .padding(.horizontal, AdaLayout.pagePadding)
-        .padding(.top, 26).padding(.bottom, 28)
+        .padding(.top, 24).padding(.bottom, 18)
+    }
+
+    private var headerIcon: String {
+        switch store.activeSection {
+        case .individuals, .favorites, .scientistReview:
+            AppSection.individuals.icon
+        default:
+            store.activeSection.icon
+        }
     }
 
     private var heading: some View {
         HStack(spacing: 14) {
             Button(action: onToggleSidebar) {
-                Image(systemName: store.activeSection.icon)
+                Image(systemName: headerIcon)
                     .font(.system(size: 16))
                     .foregroundStyle(AdaColors.navy)
                     .frame(width: 38, height: 38)
@@ -120,7 +130,20 @@ struct WorkspaceHeader: View {
                 }
             }
             if store.activeSection != .map && store.activeSection != .settings && store.selectedTurtle == nil {
-                Button(action: onExport) { Label("Export report", systemImage: "arrow.up.arrow.down").font(.system(size: 12)) }
+                if let onImport {
+                    Button(action: onImport) {
+                        Label("Import", systemImage: "square.and.arrow.down")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(AdaColors.ink)
+                    .padding(.horizontal, 16)
+                    .frame(height: 34)
+                    .background(AdaColors.card, in: Capsule())
+                    .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+                    .buttonStyle(.plain)
+                    .help("Import HEIC, JPEG, PNG photos, folders, CSV, or XLSX")
+                }
+                Button(action: onExport) { Label("Export", systemImage: "square.and.arrow.up").font(.system(size: 12)) }
                     .buttonStyle(AdaPillButtonStyle())
             }
         }
@@ -132,14 +155,17 @@ struct ContextPill: View {
     let title: String
     let icon: String
     var chevron = false
+    var isActive = false
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 11))
-            Text(title).font(.system(size: 12)).lineLimit(1)
-            if chevron { Image(systemName: "chevron.down").font(.system(size: 8)) }
+        HStack(spacing: 8) {
+            Image(systemName: icon).font(.system(size: 11, weight: isActive ? .semibold : .regular))
+            Text(title).font(.system(size: 12, weight: isActive ? .semibold : .regular)).lineLimit(1)
+            if chevron { Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .semibold)).opacity(0.75) }
         }
-        .foregroundStyle(AdaColors.ink).padding(.horizontal, 16).frame(height: 36)
-        .background(.white, in: Capsule())
+        .foregroundStyle(isActive ? .white : AdaColors.ink)
+        .padding(.horizontal, 14).frame(height: 36)
+        .background(isActive ? AdaColors.navy : AdaColors.card, in: Capsule())
+        .overlay(Capsule().stroke(isActive ? AdaColors.navy : AdaColors.line, lineWidth: 1))
     }
 }
 
@@ -148,7 +174,7 @@ struct SpeciesPicker: View {
     var body: some View {
         ActionDropdown(items: [DropdownAction(title: "All species", selected: selection == nil, action: { selection = nil })] +
             TurtleSpecies.allCases.map { species in DropdownAction(title: species.rawValue, selected: selection == species, action: { selection = species }) }) {
-                ContextPill(title: selection?.rawValue ?? "All species", icon: "tortoise", chevron: true)
+                ContextPill(title: selection?.rawValue ?? "All species", icon: "tortoise", chevron: true, isActive: selection != nil)
             }
             .fixedSize().accessibilityLabel("Species filter").accessibilityValue(selection?.rawValue ?? "All species")
     }
@@ -236,8 +262,9 @@ struct ConditionPicker: View {
     var body: some View {
         ActionDropdown(items: [DropdownAction(title: "All conditions", selected: selection == nil, action: { selection = nil })] +
             TurtleCondition.allCases.map { condition in DropdownAction(title: condition.rawValue, selected: selection == condition, action: { selection = condition }) }) {
-                ContextPill(title: selection?.rawValue ?? "All conditions", icon: "line.3.horizontal.decrease", chevron: true)
+                ContextPill(title: selection?.rawValue ?? "All conditions", icon: "line.3.horizontal.decrease", chevron: true, isActive: selection != nil)
             }
+            .fixedSize()
             .accessibilityLabel("Condition filter").accessibilityValue(selection?.rawValue ?? "All conditions")
     }
 }
