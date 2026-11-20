@@ -115,14 +115,16 @@ enum PreviewFixtures {
 
     static func makeSampleNotSureCases() -> [EscalatedNotSureCase] {
         let queryLeft = samplePhoto(named: "Amina3_L.jpg", fallbackColor: .systemTeal)
+        let queryRightCompanion = samplePhoto(named: "Amina1_R.jpg", fallbackColor: .systemBlue)
         let refSurya = samplePhoto(named: "Aikane2_L.jpg", fallbackColor: .systemOrange)
         let refAmina = samplePhoto(named: "Amina1_L.jpg", fallbackColor: .systemGreen)
+        let refGhost = samplePhoto(named: "Ghost1_L.jpg", fallbackColor: .systemPurple)
 
         let case1 = EscalatedNotSureCase(
             title: "Crystal Bay · Sighting #S-2026-114",
             side: .left,
             photo: queryLeft,
-            companion: nil,
+            companion: queryRightCompanion,
             queryFingerprint: nil,
             queryROI: [],
             candidates: [
@@ -153,6 +155,21 @@ enum PreviewFixtures {
                     confidencePercent: 79,
                     photo: refAmina,
                     sampleImageName: "Amina1_L.jpg",
+                    fingerprint: nil,
+                    isBundledExample: true
+                ),
+                EscalatedNotSureCandidate(
+                    id: "preview-cand-ghost",
+                    rank: 3,
+                    name: "Turtle #014 · Ghost",
+                    profileCode: "PEN-CM-014",
+                    side: .left,
+                    sideMatches: true,
+                    dateText: "12 Jun 2026",
+                    location: "Manta Point",
+                    confidencePercent: 68,
+                    photo: refGhost,
+                    sampleImageName: "Ghost1_L.jpg",
                     fingerprint: nil,
                     isBundledExample: true
                 ),
@@ -294,7 +311,7 @@ struct PreviewDemoShell: View {
     .preferredColorScheme(.light)
 }
 
-#Preview("05 · Not Sure Queue · Case Detail") {
+#Preview("05 · Not Sure · Compare (Paired L/R)") {
     PreviewDemoShell(
         persona: .worldSuperNetwork,
         section: .scientistReview,
@@ -302,6 +319,36 @@ struct PreviewDemoShell: View {
         openFirstNotSureCase: true
     )
     .frame(width: 1440, height: 900)
+    .preferredColorScheme(.light)
+}
+
+#Preview("05b · Not Sure · Contours # (Zero .fgp)") {
+    NotSureWorkspaceView(
+        store: PreviewFixtures.makeDemoStore(
+            persona: .worldSuperNetwork,
+            section: .scientistReview,
+            withNotSureCases: true,
+            openFirstNotSureCase: true
+        ),
+        onOpenPractice: {},
+        initialStageMode: .contours
+    )
+    .frame(width: 1320, height: 840)
+    .preferredColorScheme(.light)
+}
+
+#Preview("05c · Not Sure · Align (3-Tap Warp)") {
+    NotSureWorkspaceView(
+        store: PreviewFixtures.makeDemoStore(
+            persona: .worldSuperNetwork,
+            section: .scientistReview,
+            withNotSureCases: true,
+            openFirstNotSureCase: true
+        ),
+        onOpenPractice: {},
+        initialStageMode: .align
+    )
+    .frame(width: 1320, height: 840)
     .preferredColorScheme(.light)
 }
 

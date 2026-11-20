@@ -420,7 +420,7 @@ final class AppStore: ObservableObject {
         try saveNotSureCase(item)
     }
 
-    func findNotSureCandidates(for id: UUID) async throws {
+    func findNotSureCandidates(for id: UUID, overridePhotoData: Data? = nil) async throws {
         guard let item = escalatedNotSureCases.first(where: { $0.id == id }) else {
             throw NotSureReviewError.caseUnavailable
         }
@@ -430,7 +430,7 @@ final class AppStore: ObservableObject {
         guard item.decision == .pending else { throw NotSureReviewError.alreadyReviewed }
         let generation = sessionGeneration
         let scope = notSureReviewScope
-        let result = try await matchPhoto(imageData: item.queryPhotoData, side: item.side, limit: 8)
+        let result = try await matchPhoto(imageData: overridePhotoData ?? item.queryPhotoData, side: item.side, limit: 8)
         var references: [EscalatedNotSureCandidate] = []
         for candidate in result.candidates where candidate.matchedPhotoSide == item.side {
             try Task.checkCancellation()
