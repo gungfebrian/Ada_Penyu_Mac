@@ -104,6 +104,7 @@ final class AppStore: ObservableObject {
     @Published var requestedEscalatedCaseID: UUID? = nil
     @Published private(set) var escalatedNotSureCases: [EscalatedNotSureCase] = []
     @Published private(set) var notSureQueueError: String?
+    @Published private(set) var isSyncingMobileQueue = false
     @Published var isReviewPracticePresented = false
     @Published var reviewNavigationTrigger = UUID()
     @Published private(set) var apiBaseURLString: String
@@ -129,7 +130,7 @@ final class AppStore: ObservableObject {
     private var keySettingsObservation: AnyCancellable?
     private var localizationObservation: AnyCancellable?
     private var contourPreferencesObservation: AnyCancellable?
-    private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
+    var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
     init(
         repository: TurtleRepository? = nil,
@@ -425,7 +426,138 @@ final class AppStore: ObservableObject {
         try saveNotSureCase(item)
     }
 
-    func findNotSureCandidates(for id: UUID, overridePhotoData: Data? = nil) async throws {
+    /// Applies a Not Sure verdict and, when confirming a match on a sighting synced from Mobile
+    /// (`sourceLogID != nil`), links the backend log (`PATCH /api/v2/logs/{id}` with v1 fallback).
+    func resolveNotSureCaseAndSyncBackend(_ id: UUID, action: NotSureReviewAction) async throws {
+        guard let before = escalatedNotSureCases.first(where: { $0.id == id }) else {
+            throw NotSureReviewError.caseUnavailable
+        }
+        try updateNotSureCase(id, action: action)
+
+        if case .recommend(let candidateID, let note) = action,
+           let logID = before.sourceLogID,
+           let turtleUUID = UUID(uuidString: candidateID),
+           canLoadRecords {
+            let matched = before.candidates.first(where: { $0.id == candidateID })
+            let confidence = matched.map { Double($0.confidencePercent) / 100.0 }
+            try await repository.resolvePendingSighting(
+                logID: logID,
+                turtleID: turtleUUID,
+                method: "manual",
+                confidence: confidence,
+                notes: note.isEmpty ? nil : note
+            )
+            statusMessage = "Confirmed match synced to sighting log"
+        }
+    }
+
+    /// Pulls unidentified Mobile "Waiting to Match / Match later" sightings (`identified_only=false`)
+    /// directly into the Desktop Not Sure review queue, deduplicating by `sourceLogID`.
+    @discardableResult
+    func syncMobilePendingSightings() async -> Int {
+        guard canLoadRecords, !isSyncingMobileQueue else { return 0 }
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        isSyncingMobileQueue = true
+        notSureQueueError = nil
+        defer {
+            if sessionGeneration == generation { isSyncingMobileQueue = false }
+        }
+
+        do {
+            let pending = try await repository.listPendingSightings(limit: 50)
+            guard sessionGeneration == generation, notSureReviewScope == scope else { return 0 }
+            let existingLogIDs = Set(escalatedNotSureCases.compactMap(\.sourceLogID))
+            var addedCount = 0
+
+            for sighting in pending where !existingLogIDs.contains(sighting.id) {
+                guard sessionGeneration == generation, !Task.isCancelled else { break }
+                guard let primaryPath = sighting.photoPaths.first else { continue }
+                guard let primaryData = try? await repository.fetchPhotoData(pathOrURL: primaryPath),
+                      NSImage(data: primaryData) != nil else {
+                    continue
+                }
+                var companionData: Data? = nil
+                if sighting.photoPaths.count >= 2,
+                   let secondData = try? await repository.fetchPhotoData(pathOrURL: sighting.photoPaths[1]),
+                   NSImage(data: secondData) != nil {
+                    companionData = secondData
+                }
+
+                let outcome: MatchSearchOutcome?
+                if let rightData = companionData {
+                    outcome = try? await matchPhotoPair(leftData: primaryData, rightData: rightData, limit: 6)
+                } else {
+                    outcome = try? await matchPhoto(imageData: primaryData, side: .left, limit: 6)
+                }
+                guard sessionGeneration == generation else { break }
+
+                var references: [EscalatedNotSureCandidate] = []
+                if let outcome {
+                    for cand in outcome.candidates {
+                        let path = cand.photoURL ?? "/api/v1/individuals/\(cand.id.uuidString)/photos/\(cand.matchedPhotoSide.rawValue)"
+                        let img = await loadPhoto(for: path)
+                        references.append(EscalatedNotSureCandidate(
+                            id: cand.id.uuidString,
+                            rank: cand.rank,
+                            name: cand.name,
+                            profileCode: cand.profileCode ?? "",
+                            side: cand.matchedPhotoSide,
+                            sideMatches: cand.matchedPhotoSide == .left || companionData != nil,
+                            dateText: cand.lastSeenDate ?? "",
+                            location: cand.lastSeenLocation ?? "",
+                            confidencePercent: cand.confidencePercent,
+                            photo: NotSureReviewPhoto(snapshot: img),
+                            sampleImageName: isDemoBypassActive ? (path as NSString).lastPathComponent : nil,
+                            fingerprint: nil,
+                            isBundledExample: isDemoBypassActive
+                        ))
+                    }
+                }
+
+                let titleLocation = sighting.locationName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = titleLocation.isEmpty ? "Mobile sighting" : titleLocation
+                var reviewCase = EscalatedNotSureCase(
+                    title: title,
+                    side: .left,
+                    photo: NotSureReviewPhoto(data: primaryData),
+                    companion: companionData.map { NotSureReviewPhoto(data: $0) },
+                    queryFingerprint: nil,
+                    queryROI: [],
+                    candidates: references,
+                    submittedBy: "Mobile Patrol",
+                    isExample: isDemoBypassActive,
+                    sourceLogID: sighting.id,
+                    createdAt: sighting.observedAt
+                )
+                if let note = sighting.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+                    try? reviewCase.apply(.saveNote(note))
+                }
+                try saveNotSureCase(reviewCase)
+                addedCount += 1
+            }
+
+            if sessionGeneration == generation {
+                if addedCount > 0 {
+                    statusMessage = "Synced \(addedCount) mobile sighting\(addedCount == 1 ? "" : "s") waiting to match"
+                } else {
+                    statusMessage = "Mobile queue is up to date"
+                }
+            }
+            return addedCount
+        } catch {
+            if sessionGeneration == generation, !(error is CancellationError) {
+                notSureQueueError = "Could not sync mobile pending sightings. \(error.localizedDescription)"
+            }
+            return 0
+        }
+    }
+
+    func findNotSureCandidates(
+        for id: UUID,
+        overridePhotoData: Data? = nil,
+        usePairedSide: Bool = false
+    ) async throws {
         guard let item = escalatedNotSureCases.first(where: { $0.id == id }) else {
             throw NotSureReviewError.caseUnavailable
         }
@@ -435,34 +567,95 @@ final class AppStore: ObservableObject {
         guard item.decision == .pending else { throw NotSureReviewError.alreadyReviewed }
         let generation = sessionGeneration
         let scope = notSureReviewScope
-        let result = try await matchPhoto(imageData: overridePhotoData ?? item.queryPhotoData, side: item.side, limit: 8)
+        let isHumanGuidedReMatch = overridePhotoData != nil || usePairedSide
+
+        let result: MatchSearchOutcome
+        if usePairedSide, let companionData = item.companion?.data {
+            let leftBytes = item.side == .left ? (overridePhotoData ?? item.queryPhotoData) : companionData
+            let rightBytes = item.side == .right ? (overridePhotoData ?? item.queryPhotoData) : companionData
+            result = try await matchPhotoPair(leftData: leftBytes, rightData: rightBytes, limit: 8)
+        } else {
+            result = try await matchPhoto(imageData: overridePhotoData ?? item.queryPhotoData, side: item.side, limit: 8)
+        }
+
         var references: [EscalatedNotSureCandidate] = []
-        for candidate in result.candidates where candidate.matchedPhotoSide == item.side {
+        for candidate in result.candidates where (usePairedSide || candidate.matchedPhotoSide == item.side) {
             try Task.checkCancellation()
             guard sessionGeneration == generation, notSureReviewScope == scope else { throw CancellationError() }
-            let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.id.uuidString)/photos/\(item.side.rawValue)"
+            let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.id.uuidString)/photos/\(candidate.matchedPhotoSide.rawValue)"
             let image = await loadPhoto(for: path)
-            references.append(EscalatedNotSureCandidate(id: candidate.id.uuidString, rank: candidate.rank,
-                name: candidate.name, profileCode: candidate.profileCode ?? "",
-                side: candidate.matchedPhotoSide, sideMatches: true, dateText: candidate.lastSeenDate ?? "",
-                location: candidate.lastSeenLocation ?? "", confidencePercent: candidate.confidencePercent,
-                photo: NotSureReviewPhoto(snapshot: image), sampleImageName: nil, fingerprint: nil, isBundledExample: false))
+            references.append(EscalatedNotSureCandidate(
+                id: candidate.id.uuidString,
+                rank: candidate.rank,
+                name: candidate.name,
+                profileCode: candidate.profileCode ?? "",
+                side: candidate.matchedPhotoSide,
+                sideMatches: candidate.matchedPhotoSide == item.side || usePairedSide,
+                dateText: candidate.lastSeenDate ?? "",
+                location: candidate.lastSeenLocation ?? "",
+                confidencePercent: candidate.confidencePercent,
+                photo: NotSureReviewPhoto(snapshot: image),
+                sampleImageName: nil,
+                fingerprint: nil,
+                isBundledExample: false
+            ))
         }
         try Task.checkCancellation()
         guard sessionGeneration == generation, notSureReviewScope == scope else { throw CancellationError() }
         guard var updated = escalatedNotSureCases.first(where: { $0.id == id }), updated.decision == .pending else {
             throw NotSureReviewError.caseUnavailable
         }
-        // Preserve the exact reference already reviewed, and fill any missing photo from this search.
-        var merged = updated.candidates
-        for reference in references {
-            if let index = merged.firstIndex(where: { $0.id == reference.id }) {
-                if merged[index].image == nil { merged[index] = reference }
-            } else {
-                merged.append(reference)
+
+        if isHumanGuidedReMatch {
+            // Compute honest before -> after rank & confidence deltas and refresh candidate ordering.
+            let oldByID = Dictionary(uniqueKeysWithValues: updated.candidates.map { ($0.id, $0) })
+            var deltas: [String: CandidateReMatchDelta] = [:]
+            var refreshed: [EscalatedNotSureCandidate] = []
+            var seenIDs = Set<String>()
+
+            for reference in references {
+                seenIDs.insert(reference.id)
+                let prev = oldByID[reference.id]
+                let photo = reference.photo ?? prev?.photo
+                refreshed.append(EscalatedNotSureCandidate(
+                    id: reference.id,
+                    rank: reference.rank,
+                    name: reference.name,
+                    profileCode: reference.profileCode,
+                    side: reference.side,
+                    sideMatches: reference.sideMatches,
+                    dateText: reference.dateText,
+                    location: reference.location,
+                    confidencePercent: reference.confidencePercent,
+                    photo: photo,
+                    sampleImageName: reference.sampleImageName,
+                    fingerprint: prev?.fingerprint,
+                    isBundledExample: reference.isBundledExample
+                ))
+                deltas[reference.id] = CandidateReMatchDelta(
+                    previousRank: prev?.rank,
+                    newRank: reference.rank,
+                    previousConfidence: prev?.confidencePercent,
+                    newConfidence: reference.confidencePercent
+                )
             }
+            // Keep any previously reviewed or rejected candidates that fell out of top-8 at the tail.
+            for existing in updated.candidates where !seenIDs.contains(existing.id) {
+                refreshed.append(existing)
+            }
+            updated.candidates = refreshed
+            updated.reMatchDeltasByCandidateID = deltas.isEmpty ? nil : deltas
+        } else {
+            var merged = updated.candidates
+            for reference in references {
+                if let index = merged.firstIndex(where: { $0.id == reference.id }) {
+                    if merged[index].image == nil { merged[index] = reference }
+                } else {
+                    merged.append(reference)
+                }
+            }
+            updated.candidates = merged
         }
-        updated.candidates = merged
         try saveNotSureCase(updated)
     }
 
@@ -576,6 +769,7 @@ final class AppStore: ObservableObject {
         requestedEscalatedCaseID = nil
         loadedReviewScope = nil
         notSureQueueError = nil
+        isSyncingMobileQueue = false
         isReviewPracticePresented = false
         isLoading = false
         isExporting = false

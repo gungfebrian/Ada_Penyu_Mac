@@ -77,11 +77,11 @@ struct NotSureWorkspaceView: View {
         }
     }
 
-    // MARK: - Inbox (Direct, Minimal Text, FigCraft Cards)
+    // MARK: - Inbox (Direct, Minimal Text, FigCraft Cards + Mobile Queue Sync)
 
     private var inbox: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 HStack(spacing: 3) {
                     queuePill("Pending", count: pendingCount, reviewed: false)
                     queuePill("Reviewed", count: reviewedCount, reviewed: true)
@@ -91,6 +91,24 @@ struct NotSureWorkspaceView: View {
                 .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
 
                 Spacer(minLength: 0)
+
+                if store.canLoadRecords {
+                    Button {
+                        Task { await store.syncMobilePendingSightings() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if store.isSyncingMobileQueue {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "iphone.and.arrow.forward")
+                            }
+                            Text(store.isSyncingMobileQueue ? "Syncing…" : "Sync mobile")
+                        }
+                    }
+                    .buttonStyle(NotSurePillButtonStyle(.secondary, height: 34))
+                    .disabled(store.isSyncingMobileQueue)
+                    .help("Pull unidentified sightings marked 'Match later' on Mobile")
+                }
 
                 if !store.escalatedNotSureCases.isEmpty {
                     Button {
@@ -164,8 +182,16 @@ struct NotSureWorkspaceView: View {
             Text(showsReviewed ? "No reviewed cases" : "No pending cases")
                 .font(.system(size: 16, weight: .semibold))
             if !showsReviewed {
-                Button("Open Photo ID") { store.activeSection = .identification }
-                    .buttonStyle(AdaPillButtonStyle())
+                HStack(spacing: 10) {
+                    if store.canLoadRecords {
+                        Button("Sync mobile") {
+                            Task { await store.syncMobilePendingSightings() }
+                        }
+                        .buttonStyle(AdaPillButtonStyle(secondary: true))
+                    }
+                    Button("Open Photo ID") { store.activeSection = .identification }
+                        .buttonStyle(AdaPillButtonStyle())
+                }
             }
         }
         .frame(maxWidth: .infinity, minHeight: 220)
@@ -176,7 +202,7 @@ struct NotSureWorkspaceView: View {
         let cases = visibleCases
         return LazyVStack(spacing: 0) {
             ForEach(cases) { item in
-                let savedAnchors = item.verifiedPairsByCandidateID?.values.map(\.count).max() ?? 0
+                let savedAnchors = item.savedAnchorMaxCount
                 let topScore = item.candidates.filter { !item.rejectedCandidateIDs.contains($0.id) }.first?.confidencePercent
                 Button {
                     sessionCaseIDs = cases.map(\.id)
@@ -195,6 +221,13 @@ struct NotSureWorkspaceView: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .lineLimit(1)
                             HStack(spacing: 6) {
+                                if item.isFromMobileQueue {
+                                    NotSureMetaTag(
+                                        title: "Mobile",
+                                        tint: AdaColors.accent,
+                                        background: AdaColors.accentSoft
+                                    )
+                                }
                                 NotSureMetaTag(
                                     title: item.companionImage == nil ? item.side.shortLabel : "Left + Right",
                                     tint: AdaColors.navy,
@@ -209,7 +242,7 @@ struct NotSureWorkspaceView: View {
                                 }
                                 if savedAnchors >= 3 {
                                     NotSureMetaTag(
-                                        title: "\(savedAnchors) anchors",
+                                        title: "\(savedAnchors) pins",
                                         tint: AdaColors.green,
                                         background: AdaColors.green.opacity(0.11)
                                     )
@@ -256,9 +289,23 @@ struct NotSureWorkspaceView: View {
     }
 }
 
-// MARK: - Case Detail (Obvious · Easy · Possible | Zero Page Scroll)
+// MARK: - Case Detail (Obvious · Easy · Possible | Zero Page Scroll | Real CV + Pixel Warp)
 
 private struct NotSureCaseDetail: View {
+    private enum ComparePresentation: String, CaseIterable, Identifiable {
+        case sideBySide = "Side by side"
+        case curtain = "Curtain"
+        case blend = "Blend"
+        var id: Self { self }
+    }
+
+    private enum AlignPresentation: String, CaseIterable, Identifiable {
+        case pins = "Pins"
+        case curtain = "Curtain"
+        case blend = "Blend"
+        var id: Self { self }
+    }
+
     private enum DecisionOutcome: Identifiable {
         case sameTurtle(id: String, name: String, image: NSImage?)
         case newTurtle
@@ -315,9 +362,9 @@ private struct NotSureCaseDetail: View {
         var reasonChips: [String] {
             switch self {
             case .sameTurtle:
-                ["Scales match", "Overlay aligned", "Both sides match"]
+                ["Warped scales lock", "AI inliers match", "Both sides match"]
             case .newTurtle:
-                ["Different pattern", "Contours diverge", "Not in gallery"]
+                ["Different pattern", "Warped sutures diverge", "Not in gallery"]
             case .needsPhoto:
                 ["Glare / blur", "Extreme angle", "Opposite side"]
             }
@@ -339,10 +386,15 @@ private struct NotSureCaseDetail: View {
         let roiHash: Int
     }
 
-    private struct ExtractedContours: Equatable {
-        let roi: [ScalePoint]
-        let patterns: [DetectedScalePattern]
-        let mesh: ScaleSutureMesh
+    private struct AIAnnotationKey: Hashable {
+        let candidateID: String
+        let side: TurtlePhotoSide
+    }
+
+    private struct WarpCacheKey: Hashable {
+        let queryID: ObjectIdentifier
+        let candidateID: ObjectIdentifier
+        let anchorsSignature: Int
     }
 
     @ObservedObject var store: AppStore
@@ -359,8 +411,9 @@ private struct NotSureCaseDetail: View {
     @State private var showsRejected = false
     @State private var showingCompanionSide = false
 
-    // Visual Compare / Overlay & Synced Zoom-Pan
-    @State private var isOverlayActive = false
+    // Compare Mode: Side by side / Curtain / Blend + Live Backend XFeat/LighterGlue RANSAC
+    @State private var comparePresentation: ComparePresentation = .sideBySide
+    @State private var curtainPosition: CGFloat = 0.50
     @State private var overlayOpacity: Double = 0.55
     @State private var isBlinking = false
     @State private var blinkShowsCandidate = false
@@ -368,14 +421,29 @@ private struct NotSureCaseDetail: View {
     @State private var panOffset: CGSize = .zero
     @State private var dragDelta: CGSize = .zero
 
-    // Zero-.fgp Numbered Contours & 3-Tap Human Alignment
-    @State private var contourCache: [ContourCacheKey: ExtractedContours] = [:]
+    // Backend XFeat/LighterGlue Correspondences + Geometric Consensus (RANSAC)
+    @State private var showsAIMatches = false
+    @State private var showsAIOutliers = false
+    @State private var aiAnnotationsCache: [AIAnnotationKey: [OverlayAnnotationItem]] = [:]
+    @State private var aiConsensusCache: [AIAnnotationKey: GeometricConsensusReport] = [:]
+    @State private var isLoadingAIAnnotations = false
+    @State private var selectedAIFeatureID: String?
+
+    // Upgraded Ocean-Masked + Eyeball-Free Contours & Interactive Manual Editing
+    @State private var contourCache: [ContourCacheKey: ExtractedScaleAnalysis] = [:]
     @State private var isExtractingContours = false
     @State private var selectedQueryScale: Int?
     @State private var selectedCandidateScale: Int?
-    @State private var pendingQueryAnchor: Int?
-    @State private var pairsByCandidateID: [String: [PatternPairLink]]
-    @State private var alignShowsOverlay = false
+    @State private var isAddingManualLandmark = false
+    @State private var showsSutureMesh = false
+
+    // True Human-Assisted Registration (Free Pixel + Scale Pins + CoreImage Pixel Warp)
+    @State private var anchorsByCandidateID: [String: [ManualAnchorPair]]
+    @State private var pendingQueryPin: (point: ScalePoint, scaleNumber: Int?)?
+    @State private var alignPresentation: AlignPresentation = .pins
+    @State private var showWarpedContoursOnPhoto = false
+    @State private var warpedPhotoCache: [WarpCacheKey: NSImage] = [:]
+    @State private var isRenderingWarp = false
 
     // Progressive Disclosure Options (Possible — inside single `⋯` popover)
     @State private var showsOptionsPopover = false
@@ -389,6 +457,7 @@ private struct NotSureCaseDetail: View {
     @State private var inlineError: String?
     @State private var searchRequest: UUID?
     @State private var isSearching = false
+    @State private var isSavingVerdict = false
     @State private var confirmation: DecisionOutcome?
     @State private var selectedChip = ""
     @State private var confirmationNote = ""
@@ -414,15 +483,21 @@ private struct NotSureCaseDetail: View {
         self.onNext = onNext
         self.onBack = onBack
         self._stageMode = State(initialValue: initialStageMode)
-        self._pairsByCandidateID = State(initialValue: item.verifiedPairsByCandidateID ?? [:])
+        self._anchorsByCandidateID = State(initialValue: item.manualAnchorsByCandidateID ?? [:])
         self._customQueryROI = State(initialValue: item.queryROI.count >= 3 ? item.queryROI : nil)
     }
 
     // MARK: Derived Properties
 
     private var isPending: Bool { item.decision == .pending }
+
     private var liveSearchAvailable: Bool {
         isPending && store.isAuthenticated && !store.isDemoBypassActive && !item.isExample
+    }
+
+    private var aiAnnotationsAvailable: Bool {
+        guard let cand = selectedCandidate, UUID(uuidString: cand.id) != nil else { return false }
+        return store.canLoadRecords
     }
 
     private var availableCandidates: [EscalatedNotSureCandidate] {
@@ -451,6 +526,10 @@ private struct NotSureCaseDetail: View {
 
     private var displayedQueryImage: NSImage? {
         showingCompanionSide && item.companionImage != nil ? item.companionImage : item.queryImage
+    }
+
+    private var displayedQueryPhotoData: Data {
+        showingCompanionSide && item.companion != nil ? (item.companion?.data ?? item.queryPhotoData) : item.queryPhotoData
     }
 
     private var detailBucket: Int { Int((detailSensitivity * 100).rounded()) }
@@ -485,23 +564,70 @@ private struct NotSureCaseDetail: View {
         )
     }
 
-    private var queryContours: ExtractedContours? { queryCacheKey.flatMap { contourCache[$0] } }
-    private var candidateContours: ExtractedContours? { candidateCacheKey.flatMap { contourCache[$0] } }
+    private var queryAnalysis: ExtractedScaleAnalysis? { queryCacheKey.flatMap { contourCache[$0] } }
+    private var candidateAnalysis: ExtractedScaleAnalysis? { candidateCacheKey.flatMap { contourCache[$0] } }
 
-    private var activePairs: [PatternPairLink] {
-        guard let cand = selectedCandidate else { return [] }
-        return pairsByCandidateID[cand.id] ?? []
+    private var excludedQueryScales: Set<Int> {
+        showingCompanionSide ? [] : (item.excludedQueryScaleNumbers ?? [])
     }
 
-    private var alignmentCheck: NotSureAlignmentCheck? {
-        guard let q = queryContours, let c = candidateContours else { return nil }
-        return NotSureAlignmentEvaluator.evaluate(
-            query: q.patterns,
-            candidate: c.patterns,
-            pairs: activePairs,
-            queryROI: q.roi,
-            candidateROI: c.roi
+    private var customQueryLandmarks: [ManualScaleLandmark] {
+        showingCompanionSide ? [] : (item.customQueryLandmarks ?? [])
+    }
+
+    private var visibleQueryPatterns: [DetectedScalePattern] {
+        (queryAnalysis?.patterns ?? []).filter { !excludedQueryScales.contains($0.number) }
+    }
+
+    private var visibleCandidatePatterns: [DetectedScalePattern] {
+        candidateAnalysis?.patterns ?? []
+    }
+
+    private var activeAIKey: AIAnnotationKey? {
+        guard let cand = selectedCandidate else { return nil }
+        return AIAnnotationKey(candidateID: cand.id, side: activeSightingSide)
+    }
+
+    private var activeAIAnnotations: [OverlayAnnotationItem] {
+        activeAIKey.flatMap { aiAnnotationsCache[$0] } ?? []
+    }
+
+    private var activeConsensus: GeometricConsensusReport? {
+        activeAIKey.flatMap { aiConsensusCache[$0] }
+    }
+
+    private var activeAnchors: [ManualAnchorPair] {
+        guard let cand = selectedCandidate else { return [] }
+        return anchorsByCandidateID[cand.id] ?? []
+    }
+
+    private var alignmentResult: HumanAssistedAlignmentResult {
+        HumanAssistedAlignmentEvaluator.evaluate(
+            anchors: activeAnchors,
+            queryPatterns: visibleQueryPatterns
         )
+    }
+
+    private var activeWarpKey: WarpCacheKey? {
+        guard alignmentResult.isReadyForWarp,
+              let qImg = displayedQueryImage,
+              let cImg = selectedCandidate?.image else { return nil }
+        var hasher = Hasher()
+        for a in activeAnchors {
+            hasher.combine(Int((a.queryPoint.x * 2000).rounded()))
+            hasher.combine(Int((a.queryPoint.y * 2000).rounded()))
+            hasher.combine(Int((a.candidatePoint.x * 2000).rounded()))
+            hasher.combine(Int((a.candidatePoint.y * 2000).rounded()))
+        }
+        return WarpCacheKey(
+            queryID: ObjectIdentifier(qImg),
+            candidateID: ObjectIdentifier(cImg),
+            anchorsSignature: hasher.finalize()
+        )
+    }
+
+    private var warpedQueryImage: NSImage? {
+        activeWarpKey.flatMap { warpedPhotoCache[$0] }
     }
 
     private var contourExtractionTrigger: String {
@@ -509,17 +635,34 @@ private struct NotSureCaseDetail: View {
         return "\(stageMode.rawValue)|\(queryCacheKey?.hashValue ?? 0)|\(candidateCacheKey?.hashValue ?? 0)"
     }
 
+    private var aiLoadTrigger: String {
+        guard showsAIMatches, let key = activeAIKey else { return "off" }
+        return "\(key.candidateID)|\(key.side.rawValue)"
+    }
+
     private var canConfirmSameTurtle: Bool {
-        guard isPending, !isSearching, let selectedCandidate else { return false }
+        guard isPending, !isSearching, !isSavingVerdict, let selectedCandidate else { return false }
         return item.canRecommend(selectedCandidate)
     }
 
     private var hasAdvancedOverrides: Bool {
-        linesOnly || detailBucket != 48 || customQueryROI != nil
+        linesOnly || showsSutureMesh || showsAIOutliers || detailBucket != 48 || customQueryROI != nil
     }
 
     private var effectiveOverlayAlpha: Double {
         isBlinking ? (blinkShowsCandidate ? 1.0 : 0.0) : overlayOpacity
+    }
+
+    /// Number of RANSAC AI inliers supporting a specific query scale polygon (for real AI↔Scale corroboration).
+    private func aiSupportCount(forQueryScale pattern: DetectedScalePattern) -> Int {
+        guard let consensus = activeConsensus, consensus.inlierCount > 0 else { return 0 }
+        return activeAIAnnotations.reduce(0) { acc, ann in
+            guard consensus.inlierFeatureIDs.contains(ann.featureID) else { return acc }
+            let qp = ScalePoint(x: ann.query.x, y: ann.query.y)
+            let hit = ScalePhotoReview.contains(qp, polygon: pattern.polygon)
+                || hypot(qp.x - pattern.centroid.x, qp.y - pattern.centroid.y) <= 0.028
+            return acc + (hit ? 1 : 0)
+        }
     }
 
     // MARK: Body
@@ -531,7 +674,7 @@ private struct NotSureCaseDetail: View {
                 stageContainer
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 candidateRail
-                    .frame(width: 268)
+                    .frame(width: 274)
                     .frame(maxHeight: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -564,37 +707,49 @@ private struct NotSureCaseDetail: View {
             guard stageMode != .compare else { return }
             await extractVisibleContours()
         }
+        .task(id: aiLoadTrigger) {
+            guard showsAIMatches else { return }
+            await loadAIAnnotationsForActiveCandidate()
+        }
+        .task(id: activeWarpKey) {
+            await renderWarpedPhotoIfNeeded()
+        }
         .task(id: searchRequest) {
             guard searchRequest != nil else { return }
-            await runLiveSearch(overridePhotoData: nil)
+            await runLiveSearch(overridePhotoData: nil, usePairedSide: false)
         }
         .task(id: isBlinking) {
             guard isBlinking else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(620))
+                try? await Task.sleep(for: .milliseconds(600))
                 guard !Task.isCancelled else { break }
-                withAnimation(.easeInOut(duration: 0.12)) { blinkShowsCandidate.toggle() }
+                withAnimation(.easeInOut(duration: 0.10)) { blinkShowsCandidate.toggle() }
             }
         }
         .onChange(of: selectedCandidate?.id) { _, _ in
             selectedCandidateScale = nil
-            pendingQueryAnchor = nil
-            if activePairs.count < 3 { alignShowsOverlay = false }
+            pendingQueryPin = nil
+            selectedAIFeatureID = nil
+            if activeAnchors.count < 3 { alignPresentation = .pins }
             if selectedCandidate?.image == nil { isBlinking = false }
+            migrateLegacyPairsIntoAnchorsIfNeeded()
         }
         .onChange(of: stageMode) { _, mode in
             isBlinking = false
-            pendingQueryAnchor = nil
-            if mode == .align, activePairs.count >= 3 {
-                alignShowsOverlay = true
-            } else if mode != .align {
-                alignShowsOverlay = false
+            pendingQueryPin = nil
+            isAddingManualLandmark = false
+            if mode == .align {
+                migrateLegacyPairsIntoAnchorsIfNeeded()
+                if alignmentResult.isReadyForWarp && alignPresentation == .pins {
+                    alignPresentation = .curtain
+                }
             }
         }
         .sheet(item: $confirmation) { verdictSheet(for: $0) }
         .sheet(isPresented: $showsCropSheet) {
             NotSureHeadCropSheet(
                 image: item.queryImage,
+                hasCompanionSide: item.companionImage != nil,
                 initialRect: initialCropRect(),
                 liveSearchAvailable: liveSearchAvailable,
                 isSearching: isCropResearching,
@@ -602,8 +757,8 @@ private struct NotSureCaseDetail: View {
                     applyLocalCropROI(rect)
                     showsCropSheet = false
                 },
-                onCropAndResearch: { rect in
-                    Task { await runCroppedLiveSearch(rect: rect) }
+                onCropAndResearch: { rect, rotationDeg, usePair in
+                    Task { await runCroppedLiveSearch(rect: rect, rotationDegrees: rotationDeg, usePairedSide: usePair) }
                 },
                 onCancel: { showsCropSheet = false }
             )
@@ -624,6 +779,10 @@ private struct NotSureCaseDetail: View {
                 .foregroundStyle(AdaColors.ink)
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
+
+            if item.isFromMobileQueue {
+                NotSureMetaTag(title: "Mobile", tint: AdaColors.accent, background: AdaColors.accentSoft)
+            }
 
             if item.companionImage != nil {
                 pairedSideToggle
@@ -656,7 +815,8 @@ private struct NotSureCaseDetail: View {
                     withAnimation(.easeOut(duration: 0.14)) {
                         showingCompanionSide = (side != item.side)
                         selectedQueryScale = nil
-                        pendingQueryAnchor = nil
+                        pendingQueryPin = nil
+                        selectedAIFeatureID = nil
                     }
                 } label: {
                     Text(side.shortLabel)
@@ -724,7 +884,17 @@ private struct NotSureCaseDetail: View {
     }
 
     private var optionsPopover: some View {
-        AdaPopupCardSurface(width: 248, padding: 10) {
+        AdaPopupCardSurface(width: 262, padding: 10) {
+            AdaPopupRow(
+                title: "Keratin suture mesh",
+                icon: "square.grid.3x3",
+                badge: showsSutureMesh ? "On" : "Off",
+                isSelected: showsSutureMesh
+            ) {
+                showsSutureMesh.toggle()
+                if showsSutureMesh && stageMode == .compare { stageMode = .contours }
+            }
+
             AdaPopupRow(
                 title: "Lines only",
                 icon: "scribble.variable",
@@ -733,6 +903,16 @@ private struct NotSureCaseDetail: View {
             ) {
                 linesOnly.toggle()
                 if linesOnly && stageMode == .compare { stageMode = .contours }
+            }
+
+            AdaPopupRow(
+                title: "Show AI outliers",
+                icon: "exclamationmark.triangle",
+                badge: showsAIOutliers ? "On" : "Off",
+                isSelected: showsAIOutliers
+            ) {
+                showsAIOutliers.toggle()
+                if showsAIOutliers && !showsAIMatches { showsAIMatches = true }
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -755,8 +935,8 @@ private struct NotSureCaseDetail: View {
             Divider().padding(.vertical, 4)
 
             AdaPopupRow(
-                title: liveSearchAvailable ? "Crop head & Re-search" : "Crop head area",
-                icon: "crop",
+                title: liveSearchAvailable ? "Crop, Tilt & Re-match" : "Crop head area",
+                icon: "crop.rotate",
                 badge: customQueryROI != nil ? "Active" : nil,
                 isSelected: customQueryROI != nil,
                 isDisabled: !isPending || item.queryImage == nil
@@ -768,6 +948,8 @@ private struct NotSureCaseDetail: View {
             if hasAdvancedOverrides {
                 AdaPopupRow(title: "Reset tools", icon: "arrow.counterclockwise", isSubdued: true) {
                     linesOnly = false
+                    showsSutureMesh = false
+                    showsAIOutliers = false
                     detailSensitivity = 0.48
                     customQueryROI = nil
                     showsOptionsPopover = false
@@ -822,7 +1004,7 @@ private struct NotSureCaseDetail: View {
     }
 
     private var stageToolbar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             switch stageMode {
             case .compare:
                 compareControls
@@ -834,11 +1016,11 @@ private struct NotSureCaseDetail: View {
 
             Spacer(minLength: 6)
 
-            if isExtractingContours {
+            if isExtractingContours || isLoadingAIAnnotations || isRenderingWarp {
                 ProgressView()
                     .controlSize(.mini)
                     .tint(.white)
-                    .accessibilityLabel("Extracting scale contours")
+                    .accessibilityLabel("Processing visual alignment")
             }
 
             zoomControls
@@ -847,100 +1029,244 @@ private struct NotSureCaseDetail: View {
         .frame(height: 44)
     }
 
+    // MARK: Compare Mode Controls (Side by Side / Curtain / Blend + Real XFeat RANSAC)
+
     @ViewBuilder
     private var compareControls: some View {
         HStack(spacing: 2) {
-            darkModeChip("Side by side", active: !isOverlayActive) {
-                withAnimation(.easeOut(duration: 0.14)) {
-                    isOverlayActive = false
-                    isBlinking = false
-                }
-            }
-            darkModeChip("Blink / Overlay", active: isOverlayActive) {
-                withAnimation(.easeOut(duration: 0.14)) {
-                    isOverlayActive = true
+            ForEach(ComparePresentation.allCases) { mode in
+                darkModeChip(mode.rawValue, active: comparePresentation == mode) {
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        comparePresentation = mode
+                        if mode != .blend { isBlinking = false }
+                    }
                 }
             }
         }
         .padding(3)
         .background(Self.stageChipBg, in: Capsule())
 
-        if isOverlayActive, selectedCandidate?.image != nil {
+        if comparePresentation == .blend, selectedCandidate?.image != nil {
             blinkButton
             opacitySlider(leftLabel: "S", rightLabel: "C")
         }
+
+        if comparePresentation == .sideBySide, aiAnnotationsAvailable {
+            Button {
+                withAnimation(.easeOut(duration: 0.14)) {
+                    showsAIMatches.toggle()
+                    if !showsAIMatches { selectedAIFeatureID = nil }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10.5, weight: .semibold))
+                    Text("AI Matches")
+                        .font(.system(size: 11.5, weight: .semibold))
+                }
+                .foregroundStyle(showsAIMatches ? Self.stageDark : .white)
+                .padding(.horizontal, 11)
+                .frame(height: 28)
+                .background(showsAIMatches ? Color.cyan : Self.stageChipBg, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Load XFeat/LighterGlue correspondences filtered by RANSAC geometric consensus")
+
+            if showsAIMatches, let consensus = activeConsensus {
+                let toneColor: Color = {
+                    switch consensus.strength {
+                    case .strong: AdaColors.green
+                    case .moderate: .cyan
+                    case .weak, .insufficient: AdaColors.orange
+                    }
+                }()
+                darkInfoPill(consensus.shortBadgeText, accent: toneColor)
+
+                if consensus.canAutoSeedWarp {
+                    Button {
+                        seedAlignmentFromConsensus(consensus, switchToCurtain: true)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Warp photo")
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Self.stageDark)
+                        .padding(.horizontal, 11)
+                        .frame(height: 28)
+                        .background(Color.white, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Seed 4 RANSAC inliers and warp the real sighting photo onto the candidate")
+                }
+            }
+        }
     }
+
+    // MARK: Contours # Mode Controls (Interactive Real Annotation Editing)
 
     @ViewBuilder
     private var contourControls: some View {
-        if let qNum = selectedQueryScale,
-           let qPat = queryContours?.patterns.first(where: { $0.number == qNum }) {
-            darkInfoPill("S #\(qPat.number) · \(qPat.vertexCount)-sided", accent: .cyan)
+        Button {
+            withAnimation(.easeOut(duration: 0.14)) {
+                isAddingManualLandmark.toggle()
+            }
+        } label: {
+            Label(isAddingManualLandmark ? "Click cheek…" : "Mark scale", systemImage: isAddingManualLandmark ? "mappin.and.ellipse" : "plus.circle")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(isAddingManualLandmark ? Self.stageDark : .white)
+                .padding(.horizontal, 11)
+                .frame(height: 28)
+                .background(isAddingManualLandmark ? Color.cyan : Self.stageChipBg, in: Capsule())
         }
+        .buttonStyle(.plain)
+        .disabled(!isPending || showingCompanionSide)
+        .help("Click anywhere on the sighting photo to annotate a scale missed under glare")
+
+        if let qNum = selectedQueryScale,
+           let qPat = visibleQueryPatterns.first(where: { $0.number == qNum }) {
+            let hits = aiSupportCount(forQueryScale: qPat)
+            let label = hits > 0
+                ? "S #\(qPat.number) · \(qPat.vertexCount)-sided · \(hits) AI"
+                : "S #\(qPat.number) · \(qPat.vertexCount)-sided"
+            darkInfoPill(label, accent: .cyan)
+
+            if isPending && !showingCompanionSide {
+                Button {
+                    excludeQueryScale(qPat.number)
+                } label: {
+                    Label("Hide false", systemImage: "eye.slash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AdaColors.orange)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(AdaColors.orange.opacity(0.18), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Exclude false-positive scale contour from this case")
+            }
+        }
+
         if let cNum = selectedCandidateScale,
-           let cPat = candidateContours?.patterns.first(where: { $0.number == cNum }) {
+           let cPat = visibleCandidatePatterns.first(where: { $0.number == cNum }) {
             darkInfoPill("C #\(cPat.number) · \(cPat.vertexCount)-sided", accent: AdaColors.orange)
         }
-        if selectedQueryScale == nil && selectedCandidateScale == nil {
-            Text("Tap any numbered scale to inspect shape")
+
+        if !excludedQueryScales.isEmpty || !customQueryLandmarks.isEmpty {
+            Button {
+                _ = perform(.clearManualScaleEdits)
+                selectedQueryScale = nil
+            } label: {
+                Text("Reset edits (\(excludedQueryScales.count + customQueryLandmarks.count))")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.82))
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(Self.stageChipBg, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        } else if selectedQueryScale == nil && selectedCandidateScale == nil && !isAddingManualLandmark {
+            Text("Click any scale to inspect · Right-click to exclude")
                 .font(.system(size: 11.5))
-                .foregroundStyle(Color.white.opacity(0.64))
+                .foregroundStyle(Color.white.opacity(0.62))
                 .lineLimit(1)
         }
     }
 
+    // MARK: Align Mode Controls (True Pixel-Warped Human-Assisted Registration)
+
     @ViewBuilder
     private var alignControls: some View {
-        let count = activePairs.count
-        let check = alignmentCheck
+        let count = activeAnchors.count
+        let result = alignmentResult
 
-        // 3 progress dots + concise status (NEVER a fake centroid "Strong fit %" score!)
         HStack(spacing: 7) {
-            HStack(spacing: 4) {
-                ForEach(0..<3, id: \.self) { idx in
+            HStack(spacing: 3.5) {
+                ForEach(0..<4, id: \.self) { idx in
                     Circle()
-                        .fill(idx < count ? Color.cyan : Color.white.opacity(0.24))
-                        .frame(width: 7, height: 7)
+                        .fill(idx < count ? (idx == 3 ? AdaColors.green : Color.cyan) : Color.white.opacity(0.24))
+                        .frame(width: 6.5, height: 6.5)
                 }
             }
-            Text(check?.pillText ?? "Tap 3 matching scales")
+            Text(result.pillText)
                 .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(check?.isWarning == true ? AdaColors.orange : .white)
+                .foregroundStyle(result.isWarning ? AdaColors.orange : .white)
         }
         .padding(.horizontal, 11)
         .frame(height: 28)
         .background(
-            check?.isWarning == true ? AdaColors.orange.opacity(0.20) : Self.stageChipBg,
+            result.isWarning ? AdaColors.orange.opacity(0.20) : Self.stageChipBg,
             in: Capsule()
         )
 
-        if let qNum = pendingQueryAnchor {
-            darkInfoPill("Pick match for #\(qNum)", accent: .cyan)
+        if pendingQueryPin != nil {
+            darkInfoPill("Click matching spot on Candidate", accent: .cyan)
+            Button {
+                pendingQueryPin = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .frame(width: 24, height: 24)
+                    .background(Self.stageChipBg, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Cancel pending pin")
         }
 
-        if check?.isReadyForOverlay == true {
+        if result.isReadyForWarp {
             HStack(spacing: 2) {
-                darkModeChip("Pairs", active: !alignShowsOverlay) {
-                    withAnimation(.easeOut(duration: 0.14)) {
-                        alignShowsOverlay = false
-                        isBlinking = false
-                    }
-                }
-                darkModeChip("Warped overlay", active: alignShowsOverlay) {
-                    withAnimation(.easeOut(duration: 0.14)) {
-                        alignShowsOverlay = true
+                ForEach(AlignPresentation.allCases) { mode in
+                    darkModeChip(mode.rawValue, active: alignPresentation == mode) {
+                        withAnimation(.easeOut(duration: 0.14)) {
+                            alignPresentation = mode
+                            if mode != .blend { isBlinking = false }
+                        }
                     }
                 }
             }
             .padding(3)
             .background(Self.stageChipBg, in: Capsule())
 
-            if alignShowsOverlay {
+            if alignPresentation == .blend {
                 blinkButton
+                opacitySlider(leftLabel: "S", rightLabel: "C")
+            }
+
+            if alignPresentation != .pins {
+                Button {
+                    showWarpedContoursOnPhoto.toggle()
+                } label: {
+                    Text("Lines")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(showWarpedContoursOnPhoto ? Self.stageDark : .white.opacity(0.84))
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(showWarpedContoursOnPhoto ? Color.cyan : Self.stageChipBg, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Toggle warped scale outlines on top of pixel-registered photos")
             }
         }
 
-        if !activePairs.isEmpty {
+        if selectedCandidate?.image != nil {
+            Button {
+                Task { await autoAlignCurrentCandidate() }
+            } label: {
+                Label(count >= 3 ? "Re-seed AI" : "Auto-align", systemImage: "sparkles")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 11)
+                    .frame(height: 28)
+                    .background(Self.stageChipBg, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isLoadingAIAnnotations)
+            .help("Seed 4 pins from RANSAC AI inliers (or scale-constellation RANSAC fallback)")
+        }
+
+        if !activeAnchors.isEmpty {
             Button { undoLastAnchor() } label: {
                 Image(systemName: "arrow.uturn.backward")
                     .font(.system(size: 11, weight: .semibold))
@@ -949,7 +1275,7 @@ private struct NotSureCaseDetail: View {
                     .background(Self.stageChipBg, in: Circle())
             }
             .buttonStyle(.plain)
-            .help("Undo last pair")
+            .help("Undo last pin")
 
             Button { clearAnchors() } label: {
                 Image(systemName: "trash")
@@ -959,7 +1285,7 @@ private struct NotSureCaseDetail: View {
                     .background(Self.stageChipBg, in: Circle())
             }
             .buttonStyle(.plain)
-            .help("Clear pairs")
+            .help("Clear all pins")
         }
     }
 
@@ -990,7 +1316,7 @@ private struct NotSureCaseDetail: View {
                 in: 0...1
             )
             .tint(AdaColors.accent)
-            .frame(minWidth: 72, maxWidth: 116)
+            .frame(minWidth: 68, maxWidth: 108)
             .accessibilityLabel("Overlay opacity")
             Button(rightLabel) { isBlinking = false; overlayOpacity = 1 }
                 .buttonStyle(.plain)
@@ -1004,7 +1330,7 @@ private struct NotSureCaseDetail: View {
             Text(title)
                 .font(.system(size: 11.5, weight: active ? .semibold : .medium))
                 .foregroundStyle(active ? Self.stageDark : Color.white.opacity(0.82))
-                .padding(.horizontal, 11)
+                .padding(.horizontal, 10)
                 .frame(height: 26)
                 .background(active ? Color.white : .clear, in: Capsule())
                 .contentShape(Capsule())
@@ -1019,6 +1345,7 @@ private struct NotSureCaseDetail: View {
             Text(text)
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(.white)
+                .lineLimit(1)
         }
         .padding(.horizontal, 10)
         .frame(height: 26)
@@ -1062,136 +1389,420 @@ private struct NotSureCaseDetail: View {
 
     @ViewBuilder
     private var stageBody: some View {
-        if stageMode == .compare && isOverlayActive {
-            rawBlinkOverlayCanvas
-        } else if stageMode == .align && alignShowsOverlay, let check = alignmentCheck, check.isReadyForOverlay {
-            warpedAlignmentOverlayCanvas(check: check)
+        if stageMode == .compare && comparePresentation == .curtain {
+            curtainWipeCanvas(
+                leftImage: displayedQueryImage,
+                rightImage: selectedCandidate?.image,
+                leftLabel: "SIGHTING",
+                rightLabel: selectedCandidate?.name ?? "CANDIDATE",
+                warpedContours: nil
+            )
+        } else if stageMode == .compare && comparePresentation == .blend {
+            blendOverlayCanvas(
+                baseImage: displayedQueryImage,
+                topImage: selectedCandidate?.image,
+                topAlpha: effectiveOverlayAlpha,
+                badge: isBlinking
+                    ? (blinkShowsCandidate ? (selectedCandidate?.name ?? "Candidate") : "Sighting")
+                    : "Raw Blend · \(Int((overlayOpacity * 100).rounded()))%",
+                warpedContours: nil
+            )
+        } else if stageMode == .align && alignPresentation == .curtain && alignmentResult.isReadyForWarp {
+            curtainWipeCanvas(
+                leftImage: warpedQueryImage ?? displayedQueryImage,
+                rightImage: selectedCandidate?.image,
+                leftLabel: "SIGHTING (WARPED · \(alignmentResult.transform?.modeLabel.uppercased() ?? "ALIGNED"))",
+                rightLabel: selectedCandidate?.name ?? "CANDIDATE",
+                warpedContours: showWarpedContoursOnPhoto ? alignmentResult.warpedContours : nil
+            )
+        } else if stageMode == .align && alignPresentation == .blend && alignmentResult.isReadyForWarp {
+            blendOverlayCanvas(
+                baseImage: selectedCandidate?.image,
+                topImage: warpedQueryImage,
+                topAlpha: 1.0 - effectiveOverlayAlpha,
+                badge: isBlinking
+                    ? (blinkShowsCandidate ? (selectedCandidate?.name ?? "Candidate") : "Sighting (Warped)")
+                    : "Pixel-Warped Blend · \(Int(((1.0 - overlayOpacity) * 100).rounded()))% Sighting",
+                warpedContours: showWarpedContoursOnPhoto ? alignmentResult.warpedContours : nil
+            )
         } else {
             sideBySideStage
         }
     }
 
+    // MARK: Side-by-Side Stage (+ Cross-Pane AI RANSAC Threads & Draggable Precision Pins)
+
     private var sideBySideStage: some View {
+        let aiInlierIDs = activeConsensus?.inlierFeatureIDs ?? []
+        return GeometryReader { stageGeo in
+            ZStack {
+                HStack(spacing: 0) {
+                    queryStagePane
+                    Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1)
+                    candidateStagePane
+                }
+
+                // Cross-pane RANSAC-filtered XFeat/LighterGlue threads in Compare + AI Matches mode
+                if stageMode == .compare && showsAIMatches,
+                   let qImg = displayedQueryImage,
+                   let cImg = selectedCandidate?.image,
+                   !activeAIAnnotations.isEmpty {
+                    aiThreadsOverlay(
+                        stageSize: stageGeo.size,
+                        queryImage: qImg,
+                        candidateImage: cImg,
+                        annotations: activeAIAnnotations,
+                        inlierIDs: aiInlierIDs
+                    )
+                }
+            }
+            .clipped()
+        }
+    }
+
+    private var queryStagePane: some View {
         let queryBadge = "SIGHTING · \(activeSightingSide.shortLabel.uppercased())"
+        let showContoursLayer = stageMode == .contours || (stageMode == .align && !linesOnly)
+        let pins: [NotSurePanePin] = stageMode == .align
+            ? activeAnchors.map { NotSurePanePin(id: $0.id, label: $0.label, point: $0.queryPoint, source: $0.source) }
+            : []
+        let excludeHandler: ((Int) -> Void)? = (stageMode == .contours && isPending && !showingCompanionSide)
+            ? { num in excludeQueryScale(num) }
+            : nil
+
+        return NotSurePhotoPane(
+            image: displayedQueryImage,
+            badge: queryBadge,
+            emptyLabel: "No photo",
+            accent: .cyan,
+            showContours: showContoursLayer,
+            showScaleBadges: stageMode == .contours,
+            showsSutureMesh: showsSutureMesh && stageMode == .contours,
+            linesOnly: linesOnly && stageMode != .compare,
+            patterns: visibleQueryPatterns,
+            mesh: queryAnalysis?.mesh ?? .empty,
+            customLandmarks: customQueryLandmarks,
+            highlightedScale: selectedQueryScale,
+            pairedNumbers: Set(activeAnchors.compactMap(\.queryScaleNumber)),
+            anchors: pins,
+            pendingPoint: stageMode == .align ? pendingQueryPin?.point : nil,
+            allowsFreeTap: stageMode == .align || isAddingManualLandmark,
+            zoomScale: zoomScale,
+            panOffset: currentPanOffset,
+            onPanChanged: { dragDelta = $0 },
+            onPanEnded: commitPan,
+            onTapScale: handleQueryScaleTap,
+            onExcludeScale: excludeHandler,
+            onTapNormalizedPoint: handleQueryFreeTap,
+            onDragAnchor: { id, pt in moveAnchor(id: id, isQuery: true, to: pt) },
+            onDeleteAnchor: deleteAnchor(id:),
+            onDeleteLandmark: { id in _ = perform(.removeCustomQueryLandmark(id)) }
+        )
+    }
+
+    private var candidateStagePane: some View {
         let candBadge: String = {
             guard let cand = selectedCandidate else { return "CANDIDATE" }
             let score = cand.isBundledExample ? "SAMPLE" : "\(cand.confidencePercent)%"
             return "#\(cand.rank) \(cand.name) · \(score)"
         }()
+        let showContoursLayer = stageMode == .contours || (stageMode == .align && !linesOnly)
+        let pins: [NotSurePanePin] = stageMode == .align
+            ? activeAnchors.map { NotSurePanePin(id: $0.id, label: $0.label, point: $0.candidatePoint, source: $0.source) }
+            : []
 
-        return HStack(spacing: 0) {
-            NotSurePhotoPane(
-                image: displayedQueryImage,
-                badge: queryBadge,
-                emptyLabel: "No photo",
-                accent: .cyan,
-                showContours: stageMode != .compare,
-                linesOnly: linesOnly && stageMode != .compare,
-                patterns: queryContours?.patterns ?? [],
-                highlightedScale: stageMode == .align ? pendingQueryAnchor : selectedQueryScale,
-                pairedNumbers: Set(activePairs.map(\.queryNumber)),
-                zoomScale: zoomScale,
-                panOffset: currentPanOffset,
-                onPanChanged: { dragDelta = $0 },
-                onPanEnded: commitPan,
-                onTapScale: handleQueryScaleTap
-            )
-
-            Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1)
-
-            NotSurePhotoPane(
-                image: selectedCandidate?.image,
-                badge: candBadge,
-                warningBadge: selectedCandidate.flatMap { $0.sideMatches ? nil : "Opposite side" },
-                emptyLabel: selectedCandidate == nil ? "No candidate" : "No photo",
-                accent: AdaColors.orange,
-                showContours: stageMode != .compare,
-                linesOnly: linesOnly && stageMode != .compare,
-                patterns: candidateContours?.patterns ?? [],
-                highlightedScale: selectedCandidateScale,
-                pairedNumbers: Set(activePairs.map(\.candidateNumber)),
-                zoomScale: zoomScale,
-                panOffset: currentPanOffset,
-                onPanChanged: { dragDelta = $0 },
-                onPanEnded: commitPan,
-                onTapScale: handleCandidateScaleTap
-            )
-        }
+        return NotSurePhotoPane(
+            image: selectedCandidate?.image,
+            badge: candBadge,
+            warningBadge: selectedCandidate.flatMap { $0.sideMatches ? nil : "Opposite side" },
+            emptyLabel: selectedCandidate == nil ? "No candidate" : "No photo",
+            accent: AdaColors.orange,
+            showContours: showContoursLayer,
+            showScaleBadges: stageMode == .contours,
+            showsSutureMesh: showsSutureMesh && stageMode == .contours,
+            linesOnly: linesOnly && stageMode != .compare,
+            patterns: visibleCandidatePatterns,
+            mesh: candidateAnalysis?.mesh ?? .empty,
+            customLandmarks: [],
+            highlightedScale: selectedCandidateScale,
+            pairedNumbers: Set(activeAnchors.compactMap(\.candidateScaleNumber)),
+            anchors: pins,
+            pendingPoint: nil,
+            allowsFreeTap: stageMode == .align && pendingQueryPin != nil,
+            zoomScale: zoomScale,
+            panOffset: currentPanOffset,
+            onPanChanged: { dragDelta = $0 },
+            onPanEnded: commitPan,
+            onTapScale: handleCandidateScaleTap,
+            onExcludeScale: nil,
+            onTapNormalizedPoint: handleCandidateFreeTap,
+            onDragAnchor: { id, pt in moveAnchor(id: id, isQuery: false, to: pt) },
+            onDeleteAnchor: deleteAnchor(id:),
+            onDeleteLandmark: nil
+        )
     }
 
-    private var rawBlinkOverlayCanvas: some View {
-        GeometryReader { geo in
-            ZStack {
-                if let query = displayedQueryImage {
-                    Image(nsImage: query)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .scaleEffect(zoomScale)
-                        .offset(currentPanOffset)
-                }
-                if let candImg = selectedCandidate?.image {
-                    Image(nsImage: candImg)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .scaleEffect(zoomScale)
-                        .offset(currentPanOffset)
-                        .opacity(effectiveOverlayAlpha)
+    @ViewBuilder
+    private func aiThreadsOverlay(
+        stageSize: CGSize,
+        queryImage: NSImage,
+        candidateImage: NSImage,
+        annotations: [OverlayAnnotationItem],
+        inlierIDs: Set<String>
+    ) -> some View {
+        let paneWidth = max(1, (stageSize.width - 1) * 0.5)
+        let paneSize = CGSize(width: paneWidth, height: stageSize.height)
+        let qFitted = Self.aspectFitRect(imageSize: queryImage.size, in: paneSize)
+        let cFitted = Self.aspectFitRect(imageSize: candidateImage.size, in: paneSize)
+        let rightOriginX = paneWidth + 1
+
+        let displayed = annotations.filter { ann in
+            inlierIDs.contains(ann.featureID) || showsAIOutliers
+        }
+
+        ZStack(alignment: .bottom) {
+            Canvas { ctx, _ in
+                for ann in displayed {
+                    let isInlier = inlierIDs.contains(ann.featureID)
+                    let isSelected = selectedAIFeatureID == ann.featureID
+                    let qPt = Self.screenPoint(
+                        from: ScalePoint(x: ann.query.x, y: ann.query.y),
+                        fitted: qFitted,
+                        container: paneSize,
+                        zoom: zoomScale,
+                        pan: currentPanOffset
+                    )
+                    var cPt = Self.screenPoint(
+                        from: ScalePoint(x: ann.candidate.x, y: ann.candidate.y),
+                        fitted: cFitted,
+                        container: paneSize,
+                        zoom: zoomScale,
+                        pan: currentPanOffset
+                    )
+                    cPt.x += rightOriginX
+
+                    var line = Path()
+                    line.move(to: qPt)
+                    line.addLine(to: cPt)
+
+                    let alpha: Double = {
+                        if let sel = selectedAIFeatureID {
+                            return sel == ann.featureID ? 1.0 : 0.08
+                        }
+                        return isInlier ? 0.58 : 0.28
+                    }()
+
+                    let strokeColor: Color = isInlier ? AdaColors.green : AdaColors.red
+                    let style = isInlier
+                        ? StrokeStyle(lineWidth: isSelected ? 2.4 : 1.25, lineCap: .round)
+                        : StrokeStyle(lineWidth: 1.0, lineCap: .round, dash: [4, 4])
+
+                    ctx.stroke(line, with: .color(strokeColor.opacity(alpha)), style: style)
+
+                    let r: CGFloat = isSelected ? 4.5 : (isInlier ? 3.2 : 2.5)
+                    let qDot = Path(ellipseIn: CGRect(x: qPt.x - r, y: qPt.y - r, width: r * 2, height: r * 2))
+                    let cDot = Path(ellipseIn: CGRect(x: cPt.x - r, y: cPt.y - r, width: r * 2, height: r * 2))
+                    ctx.fill(qDot, with: .color(strokeColor.opacity(min(1.0, alpha + 0.3))))
+                    ctx.fill(cDot, with: .color(strokeColor.opacity(min(1.0, alpha + 0.3))))
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
-            .contentShape(Rectangle())
-            .gesture(panGesture)
-            .overlay(alignment: .topLeading) {
-                stageCornerBadge(
-                    isBlinking
-                        ? (blinkShowsCandidate ? (selectedCandidate?.name ?? "Candidate") : "Sighting")
-                        : "Overlay · \(Int((overlayOpacity * 100).rounded()))%"
+            .allowsHitTesting(false)
+
+            // Tappable endpoints for top 24 displayed correspondences
+            ForEach(Array(displayed.prefix(24))) { ann in
+                let isInlier = inlierIDs.contains(ann.featureID)
+                let qPt = Self.screenPoint(
+                    from: ScalePoint(x: ann.query.x, y: ann.query.y),
+                    fitted: qFitted,
+                    container: paneSize,
+                    zoom: zoomScale,
+                    pan: currentPanOffset
                 )
-                .padding(12)
+                Button {
+                    selectedAIFeatureID = (selectedAIFeatureID == ann.featureID) ? nil : ann.featureID
+                } label: {
+                    Circle().fill(Color.clear).frame(width: 18, height: 18).contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .position(qPt)
+                .help("\(isInlier ? "RANSAC Inlier" : "Rejected Outlier") · \(Int(((ann.score ?? 0) * 100).rounded()))% XFeat")
+            }
+
+            if let selID = selectedAIFeatureID,
+               let ann = annotations.first(where: { $0.featureID == selID }) {
+                let isInlier = inlierIDs.contains(ann.featureID)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(isInlier ? AdaColors.green : AdaColors.red)
+                        .frame(width: 7, height: 7)
+                    Text(isInlier ? "Geometric Inlier" : "Rejected Outlier")
+                        .font(.system(size: 11.5, weight: .semibold))
+                    Text("· XFeat \(Int(((ann.score ?? 0) * 100).rounded()))%")
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.75))
+                    Button { selectedAIFeatureID = nil } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9.5, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.76), in: Capsule())
+                .padding(.bottom, 12)
             }
         }
     }
 
-    private func warpedAlignmentOverlayCanvas(check: NotSureAlignmentCheck) -> some View {
+    // MARK: Draggable Split Curtain Wipe Canvas (Works for BOTH Raw & Pixel-Warped Photos!)
+
+    private func curtainWipeCanvas(
+        leftImage: NSImage?,
+        rightImage: NSImage?,
+        leftLabel: String,
+        rightLabel: String,
+        warpedContours: [WarpedPatternContour]?
+    ) -> some View {
         GeometryReader { geo in
+            let w = max(1, geo.size.width)
+            let h = max(1, geo.size.height)
+            let splitX = min(max(curtainPosition, 0.04), 0.96) * w
+            let refSize = rightImage?.size ?? leftImage?.size ?? geo.size
+            let fitted = Self.aspectFitRect(imageSize: refSize, in: geo.size)
+
             ZStack {
-                if let candImg = selectedCandidate?.image {
-                    let fitted = Self.aspectFitRect(imageSize: candImg.size, in: geo.size)
-                    ZStack {
-                        if !linesOnly {
-                            Image(nsImage: candImg)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: geo.size.width, height: geo.size.height)
-                        }
+                // Right half (Candidate full canvas)
+                if let rightImage {
+                    Image(nsImage: rightImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: w, height: h)
+                        .scaleEffect(zoomScale)
+                        .offset(currentPanOffset)
+                }
 
-                        // Candidate native contours (subtle orange)
-                        if let cContours = candidateContours {
-                            Canvas { ctx, _ in
-                                for pat in cContours.patterns {
-                                    let path = Self.polygonPath(pat.polygon, in: fitted)
-                                    ctx.stroke(path, with: .color(AdaColors.orange.opacity(0.65)), lineWidth: 1.5)
-                                }
-                            }
+                // Left half (Pixel-warped Sighting clipped sharply at splitX!)
+                if let leftImage {
+                    Image(nsImage: leftImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: w, height: h)
+                        .scaleEffect(zoomScale)
+                        .offset(currentPanOffset)
+                        .mask(alignment: .leading) {
+                            Rectangle().frame(width: splitX)
                         }
+                }
 
-                        // Warped Sighting contours projected onto Candidate frame (crisp cyan — blinks when Blink is active)
-                        if !isBlinking || !blinkShowsCandidate {
-                            Canvas { ctx, _ in
-                                for warped in check.warpedContours {
-                                    let path = Self.polygonPath(warped.polygon, in: fitted)
-                                    ctx.fill(path, with: .color(Color.cyan.opacity(0.14)))
-                                    ctx.stroke(path, with: .color(Color.cyan.opacity(0.95)), lineWidth: 2.0)
-                                }
-                            }
+                // Optional warped scale contours projected onto candidate frame
+                if let warpedContours, !warpedContours.isEmpty {
+                    Canvas { ctx, _ in
+                        for warped in warpedContours {
+                            let path = Self.polygonPath(warped.polygon, in: fitted)
+                            ctx.stroke(path, with: .color(Color.cyan.opacity(0.9)), lineWidth: 1.7)
                         }
                     }
-                    .frame(width: geo.size.width, height: geo.size.height)
                     .scaleEffect(zoomScale)
                     .offset(currentPanOffset)
+                    .allowsHitTesting(false)
+                }
+
+                // Crisp draggable vertical divider handle
+                Rectangle()
+                    .fill(Color.white.opacity(0.92))
+                    .frame(width: 2, height: h)
+                    .shadow(color: .black.opacity(0.5), radius: 3)
+                    .position(x: splitX, y: h * 0.5)
+                    .allowsHitTesting(false)
+
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                    Image(systemName: "chevron.right")
+                }
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Self.stageDark)
+                .frame(width: 34, height: 34)
+                .background(Color.white, in: Circle())
+                .shadow(color: .black.opacity(0.45), radius: 6, y: 2)
+                .position(x: splitX, y: h * 0.5)
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            curtainPosition = min(0.96, max(0.04, value.location.x / w))
+                        }
+                )
+                .accessibilityLabel("Drag divider to compare warped sighting against candidate")
+            }
+            .frame(width: w, height: h)
+            .clipped()
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 3)
+                    .onChanged { value in
+                        if zoomScale > 1.01 {
+                            dragDelta = value.translation
+                        } else {
+                            curtainPosition = min(0.96, max(0.04, value.location.x / w))
+                        }
+                    }
+                    .onEnded { value in
+                        if zoomScale > 1.01 {
+                            commitPan(value.translation)
+                        }
+                    }
+            )
+            .overlay(alignment: .topLeading) {
+                stageCornerBadge(leftLabel).padding(12)
+            }
+            .overlay(alignment: .topTrailing) {
+                stageCornerBadge(rightLabel).padding(12)
+            }
+        }
+    }
+
+    // MARK: Pixel-Registered Blend & Blink Canvas
+
+    private func blendOverlayCanvas(
+        baseImage: NSImage?,
+        topImage: NSImage?,
+        topAlpha: Double,
+        badge: String,
+        warpedContours: [WarpedPatternContour]?
+    ) -> some View {
+        GeometryReader { geo in
+            let refSize = baseImage?.size ?? topImage?.size ?? geo.size
+            let fitted = Self.aspectFitRect(imageSize: refSize, in: geo.size)
+
+            ZStack {
+                if let baseImage, !linesOnly {
+                    Image(nsImage: baseImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .scaleEffect(zoomScale)
+                        .offset(currentPanOffset)
+                }
+                if let topImage, !linesOnly {
+                    Image(nsImage: topImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .scaleEffect(zoomScale)
+                        .offset(currentPanOffset)
+                        .opacity(min(1, max(0, topAlpha)))
+                }
+                if let warpedContours, !warpedContours.isEmpty {
+                    Canvas { ctx, _ in
+                        for warped in warpedContours {
+                            let path = Self.polygonPath(warped.polygon, in: fitted)
+                            ctx.fill(path, with: .color(Color.cyan.opacity(0.12)))
+                            ctx.stroke(path, with: .color(Color.cyan.opacity(0.95)), lineWidth: 1.9)
+                        }
+                    }
+                    .scaleEffect(zoomScale)
+                    .offset(currentPanOffset)
+                    .allowsHitTesting(false)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1199,21 +1810,18 @@ private struct NotSureCaseDetail: View {
             .contentShape(Rectangle())
             .gesture(panGesture)
             .overlay(alignment: .topLeading) {
-                HStack(spacing: 6) {
-                    stageCornerBadge("Cyan = Sighting warped onto \(selectedCandidate?.name ?? "Candidate")")
-                }
-                .padding(12)
+                stageCornerBadge(badge).padding(12)
             }
         }
     }
 
     private func stageCornerBadge(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 10.5, weight: .semibold))
             .foregroundStyle(.white)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(Color.black.opacity(0.55), in: Capsule())
+            .background(Color.black.opacity(0.58), in: Capsule())
     }
 
     private var currentPanOffset: CGSize {
@@ -1252,7 +1860,7 @@ private struct NotSureCaseDetail: View {
         }
     }
 
-    // MARK: - 3. Slim Right Candidate Rail (Always Visible, 1-Click Reject & Advance)
+    // MARK: - 3. Slim Right Candidate Rail (+ Direct Crop/Re-Match & Delta Badges)
 
     private var candidateRail: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1279,6 +1887,16 @@ private struct NotSureCaseDetail: View {
                             .foregroundStyle(showsRejected ? AdaColors.navy : AdaColors.secondaryInk)
                     }
                     .buttonStyle(.plain)
+                }
+
+                if isPending && item.queryImage != nil {
+                    Button { showsCropSheet = true } label: {
+                        Image(systemName: "crop.rotate")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(customQueryROI != nil ? AdaColors.accent : AdaColors.secondaryInk)
+                    }
+                    .buttonStyle(.plain)
+                    .help(liveSearchAvailable ? "Crop, level tilt & re-match" : "Crop head region")
                 }
 
                 if liveSearchAvailable {
@@ -1340,7 +1958,8 @@ private struct NotSureCaseDetail: View {
     private func candidateCard(_ candidate: EscalatedNotSureCandidate) -> some View {
         let selected = selectedCandidate?.id == candidate.id
         let rejected = item.rejectedCandidateIDs.contains(candidate.id)
-        let pairCount = pairsByCandidateID[candidate.id]?.count ?? 0
+        let pinCount = anchorsByCandidateID[candidate.id]?.count ?? 0
+        let delta = item.reMatchDeltasByCandidateID?[candidate.id]
 
         return HStack(spacing: 10) {
             Button {
@@ -1353,21 +1972,27 @@ private struct NotSureCaseDetail: View {
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(AdaColors.ink)
                             .lineLimit(1)
-                        HStack(spacing: 5) {
+                        HStack(spacing: 4) {
                             NotSureMetaTag(
                                 title: candidate.evidenceLabel,
                                 tint: selected ? AdaColors.navy : AdaColors.secondaryInk,
                                 background: selected ? AdaColors.navy.opacity(0.10) : AdaColors.surfaceMuted
                             )
-                            if !candidate.sideMatches {
+                            if let deltaText = delta?.badgeText {
+                                NotSureMetaTag(
+                                    title: deltaText,
+                                    tint: delta?.isPositive == true ? AdaColors.green : AdaColors.orange,
+                                    background: (delta?.isPositive == true ? AdaColors.green : AdaColors.orange).opacity(0.12)
+                                )
+                            } else if !candidate.sideMatches {
                                 NotSureMetaTag(
                                     title: "Wrong side",
                                     tint: AdaColors.red,
                                     background: AdaColors.red.opacity(0.11)
                                 )
-                            } else if pairCount >= 3 {
+                            } else if pinCount >= 3 {
                                 NotSureMetaTag(
-                                    title: "\(pairCount) pts",
+                                    title: "\(pinCount) pins",
                                     tint: AdaColors.green,
                                     background: AdaColors.green.opacity(0.11)
                                 )
@@ -1411,7 +2036,7 @@ private struct NotSureCaseDetail: View {
         )
     }
 
-    // MARK: - 4. Open-Set Verdict Bar (Mirrors Mobile: Match / New turtle / Needs photo)
+    // MARK: - 4. Open-Set Verdict Bar
 
     private var verdictBar: some View {
         HStack(spacing: 10) {
@@ -1449,7 +2074,7 @@ private struct NotSureCaseDetail: View {
                     Label("Needs photo", systemImage: "camera")
                 }
                 .buttonStyle(NotSurePillButtonStyle(.subtle, height: 38))
-                .disabled(isSearching || isCropResearching)
+                .disabled(isSearching || isCropResearching || isSavingVerdict)
 
                 Button {
                     openConfirmation(.newTurtle)
@@ -1457,7 +2082,7 @@ private struct NotSureCaseDetail: View {
                     Label("New turtle", systemImage: "plus")
                 }
                 .buttonStyle(NotSurePillButtonStyle(.secondary, height: 38))
-                .disabled(isSearching || isCropResearching)
+                .disabled(isSearching || isCropResearching || isSavingVerdict)
 
                 Button {
                     if let cand = selectedCandidate {
@@ -1479,7 +2104,7 @@ private struct NotSureCaseDetail: View {
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AdaColors.line, lineWidth: 1))
     }
 
-    // MARK: - Compact 1-Step Confirmation Sheet (1-Tap Reason Chips)
+    // MARK: - Compact 1-Step Confirmation Sheet (+ Live Backend Sync for Mobile Logs)
 
     private func openConfirmation(_ outcome: DecisionOutcome) {
         inlineError = nil
@@ -1505,7 +2130,9 @@ private struct NotSureCaseDetail: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(outcome.title)
                         .font(.system(size: 17, weight: .semibold))
-                    Text(outcome.badgeTitle)
+                    Text(item.isFromMobileQueue && outcome.id.hasPrefix("same-")
+                         ? "Same turtle · Syncs to mobile sighting log"
+                         : outcome.badgeTitle)
                         .font(.system(size: 12))
                         .foregroundStyle(AdaColors.secondaryInk)
                 }
@@ -1543,33 +2170,49 @@ private struct NotSureCaseDetail: View {
                 Button("Cancel") { confirmation = nil }
                     .keyboardShortcut(.cancelAction)
                     .buttonStyle(NotSurePillButtonStyle(.subtle, height: 34))
-                Button(outcome.confirmTitle) {
+                Button {
                     let finalNote = confirmationNote.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if perform(outcome.action(note: finalNote)) {
-                        confirmation = nil
-                        if let onNext { onNext() }
+                    Task {
+                        isSavingVerdict = true
+                        defer { isSavingVerdict = false }
+                        do {
+                            try await store.resolveNotSureCaseAndSyncBackend(item.id, action: outcome.action(note: finalNote))
+                            inlineError = nil
+                            confirmation = nil
+                            if let onNext { onNext() }
+                        } catch {
+                            inlineError = error.localizedDescription
+                            confirmation = nil
+                        }
+                    }
+                } label: {
+                    if isSavingVerdict {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(outcome.confirmTitle)
                     }
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(NotSurePillButtonStyle(.primary, height: 34))
-                .disabled(confirmationNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(confirmationNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSavingVerdict)
             }
         }
         .padding(22)
-        .frame(width: 420)
+        .frame(width: 430)
         .background(AdaColors.card)
         .foregroundStyle(AdaColors.ink)
     }
 
-    // MARK: - Interactive Scale Tap & 3-Anchor Alignment
+    // MARK: - Interactive Scale Editing, Precision Pinning & Draggable Registration
 
     private func handleQueryScaleTap(_ number: Int) {
         if stageMode == .contours {
             selectedQueryScale = (selectedQueryScale == number) ? nil : number
             return
         }
-        guard stageMode == .align else { return }
-        pendingQueryAnchor = (pendingQueryAnchor == number) ? nil : number
+        guard stageMode == .align,
+              let pat = visibleQueryPatterns.first(where: { $0.number == number }) else { return }
+        pendingQueryPin = (pat.centroid, number)
     }
 
     private func handleCandidateScaleTap(_ number: Int) {
@@ -1577,41 +2220,234 @@ private struct NotSureCaseDetail: View {
             selectedCandidateScale = (selectedCandidateScale == number) ? nil : number
             return
         }
-        guard stageMode == .align, let cand = selectedCandidate, let qNum = pendingQueryAnchor else { return }
-        var pairs = pairsByCandidateID[cand.id] ?? []
-        pairs.removeAll { $0.queryNumber == qNum || $0.candidateNumber == number }
-        pairs.append(PatternPairLink(queryNumber: qNum, candidateNumber: number))
-        pairs.sort { $0.queryNumber < $1.queryNumber }
-        pairsByCandidateID[cand.id] = pairs
-        pendingQueryAnchor = nil
-        persistPairsIfPending(candidateID: cand.id, pairs: pairs)
-        if pairs.count == 3 {
-            withAnimation(.easeOut(duration: 0.16)) { alignShowsOverlay = true }
+        guard stageMode == .align,
+              let pending = pendingQueryPin,
+              let pat = visibleCandidatePatterns.first(where: { $0.number == number }) else { return }
+        addAnchorPair(
+            queryPoint: pending.point,
+            candidatePoint: pat.centroid,
+            queryScale: pending.scaleNumber,
+            candidateScale: number,
+            source: .manual
+        )
+    }
+
+    private func handleQueryFreeTap(_ point: ScalePoint) {
+        if stageMode == .contours && isAddingManualLandmark && isPending && !showingCompanionSide {
+            let nextIndex = customQueryLandmarks.count + 1
+            let landmark = ManualScaleLandmark(label: "M\(nextIndex)", point: point)
+            _ = perform(.addCustomQueryLandmark(landmark))
+            isAddingManualLandmark = false
+            return
         }
+        guard stageMode == .align else { return }
+        // Gently snap to a detected scale or manual landmark if tapped right on its center;
+        // otherwise place an exact raw-pixel pin on any keratin junction, eye corner, or notch.
+        if let snapped = nearestScale(to: point, in: visibleQueryPatterns, maxDist: 0.022) {
+            pendingQueryPin = (snapped.centroid, snapped.number)
+        } else if let lm = customQueryLandmarks.min(by: {
+            hypot($0.point.x - point.x, $0.point.y - point.y) < hypot($1.point.x - point.x, $1.point.y - point.y)
+        }), hypot(lm.point.x - point.x, lm.point.y - point.y) <= 0.024 {
+            pendingQueryPin = (lm.point, nil)
+        } else {
+            pendingQueryPin = (point, nil)
+        }
+    }
+
+    private func handleCandidateFreeTap(_ point: ScalePoint) {
+        guard stageMode == .align, let pending = pendingQueryPin else { return }
+        if let snapped = nearestScale(to: point, in: visibleCandidatePatterns, maxDist: 0.022) {
+            addAnchorPair(
+                queryPoint: pending.point,
+                candidatePoint: snapped.centroid,
+                queryScale: pending.scaleNumber,
+                candidateScale: snapped.number,
+                source: .manual
+            )
+        } else {
+            addAnchorPair(
+                queryPoint: pending.point,
+                candidatePoint: point,
+                queryScale: pending.scaleNumber,
+                candidateScale: nil,
+                source: .manual
+            )
+        }
+    }
+
+    private func nearestScale(to pt: ScalePoint, in patterns: [DetectedScalePattern], maxDist: Double) -> DetectedScalePattern? {
+        guard let nearest = patterns.min(by: {
+            hypot($0.centroid.x - pt.x, $0.centroid.y - pt.y) < hypot($1.centroid.x - pt.x, $1.centroid.y - pt.y)
+        }) else { return nil }
+        return hypot(nearest.centroid.x - pt.x, nearest.centroid.y - pt.y) <= maxDist ? nearest : nil
+    }
+
+    private func excludeQueryScale(_ scaleNumber: Int) {
+        if selectedQueryScale == scaleNumber { selectedQueryScale = nil }
+        _ = perform(.toggleExcludedQueryScale(scaleNumber))
+    }
+
+    private func addAnchorPair(
+        queryPoint: ScalePoint,
+        candidatePoint: ScalePoint,
+        queryScale: Int?,
+        candidateScale: Int?,
+        source: ManualAnchorPair.Source
+    ) {
+        guard let cand = selectedCandidate else { return }
+        var anchors = anchorsByCandidateID[cand.id] ?? []
+        let label = nextPinLabel(existing: anchors)
+        anchors.append(ManualAnchorPair(
+            label: label,
+            queryPoint: queryPoint,
+            candidatePoint: candidatePoint,
+            queryScaleNumber: queryScale,
+            candidateScaleNumber: candidateScale,
+            source: source
+        ))
+        anchorsByCandidateID[cand.id] = anchors
+        pendingQueryPin = nil
+        persistAnchorsIfPending(candidateID: cand.id, anchors: anchors)
+        if anchors.count == 3 || anchors.count == 4 {
+            withAnimation(.easeOut(duration: 0.16)) { alignPresentation = .curtain }
+        }
+    }
+
+    private func moveAnchor(id: UUID, isQuery: Bool, to point: ScalePoint) {
+        guard let cand = selectedCandidate,
+              var anchors = anchorsByCandidateID[cand.id],
+              let idx = anchors.firstIndex(where: { $0.id == id }) else { return }
+        let clamped = ScalePoint(x: min(0.99, max(0.01, point.x)), y: min(0.99, max(0.01, point.y)))
+        if isQuery {
+            anchors[idx].queryPoint = clamped
+            anchors[idx].queryScaleNumber = nil
+        } else {
+            anchors[idx].candidatePoint = clamped
+            anchors[idx].candidateScaleNumber = nil
+        }
+        anchors[idx].source = .manual
+        anchorsByCandidateID[cand.id] = anchors
+        persistAnchorsIfPending(candidateID: cand.id, anchors: anchors)
+    }
+
+    private func deleteAnchor(id: UUID) {
+        guard let cand = selectedCandidate else { return }
+        var anchors = anchorsByCandidateID[cand.id] ?? []
+        anchors.removeAll { $0.id == id }
+        anchorsByCandidateID[cand.id] = anchors
+        if anchors.count < 3 { alignPresentation = .pins; isBlinking = false }
+        persistAnchorsIfPending(candidateID: cand.id, anchors: anchors)
     }
 
     private func undoLastAnchor() {
         guard let cand = selectedCandidate else { return }
-        var pairs = pairsByCandidateID[cand.id] ?? []
-        guard !pairs.isEmpty else { return }
-        pairs.removeLast()
-        pairsByCandidateID[cand.id] = pairs
-        if pairs.count < 3 { alignShowsOverlay = false; isBlinking = false }
-        persistPairsIfPending(candidateID: cand.id, pairs: pairs)
+        var anchors = anchorsByCandidateID[cand.id] ?? []
+        guard !anchors.isEmpty else { return }
+        anchors.removeLast()
+        anchorsByCandidateID[cand.id] = anchors
+        if anchors.count < 3 { alignPresentation = .pins; isBlinking = false }
+        persistAnchorsIfPending(candidateID: cand.id, anchors: anchors)
     }
 
     private func clearAnchors() {
         guard let cand = selectedCandidate else { return }
-        pairsByCandidateID[cand.id] = []
-        pendingQueryAnchor = nil
-        alignShowsOverlay = false
+        anchorsByCandidateID[cand.id] = []
+        pendingQueryPin = nil
+        alignPresentation = .pins
         isBlinking = false
-        persistPairsIfPending(candidateID: cand.id, pairs: [])
+        persistAnchorsIfPending(candidateID: cand.id, anchors: [])
     }
 
-    private func persistPairsIfPending(candidateID: String, pairs: [PatternPairLink]) {
+    private func nextPinLabel(existing: [ManualAnchorPair]) -> String {
+        let alphabet = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]
+        let used = Set(existing.map(\.label))
+        if let letter = alphabet.first(where: { !used.contains($0) }) { return letter }
+        return "P\(existing.count + 1)"
+    }
+
+    private func persistAnchorsIfPending(candidateID: String, anchors: [ManualAnchorPair]) {
         guard isPending else { return }
-        _ = perform(.saveVerifiedPairs(candidateID: candidateID, pairs: pairs))
+        _ = perform(.saveManualAnchors(candidateID: candidateID, anchors: anchors))
+    }
+
+    /// Seamlessly promotes any legacy `verifiedPairsByCandidateID` saved before manual pins existed.
+    private func migrateLegacyPairsIntoAnchorsIfNeeded() {
+        guard let cand = selectedCandidate else { return }
+        guard (anchorsByCandidateID[cand.id] ?? []).isEmpty else { return }
+        let legacyPairs = item.verifiedPairs(for: cand.id)
+        guard !legacyPairs.isEmpty,
+              let qPats = queryAnalysis?.patterns,
+              let cPats = candidateAnalysis?.patterns else { return }
+        let qByNum = Dictionary(uniqueKeysWithValues: qPats.map { ($0.number, $0) })
+        let cByNum = Dictionary(uniqueKeysWithValues: cPats.map { ($0.number, $0) })
+        let alphabet = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        let converted: [ManualAnchorPair] = legacyPairs.enumerated().compactMap { idx, link in
+            guard let q = qByNum[link.queryNumber], let c = cByNum[link.candidateNumber] else { return nil }
+            return ManualAnchorPair(
+                label: idx < alphabet.count ? alphabet[idx] : "P\(idx + 1)",
+                queryPoint: q.centroid,
+                candidatePoint: c.centroid,
+                queryScaleNumber: q.number,
+                candidateScaleNumber: c.number,
+                source: .manual
+            )
+        }
+        if !converted.isEmpty {
+            anchorsByCandidateID[cand.id] = converted
+        }
+    }
+
+    private func seedAlignmentFromConsensus(_ consensus: GeometricConsensusReport, switchToCurtain: Bool) {
+        guard let cand = selectedCandidate, consensus.canAutoSeedWarp else { return }
+        anchorsByCandidateID[cand.id] = consensus.suggestedAnchors
+        pendingQueryPin = nil
+        persistAnchorsIfPending(candidateID: cand.id, anchors: consensus.suggestedAnchors)
+        withAnimation(.easeOut(duration: 0.16)) {
+            stageMode = .align
+            alignPresentation = switchToCurtain ? .curtain : .pins
+        }
+    }
+
+    private func autoAlignCurrentCandidate() async {
+        guard let cand = selectedCandidate else { return }
+        if aiAnnotationsAvailable {
+            await loadAIAnnotationsForActiveCandidate()
+            if let consensus = activeConsensus, consensus.canAutoSeedWarp {
+                seedAlignmentFromConsensus(consensus, switchToCurtain: true)
+                return
+            }
+        }
+        // Fallback: upgraded 2-point similarity RANSAC over ocean-masked scale constellations.
+        await extractVisibleContours()
+        guard let q = queryAnalysis, let c = candidateAnalysis else { return }
+        let pairs = PatternMatchCalculator.autoSuggestPairs(
+            query: visibleQueryPatterns,
+            candidate: visibleCandidatePatterns,
+            queryROI: q.roi,
+            candidateROI: c.roi,
+            annotations: activeAIAnnotations
+        )
+        let qByNum = Dictionary(uniqueKeysWithValues: visibleQueryPatterns.map { ($0.number, $0) })
+        let cByNum = Dictionary(uniqueKeysWithValues: visibleCandidatePatterns.map { ($0.number, $0) })
+        let labels = ["A", "B", "C", "D", "E", "F"]
+        let seeded: [ManualAnchorPair] = pairs.prefix(4).enumerated().compactMap { idx, link in
+            guard let qPat = qByNum[link.queryNumber], let cPat = cByNum[link.candidateNumber] else { return nil }
+            return ManualAnchorPair(
+                label: idx < labels.count ? labels[idx] : "P\(idx + 1)",
+                queryPoint: qPat.centroid,
+                candidatePoint: cPat.centroid,
+                queryScaleNumber: qPat.number,
+                candidateScaleNumber: cPat.number,
+                source: .aiInlier
+            )
+        }
+        guard seeded.count >= 3 else {
+            inlineError = "Not enough automatic consensus — click 3+ matching scale corners directly to warp."
+            return
+        }
+        anchorsByCandidateID[cand.id] = seeded
+        persistAnchorsIfPending(candidateID: cand.id, anchors: seeded)
+        withAnimation(.easeOut(duration: 0.16)) { alignPresentation = .curtain }
     }
 
     private func rejectAndAdvance(_ candidate: EscalatedNotSureCandidate) {
@@ -1623,7 +2459,75 @@ private struct NotSureCaseDetail: View {
         }
     }
 
-    // MARK: - Zero-.fgp Off-Main-Thread Contour Extraction
+    // MARK: - Live Backend XFeat/LighterGlue + RANSAC Geometric Consensus
+
+    private func loadAIAnnotationsForActiveCandidate() async {
+        guard let key = activeAIKey,
+              let cand = selectedCandidate,
+              let candUUID = UUID(uuidString: cand.id),
+              store.canLoadRecords else { return }
+        if aiAnnotationsCache[key] != nil { return }
+
+        isLoadingAIAnnotations = true
+        defer { isLoadingAIAnnotations = false }
+
+        do {
+            let annotations = try await store.fetchOverlayAnnotations(
+                imageData: displayedQueryPhotoData,
+                side: activeSightingSide,
+                candidateID: candUUID,
+                candidateSide: cand.side,
+                maxThreads: 60
+            )
+            guard !Task.isCancelled else { return }
+            let consensus = await Task.detached(priority: .userInitiated) {
+                GeometricConsensusRANSAC.evaluate(annotations: annotations)
+            }.value
+            guard !Task.isCancelled else { return }
+            aiAnnotationsCache[key] = annotations
+            aiConsensusCache[key] = consensus
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            inlineError = "AI matches unavailable: \(error.localizedDescription)"
+            showsAIMatches = false
+        }
+    }
+
+    // MARK: - CoreImage Pixel-Registered Photographic Warp Renderer
+
+    private func renderWarpedPhotoIfNeeded() async {
+        guard let key = activeWarpKey,
+              warpedPhotoCache[key] == nil,
+              let transform = alignmentResult.transform,
+              let qCG = displayedQueryImage?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let cImg = selectedCandidate?.image else { return }
+
+        let candSize: CGSize
+        if let cCG = cImg.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            candSize = CGSize(width: cCG.width, height: cCG.height)
+        } else {
+            candSize = cImg.size
+        }
+
+        isRenderingWarp = true
+        defer { isRenderingWarp = false }
+
+        let warpedCG: CGImage? = await Task.detached(priority: .userInitiated) {
+            PhotoWarpRenderer.renderWarpedQueryImage(
+                queryCGImage: qCG,
+                candidatePixelSize: candSize,
+                transform: transform,
+                maxDimension: 1100
+            )
+        }.value
+
+        guard !Task.isCancelled, let warpedCG else { return }
+        warpedPhotoCache[key] = NSImage(cgImage: warpedCG, size: NSSize(width: warpedCG.width, height: warpedCG.height))
+    }
+
+    // MARK: - Upgraded Ocean-Masked + Eyeball-Free Off-Main-Thread Contour Extraction
 
     private func extractVisibleContours() async {
         let qKey = queryCacheKey
@@ -1638,52 +2542,44 @@ private struct NotSureCaseDetail: View {
         let config = PatternExtractionConfig(sensitivity: detailSensitivity)
         let qOverrideROI = showingCompanionSide ? nil : customQueryROI
 
-        let qRasters: (key: ContourCacheKey, roiR: (pixels: [Float], width: Int, height: Int), patR: (pixels: [Float], width: Int, height: Int), side: TurtlePhotoSide, overrideROI: [ScalePoint]?)? = {
-            guard needsQuery, let key = qKey, let img = displayedQueryImage,
-                  let r360 = PatternContourEngine.underwaterLuminance(from: img, maxDimension: 360),
-                  let r420 = PatternContourEngine.underwaterLuminance(from: img, maxDimension: 420) else { return nil }
-            return (key, r360, r420, activeSightingSide, qOverrideROI)
-        }()
+        let qCG = needsQuery ? displayedQueryImage?.cgImage(forProposedRect: nil, context: nil, hints: nil) : nil
+        let cCG = needsCand ? selectedCandidate?.image?.cgImage(forProposedRect: nil, context: nil, hints: nil) : nil
+        let qSide = activeSightingSide
+        let cSide = selectedCandidate?.side ?? item.side
 
-        let cRasters: (key: ContourCacheKey, roiR: (pixels: [Float], width: Int, height: Int), patR: (pixels: [Float], width: Int, height: Int), side: TurtlePhotoSide)? = {
-            guard needsCand, let key = cKey, let cand = selectedCandidate, let img = cand.image,
-                  let r360 = PatternContourEngine.underwaterLuminance(from: img, maxDimension: 360),
-                  let r420 = PatternContourEngine.underwaterLuminance(from: img, maxDimension: 420) else { return nil }
-            return (key, r360, r420, cand.side)
-        }()
-
-        async let qDone: (ContourCacheKey, ExtractedContours)? = {
-            guard let job = qRasters else { return nil }
+        async let qDone: (ContourCacheKey, ExtractedScaleAnalysis)? = {
+            guard let key = qKey, let cg = qCG else { return nil }
             let result = await Task.detached(priority: .userInitiated) {
-                let roi = job.overrideROI ?? PatternContourEngine.detectFacialPatternROI(from: job.roiR, side: job.side).roi
-                let patterns = PatternContourEngine.extractPatterns(from: job.patR, roiPolygon: roi, config: config)
-                let mesh = PatternContourEngine.extractScaleSutureMesh(from: job.patR, roiPolygon: roi, config: config)
-                return ExtractedContours(roi: roi, patterns: patterns, mesh: mesh)
+                guard let raster = PatternContourEngine.underwaterLuminanceRaster(from: cg, maxDimension: 420) else {
+                    return ExtractedScaleAnalysis.empty
+                }
+                return PatternContourEngine.extractAnalysis(from: raster, side: qSide, config: config, explicitROI: qOverrideROI)
             }.value
-            return (job.key, result)
+            return (key, result)
         }()
 
-        async let cDone: (ContourCacheKey, ExtractedContours)? = {
-            guard let job = cRasters else { return nil }
+        async let cDone: (ContourCacheKey, ExtractedScaleAnalysis)? = {
+            guard let key = cKey, let cg = cCG else { return nil }
             let result = await Task.detached(priority: .userInitiated) {
-                let roi = PatternContourEngine.detectFacialPatternROI(from: job.roiR, side: job.side).roi
-                let patterns = PatternContourEngine.extractPatterns(from: job.patR, roiPolygon: roi, config: config)
-                let mesh = PatternContourEngine.extractScaleSutureMesh(from: job.patR, roiPolygon: roi, config: config)
-                return ExtractedContours(roi: roi, patterns: patterns, mesh: mesh)
+                guard let raster = PatternContourEngine.underwaterLuminanceRaster(from: cg, maxDimension: 420) else {
+                    return ExtractedScaleAnalysis.empty
+                }
+                return PatternContourEngine.extractAnalysis(from: raster, side: cSide, config: config, explicitROI: nil)
             }.value
-            return (job.key, result)
+            return (key, result)
         }()
 
         let (qr, cr) = await (qDone, cDone)
         guard !Task.isCancelled else { return }
         if let (k, v) = qr { contourCache[k] = v }
         if let (k, v) = cr { contourCache[k] = v }
+        migrateLegacyPairsIntoAnchorsIfNeeded()
     }
 
-    // MARK: - Head Crop & Live Open-Set Re-Search
+    // MARK: - Head Crop, Tilt-Level & Live Open-Set Re-Match
 
     private func initialCropRect() -> CGRect {
-        if let roi = customQueryROI ?? queryContours?.roi, roi.count >= 3 {
+        if let roi = customQueryROI ?? queryAnalysis?.roi, roi.count >= 3 {
             let minX = max(0.02, roi.map(\.x).min() ?? 0.2)
             let minY = max(0.02, roi.map(\.y).min() ?? 0.2)
             let maxX = min(0.98, roi.map(\.x).max() ?? 0.8)
@@ -1703,25 +2599,33 @@ private struct NotSureCaseDetail: View {
         if stageMode == .compare { stageMode = .contours }
     }
 
-    private func runCroppedLiveSearch(rect: CGRect) async {
+    private func runCroppedLiveSearch(rect: CGRect, rotationDegrees: Double, usePairedSide: Bool) async {
         applyLocalCropROI(rect)
         guard liveSearchAvailable, let image = item.queryImage,
-              let croppedJPEG = NotSureHeadCropper.croppedJPEGData(from: image, normalizedRect: rect) else {
+              let preparedJPEG = SquareOverlayMapper.prepareReMatchJPEG(
+                  from: image,
+                  normalizedRect: rect,
+                  rotationDegrees: rotationDegrees
+              ) else {
             showsCropSheet = false
             return
         }
         isCropResearching = true
         defer { isCropResearching = false; showsCropSheet = false }
-        await runLiveSearch(overridePhotoData: croppedJPEG)
+        await runLiveSearch(overridePhotoData: preparedJPEG, usePairedSide: usePairedSide)
     }
 
-    private func runLiveSearch(overridePhotoData: Data?) async {
+    private func runLiveSearch(overridePhotoData: Data?, usePairedSide: Bool) async {
         guard liveSearchAvailable, !isSearching else { return }
         isSearching = true
         inlineError = nil
         defer { isSearching = false }
         do {
-            try await store.findNotSureCandidates(for: item.id, overridePhotoData: overridePhotoData)
+            try await store.findNotSureCandidates(
+                for: item.id,
+                overridePhotoData: overridePhotoData,
+                usePairedSide: usePairedSide
+            )
             guard !Task.isCancelled else { return }
             showsRejected = false
         } catch is CancellationError {
@@ -1756,6 +2660,23 @@ private struct NotSureCaseDetail: View {
         return CGRect(x: (container.width - w) * 0.5, y: (container.height - h) * 0.5, width: w, height: h)
     }
 
+    fileprivate static func screenPoint(
+        from normalized: ScalePoint,
+        fitted: CGRect,
+        container: CGSize,
+        zoom: CGFloat,
+        pan: CGSize
+    ) -> CGPoint {
+        let ux = fitted.minX + CGFloat(normalized.x) * fitted.width
+        let uy = fitted.minY + CGFloat(normalized.y) * fitted.height
+        let cx = container.width * 0.5
+        let cy = container.height * 0.5
+        return CGPoint(
+            x: cx + (ux - cx) * zoom + pan.width,
+            y: cy + (uy - cy) * zoom + pan.height
+        )
+    }
+
     fileprivate static func polygonPath(_ polygon: [ScalePoint], in rect: CGRect) -> Path {
         var path = Path()
         for (idx, pt) in polygon.enumerated() {
@@ -1767,7 +2688,14 @@ private struct NotSureCaseDetail: View {
     }
 }
 
-// MARK: - Interactive Synced Photo + Numbered Contour Pane
+// MARK: - Interactive Synced Photo + Numbered Contours + Suture Mesh + Draggable Precision Pins
+
+private struct NotSurePanePin: Identifiable {
+    let id: UUID
+    let label: String
+    let point: ScalePoint
+    let source: ManualAnchorPair.Source
+}
 
 private struct NotSurePhotoPane: View {
     let image: NSImage?
@@ -1776,15 +2704,27 @@ private struct NotSurePhotoPane: View {
     let emptyLabel: String
     let accent: Color
     let showContours: Bool
+    let showScaleBadges: Bool
+    let showsSutureMesh: Bool
     let linesOnly: Bool
     let patterns: [DetectedScalePattern]
+    let mesh: ScaleSutureMesh
+    let customLandmarks: [ManualScaleLandmark]
     let highlightedScale: Int?
     let pairedNumbers: Set<Int>
+    let anchors: [NotSurePanePin]
+    let pendingPoint: ScalePoint?
+    let allowsFreeTap: Bool
     let zoomScale: CGFloat
     let panOffset: CGSize
     let onPanChanged: (CGSize) -> Void
     let onPanEnded: (CGSize) -> Void
     let onTapScale: (Int) -> Void
+    let onExcludeScale: ((Int) -> Void)?
+    let onTapNormalizedPoint: (ScalePoint) -> Void
+    let onDragAnchor: (UUID, ScalePoint) -> Void
+    let onDeleteAnchor: (UUID) -> Void
+    let onDeleteLandmark: ((UUID) -> Void)?
 
     var body: some View {
         GeometryReader { geo in
@@ -1799,6 +2739,29 @@ private struct NotSurePhotoPane: View {
                                 .frame(width: geo.size.width, height: geo.size.height)
                         }
 
+                        // Keratin suture mesh layer (optional progressive disclosure)
+                        if showsSutureMesh && !mesh.edges.isEmpty {
+                            let lookup = Dictionary(uniqueKeysWithValues: mesh.vertices.map { ($0.id, $0.point) })
+                            Canvas { ctx, _ in
+                                for edge in mesh.edges {
+                                    let pts = edge.vertexIDs.compactMap { lookup[$0] }
+                                    guard pts.count >= 2 else { continue }
+                                    var path = Path()
+                                    for (i, pt) in pts.enumerated() {
+                                        let p = CGPoint(x: fitted.minX + pt.x * fitted.width, y: fitted.minY + pt.y * fitted.height)
+                                        if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+                                    }
+                                    ctx.stroke(
+                                        path,
+                                        with: .color(Color.white.opacity(edge.isBoundary ? 0.55 : 0.85)),
+                                        lineWidth: edge.isBoundary ? 1.1 : 1.5
+                                    )
+                                }
+                            }
+                            .allowsHitTesting(false)
+                        }
+
+                        // Numbered ocean-masked facial scale contours
                         if showContours && !patterns.isEmpty {
                             Canvas { ctx, _ in
                                 for pat in patterns {
@@ -1806,42 +2769,150 @@ private struct NotSurePhotoPane: View {
                                     let isPaired = pairedNumbers.contains(pat.number)
                                     let path = NotSureCaseDetail.polygonPath(pat.polygon, in: fitted)
                                     if isSelected {
-                                        ctx.fill(path, with: .color(accent.opacity(0.32)))
-                                        ctx.stroke(path, with: .color(.white), lineWidth: 2.4)
+                                        ctx.fill(path, with: .color(accent.opacity(0.30)))
+                                        ctx.stroke(path, with: .color(.white), lineWidth: 2.3)
                                     } else if isPaired {
-                                        ctx.fill(path, with: .color(AdaColors.green.opacity(0.24)))
-                                        ctx.stroke(path, with: .color(AdaColors.green), lineWidth: 2.0)
+                                        ctx.fill(path, with: .color(AdaColors.green.opacity(0.20)))
+                                        ctx.stroke(path, with: .color(AdaColors.green), lineWidth: 1.8)
                                     } else {
-                                        ctx.fill(path, with: .color(accent.opacity(0.10)))
-                                        ctx.stroke(path, with: .color(accent.opacity(0.85)), lineWidth: 1.4)
+                                        ctx.fill(path, with: .color(accent.opacity(showScaleBadges ? 0.10 : 0.04)))
+                                        ctx.stroke(path, with: .color(accent.opacity(showScaleBadges ? 0.82 : 0.35)), lineWidth: showScaleBadges ? 1.4 : 1.0)
                                     }
                                 }
                             }
                             .allowsHitTesting(false)
 
-                            ForEach(patterns) { pat in
-                                let isSelected = highlightedScale == pat.number
-                                let isPaired = pairedNumbers.contains(pat.number)
-                                let pos = CGPoint(
-                                    x: fitted.minX + pat.centroid.x * fitted.width,
-                                    y: fitted.minY + pat.centroid.y * fitted.height
-                                )
-                                Button { onTapScale(pat.number) } label: {
-                                    Text("\(pat.number)")
-                                        .font(.system(size: isSelected ? 10 : 9, weight: .bold).monospacedDigit())
-                                        .foregroundStyle(isSelected ? Color.black : .white)
-                                        .frame(width: isSelected ? 21 : 18, height: isSelected ? 21 : 18)
-                                        .background(
-                                            isSelected ? Color.white : (isPaired ? AdaColors.green : Color.black.opacity(0.68)),
-                                            in: Circle()
-                                        )
-                                        .overlay(
-                                            Circle().stroke(isSelected ? accent : accent.opacity(0.8), lineWidth: 1.2)
-                                        )
+                            if showScaleBadges {
+                                ForEach(patterns) { pat in
+                                    let isSelected = highlightedScale == pat.number
+                                    let isPaired = pairedNumbers.contains(pat.number)
+                                    let pos = CGPoint(
+                                        x: fitted.minX + pat.centroid.x * fitted.width,
+                                        y: fitted.minY + pat.centroid.y * fitted.height
+                                    )
+                                    Button { onTapScale(pat.number) } label: {
+                                        Text("\(pat.number)")
+                                            .font(.system(size: isSelected ? 10 : 9, weight: .bold).monospacedDigit())
+                                            .foregroundStyle(isSelected ? Color.black : .white)
+                                            .frame(width: isSelected ? 21 : 18, height: isSelected ? 21 : 18)
+                                            .background(
+                                                isSelected ? Color.white : (isPaired ? AdaColors.green : Color.black.opacity(0.68)),
+                                                in: Circle()
+                                            )
+                                            .overlay(
+                                                Circle().stroke(isSelected ? accent : accent.opacity(0.8), lineWidth: 1.2)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .position(pos)
+                                    .contextMenu {
+                                        if let onExcludeScale {
+                                            Button(role: .destructive) {
+                                                onExcludeScale(pat.number)
+                                            } label: {
+                                                Label("Exclude false scale #\(pat.number)", systemImage: "eye.slash")
+                                            }
+                                        }
+                                    }
                                 }
-                                .buttonStyle(.plain)
-                                .position(pos)
                             }
+                        }
+
+                        // Scientist-added manual scale landmarks (M1, M2...)
+                        if showContours {
+                            ForEach(customLandmarks) { lm in
+                                let pos = CGPoint(
+                                    x: fitted.minX + lm.point.x * fitted.width,
+                                    y: fitted.minY + lm.point.y * fitted.height
+                                )
+                                Text(lm.label)
+                                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(Color.black)
+                                    .padding(.horizontal, 5)
+                                    .frame(height: 18)
+                                    .background(Color.yellow, in: Capsule())
+                                    .overlay(Capsule().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                                    .position(pos)
+                                    .contextMenu {
+                                        if let onDeleteLandmark {
+                                            Button(role: .destructive) {
+                                                onDeleteLandmark(lm.id)
+                                            } label: {
+                                                Label("Delete \(lm.label)", systemImage: "trash")
+                                            }
+                                        }
+                                    }
+                            }
+                        }
+
+                        // Free-tap capture surface (placed BEFORE draggable pins so pins win hit-testing)
+                        if allowsFreeTap {
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onTapGesture { location in
+                                    guard fitted.width > 10, fitted.height > 10 else { return }
+                                    let nx = (location.x - fitted.minX) / fitted.width
+                                    let ny = (location.y - fitted.minY) / fitted.height
+                                    guard nx >= 0, nx <= 1, ny >= 0, ny <= 1 else { return }
+                                    onTapNormalizedPoint(ScalePoint(x: nx, y: ny))
+                                }
+                        }
+
+                        // Pending first-click crosshair pin on Sighting
+                        if let pendingPoint {
+                            let pos = CGPoint(
+                                x: fitted.minX + pendingPoint.x * fitted.width,
+                                y: fitted.minY + pendingPoint.y * fitted.height
+                            )
+                            ZStack {
+                                Circle()
+                                    .stroke(Color.cyan, style: StrokeStyle(lineWidth: 2, dash: [3, 2]))
+                                    .frame(width: 24, height: 24)
+                                Circle()
+                                    .fill(Color.cyan)
+                                    .frame(width: 6, height: 6)
+                            }
+                            .position(pos)
+                            .allowsHitTesting(false)
+                        }
+
+                        // Draggable precision registration pins (A, B, C, D...)
+                        ForEach(anchors, id: \.id) { anchor in
+                            let pos = CGPoint(
+                                x: fitted.minX + anchor.point.x * fitted.width,
+                                y: fitted.minY + anchor.point.y * fitted.height
+                            )
+                            let pinColor: Color = anchor.source == .aiInlier ? AdaColors.green : Color.cyan
+                            ZStack {
+                                Circle()
+                                    .fill(pinColor)
+                                    .frame(width: 22, height: 22)
+                                    .overlay(Circle().stroke(Color.white, lineWidth: 1.8))
+                                    .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+                                Text(anchor.label)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color.black)
+                            }
+                            .frame(width: 32, height: 32)
+                            .contentShape(Circle())
+                            .position(pos)
+                            .gesture(
+                                DragGesture(minimumDistance: 1)
+                                    .onChanged { value in
+                                        guard fitted.width > 10, fitted.height > 10 else { return }
+                                        let nx = (value.location.x - fitted.minX) / fitted.width
+                                        let ny = (value.location.y - fitted.minY) / fitted.height
+                                        onDragAnchor(anchor.id, ScalePoint(x: nx, y: ny))
+                                    }
+                            )
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    onDeleteAnchor(anchor.id)
+                                } label: {
+                                    Label("Remove Pin \(anchor.label)", systemImage: "trash")
+                                }
+                            }
+                            .help("Drag Pin \(anchor.label) to refine pixel warp · Right-click to remove")
                         }
                     }
                     .frame(width: geo.size.width, height: geo.size.height)
@@ -1896,29 +2967,34 @@ private struct NotSurePhotoPane: View {
     }
 }
 
-// MARK: - Head Crop & Open-Set Re-Search Sheet
+// MARK: - Human-Assisted Head Crop, Tilt-Level & Paired Re-Match Sheet
 
 private struct NotSureHeadCropSheet: View {
     let image: NSImage?
+    let hasCompanionSide: Bool
     let initialRect: CGRect
     let liveSearchAvailable: Bool
     let isSearching: Bool
     let onApplyLocal: (CGRect) -> Void
-    let onCropAndResearch: (CGRect) -> Void
+    let onCropAndResearch: (CGRect, Double, Bool) -> Void
     let onCancel: () -> Void
 
     @State private var cropRect: CGRect
+    @State private var rotationDegrees: Double = 0
+    @State private var usePairedSide: Bool
 
     init(
         image: NSImage?,
+        hasCompanionSide: Bool,
         initialRect: CGRect,
         liveSearchAvailable: Bool,
         isSearching: Bool,
         onApplyLocal: @escaping (CGRect) -> Void,
-        onCropAndResearch: @escaping (CGRect) -> Void,
+        onCropAndResearch: @escaping (CGRect, Double, Bool) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.image = image
+        self.hasCompanionSide = hasCompanionSide
         self.initialRect = initialRect
         self.liveSearchAvailable = liveSearchAvailable
         self.isSearching = isSearching
@@ -1926,16 +3002,20 @@ private struct NotSureHeadCropSheet: View {
         self.onCropAndResearch = onCropAndResearch
         self.onCancel = onCancel
         self._cropRect = State(initialValue: initialRect)
+        self._usePairedSide = State(initialValue: hasCompanionSide)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Crop head region")
+                Text("Crop & level head")
                     .font(.system(size: 16, weight: .semibold))
                 Spacer()
-                Button("Reset") { cropRect = CGRect(x: 0.20, y: 0.18, width: 0.60, height: 0.62) }
-                    .buttonStyle(NotSurePillButtonStyle(.subtle, height: 28))
+                Button("Reset") {
+                    cropRect = CGRect(x: 0.20, y: 0.18, width: 0.60, height: 0.62)
+                    rotationDegrees = 0
+                }
+                .buttonStyle(NotSurePillButtonStyle(.subtle, height: 28))
             }
 
             GeometryReader { geo in
@@ -1947,6 +3027,7 @@ private struct NotSureHeadCropSheet: View {
                             .resizable()
                             .scaledToFit()
                             .frame(width: geo.size.width, height: geo.size.height)
+                            .rotationEffect(.degrees(rotationDegrees))
 
                         let box = CGRect(
                             x: fitted.minX + cropRect.minX * fitted.width,
@@ -1954,9 +3035,16 @@ private struct NotSureHeadCropSheet: View {
                             width: cropRect.width * fitted.width,
                             height: cropRect.height * fitted.height
                         )
+                        // Subtle horizon reference line inside crop box for head leveling
+                        Path { path in
+                            path.move(to: CGPoint(x: box.minX, y: box.midY))
+                            path.addLine(to: CGPoint(x: box.maxX, y: box.midY))
+                        }
+                        .stroke(Color.cyan.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+
                         Rectangle()
                             .stroke(Color.cyan, lineWidth: 2)
-                            .background(Color.cyan.opacity(0.10))
+                            .background(Color.cyan.opacity(0.08))
                             .frame(width: box.width, height: box.height)
                             .position(x: box.midX, y: box.midY)
                     }
@@ -1983,8 +3071,33 @@ private struct NotSureHeadCropSheet: View {
             }
             .frame(height: 300)
 
+            HStack(spacing: 14) {
+                HStack(spacing: 8) {
+                    Image(systemName: "rotate.right")
+                        .font(.system(size: 12))
+                        .foregroundStyle(AdaColors.secondaryInk)
+                    Text("Level tilt")
+                        .font(.system(size: 12, weight: .medium))
+                    Slider(value: $rotationDegrees, in: -30...30, step: 1)
+                        .tint(AdaColors.navy)
+                        .frame(width: 150)
+                    Text("\(Int(rotationDegrees.rounded()))°")
+                        .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(AdaColors.secondaryInk)
+                        .frame(width: 34, alignment: .trailing)
+                }
+
+                Spacer()
+
+                if hasCompanionSide && liveSearchAvailable {
+                    Toggle("Paired L+R", isOn: $usePairedSide)
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: 12, weight: .medium))
+                }
+            }
+
             HStack(spacing: 10) {
-                Text("Drag across the head scales")
+                Text("Drag to exclude water or glare")
                     .font(.system(size: 11.5))
                     .foregroundStyle(AdaColors.secondaryInk)
                 Spacer()
@@ -1995,12 +3108,12 @@ private struct NotSureHeadCropSheet: View {
                     .buttonStyle(NotSurePillButtonStyle(.secondary, height: 34))
                 if liveSearchAvailable {
                     Button {
-                        onCropAndResearch(cropRect)
+                        onCropAndResearch(cropRect, rotationDegrees, usePairedSide)
                     } label: {
                         if isSearching {
                             ProgressView().controlSize(.small)
                         } else {
-                            Text("Re-search")
+                            Text("Re-match")
                         }
                     }
                     .buttonStyle(NotSurePillButtonStyle(.primary, height: 34))
@@ -2009,7 +3122,7 @@ private struct NotSureHeadCropSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 540)
+        .frame(width: 560)
         .background(AdaColors.card)
         .foregroundStyle(AdaColors.ink)
     }
@@ -2154,7 +3267,7 @@ private extension TurtlePhotoSide {
 }
 
 #if DEBUG
-#Preview("Not Sure · Inbox") {
+#Preview("Not Sure · Inbox (+ Mobile Sync)") {
     NotSureWorkspaceView(
         store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork, section: .scientistReview, withNotSureCases: true),
         onOpenPractice: {}
@@ -2163,7 +3276,7 @@ private extension TurtlePhotoSide {
     .preferredColorScheme(.light)
 }
 
-#Preview("Not Sure · Compare (Clean + Paired L/R)") {
+#Preview("Not Sure · Compare + AI RANSAC") {
     NotSureWorkspaceView(
         store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork, section: .scientistReview, withNotSureCases: true, openFirstNotSureCase: true),
         onOpenPractice: {},
@@ -2173,7 +3286,7 @@ private extension TurtlePhotoSide {
     .preferredColorScheme(.light)
 }
 
-#Preview("Not Sure · Contours # (Zero .fgp)") {
+#Preview("Not Sure · Contours # (Ocean-Masked + Manual Mark)") {
     NotSureWorkspaceView(
         store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork, section: .scientistReview, withNotSureCases: true, openFirstNotSureCase: true),
         onOpenPractice: {},
@@ -2183,7 +3296,7 @@ private extension TurtlePhotoSide {
     .preferredColorScheme(.light)
 }
 
-#Preview("Not Sure · Align (3-Tap Warped Overlay)") {
+#Preview("Not Sure · Align (Pixel-Warped Curtain + Pins)") {
     NotSureWorkspaceView(
         store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork, section: .scientistReview, withNotSureCases: true, openFirstNotSureCase: true),
         onOpenPractice: {},

@@ -87,6 +87,11 @@ enum NotSureReviewAction {
     case resolveAsNewTurtle(note: String)
     case requestBetterPhoto(note: String)
     case saveVerifiedPairs(candidateID: String, pairs: [PatternPairLink])
+    case saveManualAnchors(candidateID: String, anchors: [ManualAnchorPair])
+    case toggleExcludedQueryScale(Int)
+    case addCustomQueryLandmark(ManualScaleLandmark)
+    case removeCustomQueryLandmark(UUID)
+    case clearManualScaleEdits
     case reopen
 }
 
@@ -116,6 +121,7 @@ struct EscalatedNotSureCase: Codable, Identifiable {
     var candidates: [EscalatedNotSureCandidate]
     let submittedBy: String
     let isExample: Bool
+    var sourceLogID: UUID? = nil
     var createdAt = Date()
     private(set) var updatedAt = Date()
     private(set) var decision: NotSureReviewDecision = .pending
@@ -124,10 +130,15 @@ struct EscalatedNotSureCase: Codable, Identifiable {
     private(set) var note = ""
     private(set) var unknownOutcome: NotSureUnknownOutcome? = nil
     private(set) var verifiedPairsByCandidateID: [String: [PatternPairLink]]? = nil
+    private(set) var manualAnchorsByCandidateID: [String: [ManualAnchorPair]]? = nil
+    private(set) var excludedQueryScaleNumbers: Set<Int>? = nil
+    private(set) var customQueryLandmarks: [ManualScaleLandmark]? = nil
+    var reMatchDeltasByCandidateID: [String: CandidateReMatchDelta]? = nil
 
     var queryImage: NSImage? { photo.image }
     var queryPhotoData: Data { photo.data }
     var companionImage: NSImage? { companion?.image }
+    var isFromMobileQueue: Bool { sourceLogID != nil }
 
     var decisionSummaryTitle: String {
         switch decision {
@@ -139,6 +150,16 @@ struct EscalatedNotSureCase: Codable, Identifiable {
 
     func verifiedPairs(for candidateID: String) -> [PatternPairLink] {
         verifiedPairsByCandidateID?[candidateID] ?? []
+    }
+
+    func manualAnchors(for candidateID: String) -> [ManualAnchorPair] {
+        manualAnchorsByCandidateID?[candidateID] ?? []
+    }
+
+    var savedAnchorMaxCount: Int {
+        let pairMax = verifiedPairsByCandidateID?.values.map(\.count).max() ?? 0
+        let anchorMax = manualAnchorsByCandidateID?.values.map(\.count).max() ?? 0
+        return max(pairMax, anchorMax)
     }
 
     func canRecommend(_ candidate: EscalatedNotSureCandidate) -> Bool {
@@ -204,6 +225,36 @@ struct EscalatedNotSureCase: Codable, Identifiable {
                 map[candidateID] = normalized
             }
             verifiedPairsByCandidateID = map.isEmpty ? nil : map
+        case .saveManualAnchors(let candidateID, let anchors):
+            guard candidates.contains(where: { $0.id == candidateID }) else {
+                throw NotSureReviewError.invalidCandidate
+            }
+            var map = manualAnchorsByCandidateID ?? [:]
+            if anchors.isEmpty {
+                map.removeValue(forKey: candidateID)
+            } else {
+                map[candidateID] = anchors
+            }
+            manualAnchorsByCandidateID = map.isEmpty ? nil : map
+        case .toggleExcludedQueryScale(let scaleNumber):
+            var set = excludedQueryScaleNumbers ?? []
+            if set.contains(scaleNumber) {
+                set.remove(scaleNumber)
+            } else {
+                set.insert(scaleNumber)
+            }
+            excludedQueryScaleNumbers = set.isEmpty ? nil : set
+        case .addCustomQueryLandmark(let landmark):
+            var list = customQueryLandmarks ?? []
+            list.append(landmark)
+            customQueryLandmarks = list
+        case .removeCustomQueryLandmark(let landmarkID):
+            var list = customQueryLandmarks ?? []
+            list.removeAll { $0.id == landmarkID }
+            customQueryLandmarks = list.isEmpty ? nil : list
+        case .clearManualScaleEdits:
+            excludedQueryScaleNumbers = nil
+            customQueryLandmarks = nil
         case .reopen:
             break
         }

@@ -129,10 +129,10 @@ enum PreviewFixtures {
             queryROI: [],
             candidates: [
                 EscalatedNotSureCandidate(
-                    id: "preview-cand-surya",
+                    id: "00000000-0000-4000-8000-000000000002",
                     rank: 1,
-                    name: "Turtle #019 · Surya",
-                    profileCode: "PEN-CM-019",
+                    name: "Turtle #002 · Aikane",
+                    profileCode: "000002",
                     side: .left,
                     sideMatches: true,
                     dateText: "14 Aug 2026",
@@ -144,10 +144,10 @@ enum PreviewFixtures {
                     isBundledExample: true
                 ),
                 EscalatedNotSureCandidate(
-                    id: "preview-cand-amina",
+                    id: "00000000-0000-4000-8000-000000000001",
                     rank: 2,
-                    name: "Turtle #007 · Amina",
-                    profileCode: "PEN-CM-007",
+                    name: "Turtle #001 · Amina",
+                    profileCode: "000001",
                     side: .left,
                     sideMatches: true,
                     dateText: "03 May 2026",
@@ -159,10 +159,10 @@ enum PreviewFixtures {
                     isBundledExample: true
                 ),
                 EscalatedNotSureCandidate(
-                    id: "preview-cand-ghost",
+                    id: "00000000-0000-4000-8000-000000000003",
                     rank: 3,
-                    name: "Turtle #014 · Ghost",
-                    profileCode: "PEN-CM-014",
+                    name: "Turtle #003 · Ghost",
+                    profileCode: "000003",
                     side: .left,
                     sideMatches: true,
                     dateText: "12 Jun 2026",
@@ -174,8 +174,9 @@ enum PreviewFixtures {
                     isBundledExample: true
                 ),
             ],
-            submittedBy: "Ranger Wayan",
-            isExample: true
+            submittedBy: "Mobile Patrol",
+            isExample: true,
+            sourceLogID: UUID(uuidString: "00000000-0000-4000-8999-000000000114")
         )
 
         let queryRight = samplePhoto(named: "Zizo1_R.jpg", fallbackColor: .systemBlue)
@@ -189,10 +190,10 @@ enum PreviewFixtures {
             queryROI: [],
             candidates: [
                 EscalatedNotSureCandidate(
-                    id: "preview-cand-zizo",
+                    id: "00000000-0000-4000-8000-000000000004",
                     rank: 1,
-                    name: "Turtle #023 · Zizo",
-                    profileCode: "PEN-CM-023",
+                    name: "Turtle #004 · Zizo",
+                    profileCode: "000004",
                     side: .right,
                     sideMatches: true,
                     dateText: "22 Jul 2026",
