@@ -617,7 +617,9 @@ final class AppStore: ObservableObject {
             for reference in references {
                 seenIDs.insert(reference.id)
                 let prev = oldByID[reference.id]
-                let photo = reference.photo ?? prev?.photo
+                let photo = NotSureReviewPhoto.refreshed(
+                    reference.photo, side: reference.side, previous: prev?.photo, previousSide: prev?.side
+                )
                 refreshed.append(EscalatedNotSureCandidate(
                     id: reference.id,
                     rank: reference.rank,
