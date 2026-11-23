@@ -1742,63 +1742,130 @@ struct I3SWorkspaceView: View {
     }
 
     private func loadImageFile(from url: URL, forSecondary: Bool) {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+
         guard let data = try? Data(contentsOf: url),
               let image = NSImage(data: data) else {
             statusBannerMessage = "Could not decode image file \(url.lastPathComponent)."
             return
         }
+
+        // Check if a companion .fgp file exists next to the image, but do NOT auto-apply it so the user can annotate freely
+        let fgpURL = url.deletingPathExtension().appendingPathExtension("fgp")
+        let companion: I3SFingerprint?
+        if let fgpData = try? Data(contentsOf: fgpURL),
+           let parsedFgp = try? I3SFingerprintFile.read(from: fgpData, filename: fgpURL.lastPathComponent) {
+            companion = parsedFgp
+        } else {
+            companion = nil
+        }
+
+        applyImportedImage(
+            image,
+            rawData: data,
+            title: url.lastPathComponent,
+            companion: companion,
+            forSecondary: forSecondary
+        )
+    }
+
+    private func applyImportedImage(
+        _ image: NSImage,
+        rawData: Data?,
+        title: String,
+        companion: I3SFingerprint?,
+        forSecondary: Bool
+    ) {
         canvasZoom = 1.0
         canvasPan = .zero
 
         invalidateSearchResults()
-        if forSecondary { secondaryIsBundled = false; secondaryPhotoSide = .right } else { primaryIsBundled = false }
-
-        // Check if a companion .fgp file exists next to the image, but do NOT auto-apply it so the user can annotate freely
-        let fgpURL = url.deletingPathExtension().appendingPathExtension("fgp")
-        if let fgpData = try? Data(contentsOf: fgpURL),
-           let parsedFgp = try? I3SFingerprintFile.read(from: fgpData, filename: fgpURL.lastPathComponent) {
-            if forSecondary { secondaryCompanionFgp = parsedFgp } else { primaryCompanionFgp = parsedFgp }
-        } else {
-            if forSecondary { secondaryCompanionFgp = nil } else { primaryCompanionFgp = nil }
-        }
-
         if forSecondary {
+            secondaryIsBundled = false
+            secondaryPhotoSide = .right
+            secondaryCompanionFgp = companion
             secondaryImage = image
-            secondaryImageData = jpegData(from: image) ?? data
-            secondaryTitle = url.lastPathComponent
+            secondaryImageData = jpegData(from: image) ?? rawData
+            secondaryTitle = title
             secondaryFingerprint = I3SFingerprint()
         } else {
+            primaryIsBundled = false
+            primaryCompanionFgp = companion
             queryImage = image
-            queryImageData = jpegData(from: image) ?? data
-            queryTitle = url.lastPathComponent
+            queryImageData = jpegData(from: image) ?? rawData
+            queryTitle = title
             fingerprint = I3SFingerprint()
             undoStack.removeAll()
             redoStack.removeAll()
         }
         activeStep = .ref1
-        statusBannerMessage = "Imported '\(url.lastPathComponent)' — Click Reference Point 1 (Beak edge) on the photo to begin."
+        statusBannerMessage = "Imported '\(title)' — Click Reference Point 1 (Beak edge) on the photo to begin."
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                    guard let data = item as? Data,
-                          let url = URL(dataRepresentation: data, relativeTo: nil) else {
-                        return
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                    let resolvedURL: URL?
+                    if let url = item as? URL {
+                        resolvedURL = url
+                    } else if let data = item as? Data {
+                        resolvedURL = URL(dataRepresentation: data, relativeTo: nil)
+                    } else {
+                        resolvedURL = nil
                     }
                     Task { @MainActor in
+                        if let error {
+                            statusBannerMessage = "Drop failed: \(error.localizedDescription)"
+                            return
+                        }
+                        guard let url = resolvedURL else {
+                            statusBannerMessage = "Could not read dropped file."
+                            return
+                        }
                         if url.pathExtension.lowercased() == "fgp" {
-                            if let fgpBytes = try? Data(contentsOf: url),
-                               let parsed = try? I3SFingerprintFile.read(from: fgpBytes, filename: url.lastPathComponent) {
+                            guard activeImage != nil else {
+                                statusBannerMessage = "Import a turtle photo first before loading a .fgp fingerprint file."
+                                return
+                            }
+                            let didAccess = url.startAccessingSecurityScopedResource()
+                            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+                            do {
+                                let fgpBytes = try Data(contentsOf: url)
+                                let parsed = try I3SFingerprintFile.read(from: fgpBytes, filename: url.lastPathComponent)
                                 pushUndoState()
                                 if editingSecondary { secondaryFingerprint = parsed } else { fingerprint = parsed }
                                 syncActiveStepToFingerprint()
-                                statusBannerMessage = "Loaded dropped .fgp file '\(url.lastPathComponent)'."
+                                statusBannerMessage = "Loaded dropped .fgp file '\(url.lastPathComponent)' (\(parsed.keypoints.count) keypoints)."
+                            } catch {
+                                statusBannerMessage = "Failed to load .fgp file: \(error.localizedDescription)"
                             }
                         } else {
                             loadImageFile(from: url, forSecondary: editingSecondary)
                         }
+                    }
+                }
+                return true
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                    Task { @MainActor in
+                        if let error {
+                            statusBannerMessage = "Image drop failed: \(error.localizedDescription)"
+                            return
+                        }
+                        guard let data, let image = NSImage(data: data) else {
+                            statusBannerMessage = "Could not decode dropped image."
+                            return
+                        }
+                        let sideLabel = editingSecondary ? "right" : querySide.rawValue
+                        applyImportedImage(
+                            image,
+                            rawData: data,
+                            title: "dropped-\(sideLabel)-photo.jpg",
+                            companion: nil,
+                            forSecondary: editingSecondary
+                        )
                     }
                 }
                 return true
@@ -1811,11 +1878,11 @@ struct I3SWorkspaceView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "fgp") ?? .data]
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = try? Data(contentsOf: url) else {
+        guard panel.runModal() == .OK, let url = panel.url else {
             return
         }
         do {
+            let data = try Data(contentsOf: url)
             let parsed = try I3SFingerprintFile.read(from: data, filename: url.lastPathComponent)
             pushUndoState()
             if editingSecondary {
@@ -1826,18 +1893,24 @@ struct I3SWorkspaceView: View {
             syncActiveStepToFingerprint()
             statusBannerMessage = "Imported .fgp fingerprint '\(url.lastPathComponent)' (\(parsed.keypoints.count) keypoints)."
         } catch {
-            statusBannerMessage = error.localizedDescription
+            statusBannerMessage = "Failed to import .fgp: \(error.localizedDescription)"
         }
     }
 
     private func exportFgpFile() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = (queryTitle as NSString).deletingPathExtension + ".fgp"
+        let activeTitle = editingSecondary ? secondaryTitle : queryTitle
+        let baseName = (activeTitle as NSString).deletingPathExtension
+        panel.nameFieldStringValue = (baseName.isEmpty ? "turtle-fingerprint" : baseName) + ".fgp"
         panel.allowedContentTypes = [UTType(filenameExtension: "fgp") ?? .data]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let bytes = I3SFingerprintFile.write(activeFingerprint)
-        try? bytes.write(to: url, options: .atomic)
-        statusBannerMessage = "Exported binary I3S 'IP40' fingerprint to \(url.lastPathComponent)."
+        do {
+            let bytes = I3SFingerprintFile.write(activeFingerprint)
+            try bytes.write(to: url, options: .atomic)
+            statusBannerMessage = "Exported binary I3S 'IP40' fingerprint to \(url.lastPathComponent)."
+        } catch {
+            statusBannerMessage = "Export .fgp failed: \(error.localizedDescription)"
+        }
     }
 
     private func runDatabaseSearch() async {
@@ -3376,3 +3449,11 @@ private func drawFingerprintOverlay(
         context.draw(label, at: CGPoint(x: p.x, y: p.y - 15))
     }
 }
+
+#if DEBUG
+#Preview("I3S Pattern ID · Import & Export") {
+    I3SWorkspaceView(store: PreviewFixtures.makeDemoStore(persona: .demoResearcher, section: .identification))
+        .frame(width: 1400, height: 880)
+        .preferredColorScheme(.light)
+}
+#endif

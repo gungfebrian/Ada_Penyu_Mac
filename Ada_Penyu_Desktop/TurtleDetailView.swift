@@ -184,9 +184,9 @@ struct BodyConditionTab: View {
         }
     }
 
-    /// Newest first so the freshest record is auto-expanded.
+    /// Newest first so the freshest record is auto-expanded; filtered by the active chip.
     private var historyLogs: [TurtleLogSummary] {
-        bodyLogs.sorted { lhs, rhs in
+        bodyLogs.filter(matchesFilter).sorted { lhs, rhs in
             let formatter = APIFormatters.display
             return (formatter.date(from: lhs.date) ?? .distantPast) > (formatter.date(from: rhs.date) ?? .distantPast)
         }
@@ -266,27 +266,29 @@ private struct DiagramFilterChips: View {
     @Binding var filter: BodyConditionTab.DiagramFilter
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(BodyConditionTab.DiagramFilter.allCases) { option in
-                Button {
-                    withAnimation(.easeOut(duration: 0.12)) { filter = option }
-                } label: {
-                    Text(option.title)
-                        .font(.system(size: 11, weight: filter == option ? .semibold : .regular))
-                        .foregroundStyle(filter == option ? .white : AdaColors.secondaryInk)
-                        .padding(.horizontal, 11)
-                        .frame(height: 26)
-                        .background(filter == option ? AdaColors.navy : Color.clear)
-                        .clipShape(Capsule())
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 0) {
+                ForEach(BodyConditionTab.DiagramFilter.allCases) { option in
+                    Button {
+                        withAnimation(.easeOut(duration: 0.12)) { filter = option }
+                    } label: {
+                        Text(option.title)
+                            .font(.system(size: 11, weight: filter == option ? .semibold : .regular))
+                            .foregroundStyle(filter == option ? .white : AdaColors.secondaryInk)
+                            .padding(.horizontal, 11)
+                            .frame(height: 26)
+                            .background(filter == option ? AdaColors.navy : Color.clear)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(option.title)
+                    .accessibilityAddTraits(filter == option ? .isSelected : [])
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.title)
-                .accessibilityAddTraits(filter == option ? .isSelected : [])
             }
+            .padding(2)
+            .background(Color.black.opacity(0.045))
+            .clipShape(Capsule())
         }
-        .padding(2)
-        .background(Color.black.opacity(0.045))
-        .clipShape(Capsule())
     }
 }
 
@@ -415,9 +417,13 @@ private struct BodyConditionHistoryCard: View {
                 .accessibilityLabel("Export body condition history")
             }
 
-            VStack(spacing: 10) {
-                ForEach(Array(logs.enumerated()), id: \.element.id) { index, log in
-                    BodyConditionEntry(log: log, initiallyExpanded: index == 0, onOpenSighting: onOpenSighting)
+            if logs.isEmpty {
+                InlineEmptyState(text: "No body condition records match this filter.")
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(Array(logs.enumerated()), id: \.element.id) { index, log in
+                        BodyConditionEntry(log: log, initiallyExpanded: index == 0, onOpenSighting: onOpenSighting)
+                    }
                 }
             }
         }
@@ -680,16 +686,16 @@ private struct TurtleSummaryCard: View {
                 DetailMetric(title: "Total sightings", value: String(format: "%02d", turtle.sightings))
             }
             Button(action: onToggleFavorite) {
-                Image(systemName: isFavorite ? "heart.fill" : "heart")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(isFavorite ? AdaColors.accent : AdaColors.ink)
+                Image(systemName: isFavorite ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isFavorite ? .white : AdaColors.ink)
                     .frame(width: 29, height: 29)
-                    .background(Color.black.opacity(0.035))
+                    .background(isFavorite ? AdaColors.navy : Color.black.opacity(0.035))
                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
             .buttonStyle(.plain)
-            .help(isFavorite ? "Remove from favorites" : "Favorite")
-            .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
+            .help(isFavorite ? "Remove from watchlist" : "Add to watchlist")
+            .accessibilityLabel(isFavorite ? "Remove from watchlist" : "Add to watchlist")
 
             Button(action: onExport) {
                 Image(systemName: "arrow.down")
@@ -799,3 +805,35 @@ private struct InlineEmptyState: View {
             .padding(.vertical, 12)
     }
 }
+
+#if DEBUG
+#Preview("Turtle Detail · Overview & Body Condition") {
+    @Previewable @State var isFavorite = true
+    let detail = PreviewFixtures.makeSampleDetail()
+
+    TurtleDetailView(
+        turtle: PreviewFixtures.injuredTurtle,
+        detail: detail,
+        isFavorite: isFavorite,
+        onToggleFavorite: { isFavorite.toggle() },
+        onExport: {}
+    )
+    .background(AdaColors.canvas)
+    .environment(\.turtlePhotoLoader, PreviewFixtures.photoLoader)
+    .frame(width: 1120, height: 780)
+    .preferredColorScheme(.light)
+}
+
+#Preview("Body Condition Diagram & History") {
+    let detail = PreviewFixtures.makeSampleDetail()
+
+    ScrollView {
+        BodyConditionTab(logs: detail.logs, onExport: {}, onOpenSighting: { _ in })
+            .padding(24)
+    }
+    .background(AdaColors.canvas)
+    .environment(\.turtlePhotoLoader, PreviewFixtures.photoLoader)
+    .frame(width: 1120, height: 740)
+    .preferredColorScheme(.light)
+}
+#endif

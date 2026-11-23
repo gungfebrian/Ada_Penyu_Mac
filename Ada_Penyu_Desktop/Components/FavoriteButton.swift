@@ -1,24 +1,36 @@
 import SwiftUI
 
+/// Toggles whether an individual sea turtle is tracked on the account's watchlist.
 struct FavoriteButton: View {
     let isFavorite: Bool
+    var isVisible: Bool = true
     let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isFavorite ? "heart.fill" : "heart")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(isFavorite ? AdaColors.accent : AdaColors.secondaryInk)
-                .frame(width: 28, height: 28)
+            Image(systemName: isFavorite ? "bookmark.fill" : "bookmark")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(isFavorite ? AdaColors.navy : (isHovered ? AdaColors.ink : AdaColors.secondaryInk))
+                .frame(width: 30, height: 30)
                 .background(
-                    isFavorite ? AdaColors.accent.opacity(0.14) : Color.black.opacity(0.045),
+                    isFavorite
+                        ? AdaColors.navy.opacity(isHovered ? 0.14 : 0.09)
+                        : (isHovered ? Color.black.opacity(0.06) : Color.clear),
                     in: Circle()
+                )
+                .overlay(
+                    Circle()
+                        .stroke(isFavorite ? AdaColors.navy.opacity(0.16) : (isHovered ? AdaColors.line : .clear), lineWidth: 1)
                 )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.15), value: isFavorite)
-        .help(isFavorite ? "Remove from favorites" : "Add to favorites")
-        .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
+        .opacity(isFavorite || isVisible || isHovered ? 1 : 0.35)
+        .onHover { isHovered = $0 }
+        .animation(.easeInOut(duration: 0.14), value: isFavorite)
+        .animation(.easeInOut(duration: 0.14), value: isHovered)
+        .help(isFavorite ? "Remove from watchlist" : "Add to watchlist")
+        .accessibilityLabel(isFavorite ? "Remove from watchlist" : "Add to watchlist")
     }
 }

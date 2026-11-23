@@ -68,8 +68,26 @@ struct DashboardQuery: Hashable, Sendable {
     var species: TurtleSpecies?
 
     static var lastTwelveMonths: DashboardQuery {
-        let now = Date()
-        return DashboardQuery(since: Calendar.current.date(byAdding: .month, value: -11, to: now), until: now)
+        lastMonths(12)
+    }
+
+    static func lastMonths(_ count: Int, species: TurtleSpecies? = nil, now: Date = Date()) -> DashboardQuery {
+        let clamped = max(1, min(60, count))
+        let start = Calendar.current.date(byAdding: .month, value: -(clamped - 1), to: now)
+        return DashboardQuery(since: start, until: now, species: species)
+    }
+
+    /// Number of calendar months spanned by `[since, until]`, defaulting to 12.
+    var resolvedMonthCount: Int {
+        let end = until ?? Date()
+        guard let since else { return 12 }
+        let cal = Calendar.current
+        let startComps = cal.dateComponents([.year, .month], from: since)
+        let endComps = cal.dateComponents([.year, .month], from: end)
+        guard let sy = startComps.year, let sm = startComps.month,
+              let ey = endComps.year, let em = endComps.month else { return 12 }
+        let diff = (ey - sy) * 12 + (em - sm) + 1
+        return max(1, min(60, diff))
     }
 
     var queryItems: [URLQueryItem] {
@@ -177,6 +195,14 @@ enum ExportFormat: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String { rawValue.uppercased() == "XLSX" ? "XLSX" : rawValue.uppercased() }
     var fileExtension: String { rawValue }
+
+    var acceptHeader: String {
+        switch self {
+        case .csv: "text/csv, */*"
+        case .xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*"
+        case .pdf: "application/pdf, */*"
+        }
+    }
 }
 
 struct ExportRequest: Hashable, Sendable {
@@ -267,6 +293,15 @@ struct TurtleDetailData {
     var sightingLogs: [TurtleLogSummary] { logs.filter { !$0.isBodyConditionRecord } }
 }
 
+/// Unidentified field sighting saved via Mobile "Match later / Waiting to Match" (`turtle_id == nil`).
+nonisolated struct PendingMobileSighting: Identifiable, Hashable, Sendable {
+    let id: UUID
+    let observedAt: Date
+    let locationName: String
+    let notes: String?
+    let photoPaths: [String]
+}
+
 protocol TurtleRepository: AnyObject {
     func listIndividuals(query: IndividualQuery) async throws -> Page<Turtle>
     func listFavorites() async throws -> [Turtle]
@@ -279,6 +314,8 @@ protocol TurtleRepository: AnyObject {
     func matchPhotoPair(leftData: Data, rightData: Data, limit: Int) async throws -> MatchSearchOutcome
     func fetchOverlayAnnotations(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> [OverlayAnnotationItem]
     func fetchOverlayPNG(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> Data
+    func listPendingSightings(limit: Int) async throws -> [PendingMobileSighting]
+    func resolvePendingSighting(logID: UUID, turtleID: UUID, method: String, confidence: Double?, notes: String?) async throws
     func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String
     func createIndividual(_ draft: IndividualDraft) async throws -> Turtle
     func fetchPhotoData(pathOrURL: String) async throws -> Data
@@ -300,6 +337,12 @@ extension TurtleRepository {
     func fetchOverlayPNG(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int = 35) async throws -> Data {
         Data()
     }
+
+    func listPendingSightings(limit: Int = 50) async throws -> [PendingMobileSighting] {
+        []
+    }
+
+    func resolvePendingSighting(logID: UUID, turtleID: UUID, method: String = "manual", confidence: Double? = nil, notes: String? = nil) async throws {}
 
     func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String {
         "/api/v1/individuals/\(individualID.uuidString)/photos/\(side.rawValue)"
@@ -755,7 +798,8 @@ final class RemoteTurtleRepository: TurtleRepository {
         let species = dto.species.map {
             SpeciesSummary(id: $0.species, species: TurtleSpecies(apiValue: $0.species), individuals: $0.individuals, sightings: $0.sightings)
         }
-        return DashboardSnapshot(months: dto.months.map { .init(month: $0.month, sightings: $0.sightings, newIndividuals: $0.newIndividuals) }, species: species).fillingMissingMonths()
+        return DashboardSnapshot(months: dto.months.map { .init(month: $0.month, sightings: $0.sightings, newIndividuals: $0.newIndividuals) }, species: species)
+            .fillingMissingMonths(monthCount: query.resolvedMonthCount, now: query.until ?? Date())
     }
 
     func mapSightings(query: MapQuery) async throws -> [Sighting] {
@@ -784,13 +828,33 @@ final class RemoteTurtleRepository: TurtleRepository {
     }
 
     func export(_ request: ExportRequest) async throws -> DownloadedFile {
-        var items = request.query.queryItems
+        var items: [URLQueryItem] = []
+        if request.scope == .currentView {
+            if let search = request.query.search {
+                items.append(URLQueryItem(name: "q", value: search))
+            }
+            items.append(contentsOf: request.query.species.map { URLQueryItem(name: "species", value: $0.apiValue) })
+            if let condition = request.query.condition {
+                items.append(URLQueryItem(name: "condition", value: condition.apiValue))
+            }
+        }
+        items.append(URLQueryItem(name: "sort", value: request.query.sort.rawValue))
         items.append(URLQueryItem(name: "format", value: request.format.rawValue))
         items.append(URLQueryItem(name: "scope", value: request.scope.rawValue))
         items.append(URLQueryItem(name: "range", value: request.range.rawValue))
-        items.append(contentsOf: request.fields.map { URLQueryItem(name: "fields", value: $0.rawValue) })
-        let (data, response) = try await client.getData("api/v1/exports/individuals", queryItems: items)
-        let filename = response.value(forHTTPHeaderField: "Content-Disposition")?.split(separator: "filename=").last.map(String.init)?.trimmingCharacters(in: CharacterSet(charactersIn: "\" ")) ?? "individuals.\(request.format.fileExtension)"
+        let sortedFields = ExportField.allCases.filter { request.fields.contains($0) }
+        items.append(contentsOf: sortedFields.map { URLQueryItem(name: "fields", value: $0.rawValue) })
+        let (data, response) = try await client.requestData(
+            path: "api/v1/exports/individuals",
+            method: "GET",
+            queryItems: items,
+            accept: request.format.acceptHeader
+        )
+        let fallback = "individuals.\(request.format.fileExtension)"
+        let filename = ExportFileBuilder.parseContentDispositionFilename(
+            response.value(forHTTPHeaderField: "Content-Disposition"),
+            fallback: fallback
+        )
         return DownloadedFile(data: data, filename: filename, contentType: response.mimeType ?? "application/octet-stream")
     }
 
@@ -874,21 +938,29 @@ final class RemoteTurtleRepository: TurtleRepository {
         side: TurtlePhotoSide,
         candidateID: UUID,
         candidateSide: TurtlePhotoSide,
-        maxThreads: Int = 35
+        maxThreads: Int = 60
     ) async throws -> [OverlayAnnotationItem] {
+        // Backend `/api/v1/match/overlay/annotations` strictly requires a square JPEG (<= 5% aspect delta).
+        // Letterbox into a 512x512 square preserving facial scale geometry, then map query keypoints back.
+        let prepared = SquareOverlayMapper.prepareSquareJPEG(from: imageData, squareSide: 512)
+        let uploadData = prepared?.jpegData ?? imageData
+
         let queryItems = [
             URLQueryItem(name: "side", value: side.rawValue),
             URLQueryItem(name: "candidate_individual_id", value: candidateID.uuidString),
             URLQueryItem(name: "candidate_side", value: candidateSide.rawValue),
             URLQueryItem(name: "max_threads", value: String(maxThreads)),
         ]
-        let part = MultipartPart(name: "file", filename: "query.jpg", contentType: "image/jpeg", data: imageData)
+        let part = MultipartPart(name: "file", filename: "query.jpg", contentType: "image/jpeg", data: uploadData)
         let dto: OverlayAnnotationsDTO = try await client.requestMultipart(
             path: "api/v1/match/overlay/annotations",
             method: "POST",
             queryItems: queryItems,
             parts: [part]
         )
+        if let prepared {
+            return SquareOverlayMapper.unmapAnnotations(dto.annotations, contentRect: prepared.contentRect)
+        }
         return dto.annotations
     }
 
@@ -899,13 +971,14 @@ final class RemoteTurtleRepository: TurtleRepository {
         candidateSide: TurtlePhotoSide,
         maxThreads: Int = 35
     ) async throws -> Data {
+        let uploadData = SquareOverlayMapper.prepareSquareJPEG(from: imageData, squareSide: 512)?.jpegData ?? imageData
         let queryItems = [
             URLQueryItem(name: "side", value: side.rawValue),
             URLQueryItem(name: "candidate_individual_id", value: candidateID.uuidString),
             URLQueryItem(name: "candidate_side", value: candidateSide.rawValue),
             URLQueryItem(name: "max_threads", value: String(maxThreads)),
         ]
-        let part = MultipartPart(name: "file", filename: "query.jpg", contentType: "image/jpeg", data: imageData)
+        let part = MultipartPart(name: "file", filename: "query.jpg", contentType: "image/jpeg", data: uploadData)
         let (data, _) = try await client.requestMultipartData(
             path: "api/v1/match/overlay",
             method: "POST",
@@ -914,6 +987,80 @@ final class RemoteTurtleRepository: TurtleRepository {
             accept: "image/png"
         )
         return data
+    }
+
+    func listPendingSightings(limit: Int = 50) async throws -> [PendingMobileSighting] {
+        let queryItems = [
+            URLQueryItem(name: "identified_only", value: "false"),
+            URLQueryItem(name: "limit", value: String(min(200, max(1, limit)))),
+            URLQueryItem(name: "offset", value: "0"),
+        ]
+        do {
+            let page: V2Page<V2PendingLogDTO> = try await client.get("api/v2/logs", queryItems: queryItems)
+            return page.items.compactMap { item -> PendingMobileSighting? in
+                guard item.turtleID == nil else { return nil }
+                let paths = item.photos
+                    .filter { $0.markingId == nil }
+                    .map(\.fetchPath)
+                    .filter { !$0.isEmpty }
+                return PendingMobileSighting(
+                    id: item.id,
+                    observedAt: item.observedAt,
+                    locationName: item.location.name,
+                    notes: item.notes,
+                    photoPaths: paths
+                )
+            }
+        } catch APIError.notFound {
+            let page: V1LogListDTO = try await client.get("api/v1/logs", queryItems: queryItems)
+            return page.items.compactMap { item -> PendingMobileSighting? in
+                guard item.turtleID == nil else { return nil }
+                let paths = item.photos
+                    .filter { $0.markingID == nil }
+                    .map(\.fetchPath)
+                    .filter { !$0.isEmpty }
+                return PendingMobileSighting(
+                    id: item.id,
+                    observedAt: item.timestamp,
+                    locationName: item.placeName,
+                    notes: item.notes,
+                    photoPaths: paths
+                )
+            }
+        }
+    }
+
+    func resolvePendingSighting(
+        logID: UUID,
+        turtleID: UUID,
+        method: String = "manual",
+        confidence: Double? = nil,
+        notes: String? = nil
+    ) async throws {
+        let v2Body = V2ResolveLogPatch(
+            turtleID: turtleID,
+            identification: .init(method: method, confidence: confidence),
+            notes: notes
+        )
+        do {
+            _ = try await client.requestData(
+                path: "api/v2/logs/\(logID.uuidString.lowercased())",
+                method: "PATCH",
+                body: try JSONEncoder.api.encode(v2Body)
+            )
+        } catch APIError.notFound {
+            let v1Body = V1ResolveLogPatch(
+                turtleID: turtleID,
+                identificationMethod: method,
+                matchConfidence: confidence,
+                notes: notes
+            )
+            _ = try await client.requestData(
+                path: "api/v1/logs/\(logID.uuidString.lowercased())",
+                method: "PATCH",
+                body: try JSONEncoder.api.encode(v1Body)
+            )
+        }
     }
 
     func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String {
@@ -944,12 +1091,13 @@ final class RemoteTurtleRepository: TurtleRepository {
     }
 }
 
-private extension DashboardSnapshot {
-    func fillingMissingMonths(now: Date = Date()) -> DashboardSnapshot {
+extension DashboardSnapshot {
+    func fillingMissingMonths(monthCount: Int = 12, now: Date = Date()) -> DashboardSnapshot {
         let calendar = Calendar.current
+        let clampedCount = max(1, min(60, monthCount))
         let byMonth = Dictionary(uniqueKeysWithValues: months.map { ($0.month, $0) })
-        let normalized = (0..<12).compactMap { index -> Month? in
-            guard let date = calendar.date(byAdding: .month, value: -11 + index, to: now) else { return nil }
+        let normalized = (0..<clampedCount).compactMap { index -> Month? in
+            guard let date = calendar.date(byAdding: .month, value: -(clampedCount - 1) + index, to: now) else { return nil }
             let key = String(format: "%04d-%02d", calendar.component(.year, from: date), calendar.component(.month, from: date))
             return byMonth[key] ?? Month(month: key, sightings: 0, newIndividuals: 0)
         }
@@ -968,6 +1116,7 @@ final class DemoTurtleRepository: TurtleRepository {
     private var turtles: [Turtle]
     private var sightings: [Sighting]
     private var favoriteIDs: Set<String>
+    private var uploadedPhotos: [String: Data] = [:]
 
     var fullCatalogForAnalytics: [Turtle] {
         turtles.map(withFavorite)
@@ -983,7 +1132,7 @@ final class DemoTurtleRepository: TurtleRepository {
         case .panAsiaSuperAccount:
             self.turtles = DemoFixtures.superAsiaTurtles
             self.sightings = DemoFixtures.superAsiaSightings
-            self.favoriteIDs = Set(["ASIA-IN-001", "ASIA-ID-002", "ASIA-MY-006", "ASIA-JP-021"])
+            self.favoriteIDs = Set(["ASIA-IN-001", "ASIA-ID-009", "ASIA-MY-014", "ASIA-JP-021"])
         case .worldSuperAccount:
             let world = DemoFixtures.worldSuperDataset
             self.turtles = world.turtles
@@ -997,6 +1146,7 @@ final class DemoTurtleRepository: TurtleRepository {
             let searchMatches = query.search.map { value in
                 turtle.displayName.localizedCaseInsensitiveContains(value)
                     || turtle.id.localizedCaseInsensitiveContains(value)
+                    || (turtle.profileCode?.localizedCaseInsensitiveContains(value) ?? false)
                     || turtle.species.rawValue.localizedCaseInsensitiveContains(value)
                     || turtle.location.localizedCaseInsensitiveContains(value)
             } ?? true
@@ -1030,8 +1180,10 @@ final class DemoTurtleRepository: TurtleRepository {
 
     func dashboard(query: DashboardQuery) async throws -> DashboardSnapshot {
         let calendar = Calendar.current
-        let monthKeys = (0..<12).compactMap { index -> String? in
-            guard let date = calendar.date(byAdding: .month, value: -11 + index, to: Date()) else { return nil }
+        let endDate = query.until ?? Date()
+        let count = query.resolvedMonthCount
+        let monthKeys = (0..<count).compactMap { index -> String? in
+            guard let date = calendar.date(byAdding: .month, value: -(count - 1) + index, to: endDate) else { return nil }
             return String(format: "%04d-%02d", calendar.component(.year, from: date), calendar.component(.month, from: date))
         }
         let scopedSightings = query.species.map { species in sightings.filter { $0.species == species } } ?? sightings
@@ -1056,32 +1208,267 @@ final class DemoTurtleRepository: TurtleRepository {
         return DashboardSnapshot(months: months, species: species)
     }
 
+    private var referenceLatestDate: Date {
+        let formatter = APIFormatters.display
+        return sightings.compactMap { formatter.date(from: $0.date) }.max() ?? Date()
+    }
+
+    private func cutoffDate(for period: MapPeriod, reference: Date) -> Date? {
+        let calendar = Calendar.current
+        switch period {
+        case .sevenDays: return calendar.date(byAdding: .day, value: -7, to: reference)
+        case .thirtyDays: return calendar.date(byAdding: .day, value: -30, to: reference)
+        case .thisYear: return calendar.date(from: calendar.dateComponents([.year], from: reference))
+        case .twelveMonths: return calendar.date(byAdding: .month, value: -11, to: reference)
+        case .allTime: return nil
+        }
+    }
+
+    private func cutoffDate(for range: ExportRange, reference: Date) -> Date? {
+        let calendar = Calendar.current
+        switch range {
+        case .sevenDays: return calendar.date(byAdding: .day, value: -7, to: reference)
+        case .thirtyDays: return calendar.date(byAdding: .day, value: -30, to: reference)
+        case .thisYear: return calendar.date(from: calendar.dateComponents([.year], from: reference))
+        case .all: return nil
+        }
+    }
+
     func mapSightings(query: MapQuery) async throws -> [Sighting] {
-        sightings.filter { sighting in
-            (query.species == nil || query.species == sighting.species) &&
-            (query.condition == nil || query.condition == sighting.condition)
+        let formatter = APIFormatters.display
+        let cutoff = cutoffDate(for: query.period, reference: referenceLatestDate)
+        return sightings.filter { sighting in
+            let matchesSpecies = query.species == nil || query.species == sighting.species
+            let matchesCondition = query.condition == nil || query.condition == sighting.condition
+            let matchesPeriod: Bool
+            if let cutoff, let sightingDate = formatter.date(from: sighting.date) {
+                matchesPeriod = sightingDate >= cutoff
+            } else {
+                matchesPeriod = true
+            }
+            return matchesSpecies && matchesCondition && matchesPeriod
         }
     }
 
     func detail(for turtle: Turtle) async throws -> TurtleDetailData {
-        let sightingLogs = sightings.filter { $0.turtleID == turtle.id }.map {
-            TurtleLogSummary(id: $0.id, date: $0.date, location: $0.location, status: "Sighting", condition: $0.condition, notes: "Foraging near reef edge", coordinate: $0.coordinate)
+        let resolvedTurtle = turtles.first(where: { $0.id == turtle.id }) ?? turtle
+        let formatter = APIFormatters.display
+        let turtleSightings = sightings
+            .filter { $0.turtleID == resolvedTurtle.id }
+            .sorted {
+                (formatter.date(from: $0.date) ?? .distantPast) > (formatter.date(from: $1.date) ?? .distantPast)
+            }
+
+        let sightingLogs: [TurtleLogSummary] = turtleSightings.enumerated().map { idx, sighting in
+            let photoPaths = resolvedTurtle.identityPhotoPaths
+            let note = idx == 0
+                ? "Latest coastal encounter near \(sighting.location). Facial scute profile verified."
+                : "Historical foraging observation recorded along \(sighting.location)."
+            return TurtleLogSummary(
+                id: sighting.id,
+                date: sighting.date,
+                location: sighting.location,
+                status: idx == 0 ? "Sighting" : "Resighting",
+                condition: sighting.condition,
+                notes: note,
+                coordinate: sighting.coordinate,
+                sourceSightingID: sighting.id,
+                photoPaths: photoPaths
+            )
         }
+
+        let latestSighting = turtleSightings.first
+        let latestSightingID = latestSighting?.id ?? "measurement-\(resolvedTurtle.id)"
         let measurements = [
-            TurtleMeasurement(id: "measurement-\(turtle.id)", date: turtle.lastSeen, length: 84.2, width: 68.4, weight: 31.6)
+            demoMeasurement(for: resolvedTurtle, sightingID: latestSightingID, date: latestSighting?.date ?? resolvedTurtle.lastSeen)
         ]
-        return TurtleDetailData(turtle: withFavorite(turtle), measurements: measurements, logs: sightingLogs)
+
+        let bodyConditionLogs = demoBodyConditionLogs(for: resolvedTurtle, sightings: turtleSightings)
+        return TurtleDetailData(
+            turtle: withFavorite(resolvedTurtle),
+            measurements: measurements,
+            logs: sightingLogs + bodyConditionLogs
+        )
+    }
+
+    private func demoMeasurement(for turtle: Turtle, sightingID: String, date: String) -> TurtleMeasurement {
+        let hash = turtle.id.unicodeScalars.reduce(UInt64(0)) { ($0 &* 31) &+ UInt64($1.value) }
+        let seed = Int(hash % 12)
+        let offset = Double(seed) * 1.1
+        switch turtle.species {
+        case .leatherback:
+            return TurtleMeasurement(id: sightingID, date: date, length: 142.0 + offset, width: 104.5 + offset * 0.6, weight: 295.0 + offset * 6.0)
+        case .green:
+            return TurtleMeasurement(id: sightingID, date: date, length: 88.0 + offset, width: 71.2 + offset * 0.7, weight: 82.0 + offset * 2.4)
+        case .hawksbill:
+            return TurtleMeasurement(id: sightingID, date: date, length: 74.5 + offset * 0.8, width: 59.4 + offset * 0.6, weight: 46.5 + offset * 1.6)
+        case .oliveRidley:
+            return TurtleMeasurement(id: sightingID, date: date, length: 64.0 + offset * 0.6, width: 58.0 + offset * 0.5, weight: 35.0 + offset * 1.2)
+        case .loggerhead:
+            return TurtleMeasurement(id: sightingID, date: date, length: 91.5 + offset * 0.8, width: 76.0 + offset * 0.6, weight: 98.0 + offset * 2.5)
+        case .unknown:
+            return TurtleMeasurement(id: sightingID, date: date, length: 80.0 + offset, width: 65.0 + offset * 0.6, weight: 52.0 + offset * 1.5)
+        }
+    }
+
+    private func demoBodyConditionLogs(for turtle: Turtle, sightings: [Sighting]) -> [TurtleLogSummary] {
+        guard let latest = sightings.first else { return [] }
+        let previous = sightings.dropFirst().first
+        let photos = turtle.identityPhotoPaths
+
+        switch turtle.condition {
+        case .injured:
+            var records: [TurtleLogSummary] = [
+                TurtleLogSummary(
+                    id: "marking-injured-primary-\(turtle.id)",
+                    date: latest.date,
+                    location: latest.location,
+                    status: "Wound",
+                    condition: .injured,
+                    notes: "Superficial abrasion observed on leading edge; active swimmer, monitor on next patrol.",
+                    coordinate: latest.coordinate,
+                    bodyPart: .flipperRight,
+                    markingSeverity: "moderate",
+                    sourceSightingID: latest.id,
+                    photoPaths: photos
+                ),
+                TurtleLogSummary(
+                    id: "marking-injured-carapace-\(turtle.id)",
+                    date: latest.date,
+                    location: latest.location,
+                    status: "Scratch",
+                    condition: .scarred,
+                    notes: "Healed marginal scute notch noted on posterior carapace.",
+                    coordinate: latest.coordinate,
+                    bodyPart: .carapace,
+                    markingSeverity: "minor",
+                    sourceSightingID: latest.id,
+                    photoPaths: photos
+                ),
+            ]
+            if let previous {
+                records.append(
+                    TurtleLogSummary(
+                        id: "marking-injured-prev-\(turtle.id)",
+                        date: previous.date,
+                        location: previous.location,
+                        status: "Tag Scar",
+                        condition: .scarred,
+                        notes: "Old flipper tag notch documented during initial catalog entry.",
+                        coordinate: previous.coordinate,
+                        bodyPart: .flipperLeft,
+                        markingSeverity: "minor",
+                        sourceSightingID: previous.id,
+                        photoPaths: photos
+                    )
+                )
+            }
+            return records
+
+        case .scarred:
+            var records: [TurtleLogSummary] = [
+                TurtleLogSummary(
+                    id: "marking-scarred-primary-\(turtle.id)",
+                    date: latest.date,
+                    location: latest.location,
+                    status: "Tag Scar",
+                    condition: .scarred,
+                    notes: "Distinct healed notch on trailing margin useful for secondary visual verification.",
+                    coordinate: latest.coordinate,
+                    bodyPart: .flipperLeft,
+                    markingSeverity: "minor",
+                    sourceSightingID: latest.id,
+                    photoPaths: photos
+                ),
+            ]
+            if let previous {
+                records.append(
+                    TurtleLogSummary(
+                        id: "marking-scarred-prev-\(turtle.id)",
+                        date: previous.date,
+                        location: previous.location,
+                        status: "Barnacles",
+                        condition: .scarred,
+                        notes: "Light epibiont barnacle cluster along dorsal carapace rim.",
+                        coordinate: previous.coordinate,
+                        bodyPart: .carapace,
+                        markingSeverity: "minor",
+                        sourceSightingID: previous.id,
+                        photoPaths: photos
+                    )
+                )
+            }
+            return records
+
+        case .healthy:
+            return [
+                TurtleLogSummary(
+                    id: "marking-healthy-check-\(turtle.id)",
+                    date: latest.date,
+                    location: latest.location,
+                    status: "Healthy",
+                    condition: .healthy,
+                    notes: "Carapace and facial scales clear with no active wounds or entanglement marks.",
+                    coordinate: latest.coordinate,
+                    bodyPart: .carapace,
+                    markingSeverity: "none",
+                    sourceSightingID: latest.id,
+                    photoPaths: photos
+                ),
+            ]
+
+        case .unknown:
+            return []
+        }
     }
 
     func export(_ request: ExportRequest) async throws -> DownloadedFile {
-        let page = try await listIndividuals(query: request.query)
-        let header = "id,species,location,last_seen,first_recorded,sightings,condition"
-        let rows = page.items.map { "\($0.id),\($0.species.rawValue),\($0.location),\($0.lastSeen),\($0.firstRecorded),\($0.sightings),\($0.condition.rawValue)" }
-        let body = ([header] + rows).joined(separator: "\n") + "\n"
-        return DownloadedFile(data: Data(body.utf8), filename: "turtle-individuals.csv", contentType: "text/csv")
+        let effectiveQuery: IndividualQuery
+        if request.scope == .all {
+            effectiveQuery = IndividualQuery(
+                search: nil,
+                species: [],
+                condition: nil,
+                sort: request.query.sort,
+                page: PageRequest(limit: max(turtles.count, 1000), offset: 0)
+            )
+        } else {
+            effectiveQuery = IndividualQuery(
+                search: request.query.search,
+                species: request.query.species,
+                condition: request.query.condition,
+                sort: request.query.sort,
+                page: PageRequest(limit: max(turtles.count, 1000), offset: 0)
+            )
+        }
+
+        let page = try await listIndividuals(query: effectiveQuery)
+        let formatter = APIFormatters.display
+        let cutoff = cutoffDate(for: request.range, reference: referenceLatestDate)
+
+        let dateFiltered: [Turtle]
+        if let cutoff {
+            dateFiltered = page.items.filter { turtle in
+                guard let lastSeenDate = formatter.date(from: turtle.lastSeen) else { return false }
+                return lastSeenDate >= cutoff
+            }
+        } else {
+            dateFiltered = page.items
+        }
+
+        var rows: [ExportFileBuilder.Row] = []
+        rows.reserveCapacity(dateFiltered.count)
+        for turtle in dateFiltered {
+            let detailData = try await detail(for: turtle)
+            rows.append(ExportFileBuilder.Row(turtle: turtle, detail: detailData))
+        }
+        return ExportFileBuilder.build(request: request, rows: rows)
     }
 
     func fetchPhotoData(pathOrURL: String) async throws -> Data {
+        if let stored = uploadedPhotos[pathOrURL] {
+            return stored
+        }
         if let direct = I3SSampleLibrary.loadImageData(named: pathOrURL) {
             return direct
         }
@@ -1141,39 +1528,179 @@ final class DemoTurtleRepository: TurtleRepository {
         )
     }
 
+    private var resolvedPendingLogIDs: Set<UUID> = []
+
     func fetchOverlayAnnotations(
         imageData: Data,
         side: TurtlePhotoSide,
         candidateID: UUID,
         candidateSide: TurtlePhotoSide,
-        maxThreads: Int = 35
+        maxThreads: Int = 60
     ) async throws -> [OverlayAnnotationItem] {
         let querySampleName = side == .right ? "Zizo1_R.jpg" : "Amina3_L.jpg"
         let matchedTurtle = turtles.first { $0.backendID == candidateID }
+            ?? DemoFixtures.turtles.first { $0.backendID == candidateID }
         let candSampleName = candidateSide == .right
             ? (matchedTurtle?.rightPhotoURL ?? "Zizo2_R.jpg")
             : (matchedTurtle?.leftPhotoURL ?? "Amina1_L.jpg")
 
-        if let qSample = I3SSampleLibrary.sample(forFilenameOrID: querySampleName),
-           let cSample = I3SSampleLibrary.sample(forFilenameOrID: candSampleName) {
-            let count = min(maxThreads, min(qSample.keypoints.count, cSample.keypoints.count))
-            let qw = Double(max(qSample.imageWidth, 1))
-            let qh = Double(max(qSample.imageHeight, 1))
-            let cw = Double(max(cSample.imageWidth, 1))
-            let ch = Double(max(cSample.imageHeight, 1))
-            return (0..<count).map { idx in
-                let qkp = qSample.keypoints[idx]
-                let ckp = cSample.keypoints[idx]
-                return OverlayAnnotationItem(
-                    featureID: "scale-junction-\(idx + 1)",
-                    label: "Scale #\(idx + 1)",
-                    score: max(0.62, 0.96 - Double(idx) * 0.012),
-                    query: OverlayMatchPoint(x: qkp[0] / qw, y: qkp[1] / qh),
-                    candidate: OverlayMatchPoint(x: ckp[0] / cw, y: ckp[1] / ch)
-                )
-            }
+        guard let qSample = I3SSampleLibrary.sample(forFilenameOrID: querySampleName),
+              let cSample = I3SSampleLibrary.sample(forFilenameOrID: candSampleName) else {
+            return []
         }
-        return []
+
+        let qw = Double(max(qSample.imageWidth, 1))
+        let qh = Double(max(qSample.imageHeight, 1))
+        let cw = Double(max(cSample.imageWidth, 1))
+        let ch = Double(max(cSample.imageHeight, 1))
+
+        let qPrefix = qSample.id.prefix { $0.isLetter }.lowercased()
+        let cPrefix = cSample.id.prefix { $0.isLetter }.lowercased()
+        let isSameIndividual = !qPrefix.isEmpty && qPrefix == cPrefix
+
+        if isSameIndividual,
+           qSample.ref1.count >= 2, qSample.ref2.count >= 2, qSample.ref3.count >= 2,
+           cSample.ref1.count >= 2, cSample.ref2.count >= 2, cSample.ref3.count >= 2,
+           let aff = AffineTransform2D.fit(pairs: [
+               (ScalePoint(x: qSample.ref1[0] / qw, y: qSample.ref1[1] / qh),
+                ScalePoint(x: cSample.ref1[0] / cw, y: cSample.ref1[1] / ch)),
+               (ScalePoint(x: qSample.ref2[0] / qw, y: qSample.ref2[1] / qh),
+                ScalePoint(x: cSample.ref2[0] / cw, y: cSample.ref2[1] / ch)),
+               (ScalePoint(x: qSample.ref3[0] / qw, y: qSample.ref3[1] / qh),
+                ScalePoint(x: cSample.ref3[0] / cw, y: cSample.ref3[1] / ch)),
+           ]) {
+            let cNorm = cSample.keypoints.compactMap { kp -> ScalePoint? in
+                guard kp.count >= 2 else { return nil }
+                return ScalePoint(x: kp[0] / cw, y: kp[1] / ch)
+            }
+            var items: [OverlayAnnotationItem] = []
+            for (idx, qkp) in qSample.keypoints.enumerated() where qkp.count >= 2 {
+                let qp = ScalePoint(x: qkp[0] / qw, y: qkp[1] / qh)
+                let projected = aff.apply(qp)
+                let target: ScalePoint
+                if let nearest = cNorm.min(by: {
+                    hypot($0.x - projected.x, $0.y - projected.y) < hypot($1.x - projected.x, $1.y - projected.y)
+                }), hypot(nearest.x - projected.x, nearest.y - projected.y) < 0.045 {
+                    target = nearest
+                } else {
+                    target = ScalePoint(
+                        x: min(0.98, max(0.02, projected.x)),
+                        y: min(0.98, max(0.02, projected.y))
+                    )
+                }
+                items.append(OverlayAnnotationItem(
+                    featureID: "xfeat-\(idx + 1)",
+                    label: "xfeat_lighterglue_match",
+                    score: max(0.58, 0.96 - Double(idx) * 0.015),
+                    query: OverlayMatchPoint(x: qp.x, y: qp.y),
+                    candidate: OverlayMatchPoint(x: target.x, y: target.y)
+                ))
+                if items.count >= max(1, maxThreads - 3) { break }
+            }
+            // Inject 3 realistic water/glare outliers so RANSAC visibly separates green inliers from red outliers.
+            let outliers: [(ScalePoint, ScalePoint, Double)] = [
+                (ScalePoint(x: 0.10, y: 0.14), ScalePoint(x: 0.86, y: 0.22), 0.34),
+                (ScalePoint(x: 0.88, y: 0.82), ScalePoint(x: 0.18, y: 0.74), 0.29),
+                (ScalePoint(x: 0.14, y: 0.84), ScalePoint(x: 0.78, y: 0.16), 0.26),
+            ]
+            for (i, out) in outliers.enumerated() where items.count < maxThreads {
+                items.append(OverlayAnnotationItem(
+                    featureID: "xfeat-outlier-\(i + 1)",
+                    label: "xfeat_lighterglue_match",
+                    score: out.2,
+                    query: OverlayMatchPoint(x: out.0.x, y: out.0.y),
+                    candidate: OverlayMatchPoint(x: out.1.x, y: out.1.y)
+                ))
+            }
+            return items
+        }
+
+        // Impostor pair in Demo mode: scattered weak correspondences so RANSAC honestly reports Weak consensus.
+        let count = min(10, min(maxThreads, min(qSample.keypoints.count, cSample.keypoints.count)))
+        return (0..<count).map { idx in
+            let qkp = qSample.keypoints[idx]
+            let cIdx = (idx * 5 + 3) % cSample.keypoints.count
+            let ckp = cSample.keypoints[cIdx]
+            return OverlayAnnotationItem(
+                featureID: "xfeat-weak-\(idx + 1)",
+                label: "xfeat_lighterglue_match",
+                score: max(0.18, 0.44 - Double(idx) * 0.025),
+                query: OverlayMatchPoint(x: qkp[0] / qw, y: qkp[1] / qh),
+                candidate: OverlayMatchPoint(x: ckp[0] / cw, y: ckp[1] / ch)
+            )
+        }
+    }
+
+    func listPendingSightings(limit: Int = 50) async throws -> [PendingMobileSighting] {
+        let demoID = UUID(uuidString: "00000000-0000-4000-8999-000000000001")!
+        guard !resolvedPendingLogIDs.contains(demoID) else { return [] }
+        return [
+            PendingMobileSighting(
+                id: demoID,
+                observedAt: Date().addingTimeInterval(-3600 * 5),
+                locationName: "Nusa Penida North Reef (Mobile)",
+                notes: "Marked 'Match later' from field patrol iPhone — strong glare near cheek.",
+                photoPaths: ["Amina3_L.jpg", "Zizo1_R.jpg"]
+            )
+        ]
+    }
+
+    func resolvePendingSighting(
+        logID: UUID,
+        turtleID: UUID,
+        method: String = "manual",
+        confidence: Double? = nil,
+        notes: String? = nil
+    ) async throws {
+        resolvedPendingLogIDs.insert(logID)
+    }
+
+    func createIndividual(_ draft: IndividualDraft) async throws -> Turtle {
+        try draft.validate()
+        let firstSeen = APIFormatters.display.string(from: draft.firstSeenAt)
+        let created = Turtle(
+            id: draft.id.uuidString,
+            species: TurtleSpecies(apiValue: draft.species),
+            location: "Imported",
+            lastSeen: firstSeen,
+            sightings: 1,
+            condition: .unknown,
+            firstRecorded: firstSeen,
+            isFavorite: false,
+            coordinate: nil,
+            backendID: draft.id,
+            leftPhotoURL: nil,
+            rightPhotoURL: nil,
+            name: draft.name,
+            profileCode: draft.profileCode
+        )
+        turtles.insert(created, at: 0)
+        return created
+    }
+
+    func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String {
+        let key = "demo-upload://\(individualID.uuidString)/\(side.rawValue).jpg"
+        uploadedPhotos[key] = imageData
+        if let idx = turtles.firstIndex(where: { $0.backendID == individualID || $0.id == individualID.uuidString }) {
+            let t = turtles[idx]
+            turtles[idx] = Turtle(
+                id: t.id,
+                species: t.species,
+                location: t.location,
+                lastSeen: t.lastSeen,
+                sightings: t.sightings,
+                condition: t.condition,
+                firstRecorded: t.firstRecorded,
+                isFavorite: t.isFavorite,
+                coordinate: t.coordinate,
+                backendID: t.backendID,
+                leftPhotoURL: side == .left ? key : t.leftPhotoURL,
+                rightPhotoURL: side == .right ? key : t.rightPhotoURL,
+                name: t.name,
+                profileCode: t.profileCode
+            )
+        }
+        return key
     }
 
     private func withFavorite(_ turtle: Turtle) -> Turtle {
@@ -1501,3 +2028,113 @@ enum DemoFixtures {
         return (turtles, sightings)
     }()
 }
+
+// MARK: - Pending Mobile Sighting Sync DTOs (v2 primary + v1 fallback)
+
+private struct V2PendingLogDTO: Decodable {
+    let id: UUID
+    let turtleID: UUID?
+    let observedAt: Date
+    let location: V2Location
+    let notes: String?
+    let photos: [V2LogPhoto]
+
+    enum CodingKeys: String, CodingKey {
+        case id, location, notes, photos
+        case turtleID = "turtle_id"
+        case observedAt = "observed_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        turtleID = try c.decodeIfPresent(UUID.self, forKey: .turtleID)
+        observedAt = try c.decode(Date.self, forKey: .observedAt)
+        location = try c.decode(V2Location.self, forKey: .location)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        photos = try c.decodeIfPresent([V2LogPhoto].self, forKey: .photos) ?? []
+    }
+}
+
+private struct V1LogListDTO: Decodable {
+    let items: [V1PendingLogDTO]
+    let total: Int
+    let limit: Int
+    let offset: Int
+}
+
+private struct V1LogPhotoDTO: Decodable {
+    let id: UUID
+    let url: String
+    let downloadURL: String?
+    let markingID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case id, url
+        case downloadURL = "download_url"
+        case markingID = "marking_id"
+    }
+
+    var fetchPath: String {
+        if let downloadURL {
+            let trimmed = downloadURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return url.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct V1PendingLogDTO: Decodable {
+    let id: UUID
+    let turtleID: UUID?
+    let timestamp: Date
+    let placeName: String
+    let notes: String?
+    let photos: [V1LogPhotoDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case id, timestamp, notes, photos
+        case turtleID = "turtle_id"
+        case placeName = "place_name"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        turtleID = try c.decodeIfPresent(UUID.self, forKey: .turtleID)
+        timestamp = try c.decode(Date.self, forKey: .timestamp)
+        placeName = try c.decode(String.self, forKey: .placeName)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        photos = try c.decodeIfPresent([V1LogPhotoDTO].self, forKey: .photos) ?? []
+    }
+}
+
+private struct V2ResolveLogPatch: Encodable {
+    struct Identification: Encodable {
+        let method: String
+        let confidence: Double?
+    }
+    let turtleID: UUID
+    let identification: Identification
+    let notes: String?
+
+    enum CodingKeys: String, CodingKey {
+        case identification, notes
+        case turtleID = "turtle_id"
+    }
+}
+
+private struct V1ResolveLogPatch: Encodable {
+    let turtleID: UUID
+    let identificationMethod: String
+    let matchConfidence: Double?
+    let notes: String?
+
+    enum CodingKeys: String, CodingKey {
+        case notes
+        case turtleID = "turtle_id"
+        case identificationMethod = "identification_method"
+        case matchConfidence = "match_confidence"
+    }
+}
+

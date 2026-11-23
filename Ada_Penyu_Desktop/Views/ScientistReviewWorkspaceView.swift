@@ -262,6 +262,9 @@ final class ScientistReviewViewModel: ObservableObject {
 
     func confirmSameTurtleIdentity() {
         guard candidates.indices.contains(selectedCandidateIndex) else { return }
+        for index in candidates.indices where candidates[index].status == .confirmed {
+            candidates[index].status = .pending
+        }
         candidates[selectedCandidateIndex].status = .confirmed
         let cand = candidates[selectedCandidateIndex]
         let outcome = SavedSightingReviewOutcome(
@@ -290,6 +293,9 @@ final class ScientistReviewViewModel: ObservableObject {
     }
 
     func saveUnsureDecision() {
+        for index in candidates.indices where candidates[index].status == .confirmed {
+            candidates[index].status = .pending
+        }
         let outcome = SavedSightingReviewOutcome(
             resolution: .savedUnsure,
             linkedCandidateID: nil,
@@ -835,7 +841,8 @@ struct ScientistReviewWorkspaceView: View {
                         showXFeatPoints: vm.showXFeatPoints,
                         showI3SBlobs: vm.showI3SBlobOverlay,
                         zoomScale: vm.zoomScale,
-                        panOffset: $vm.panOffset
+                        panOffset: $vm.panOffset,
+                        syncZoomAndPan: vm.syncZoomAndPan
                     )
 
                     // Right: Selected Gallery Candidate Photo (updates when candidate changes)
@@ -857,7 +864,8 @@ struct ScientistReviewWorkspaceView: View {
                         showXFeatPoints: vm.showXFeatPoints,
                         showI3SBlobs: vm.showI3SBlobOverlay,
                         zoomScale: vm.zoomScale,
-                        panOffset: $vm.panOffset
+                        panOffset: $vm.panOffset,
+                        syncZoomAndPan: vm.syncZoomAndPan
                     )
                 }
 
@@ -951,7 +959,8 @@ struct ScientistReviewWorkspaceView: View {
                     showXFeatPoints: vm.showXFeatPoints,
                     showI3SBlobs: vm.showI3SBlobOverlay,
                     zoomScale: vm.zoomScale,
-                    panOffset: $vm.panOffset
+                    panOffset: $vm.panOffset,
+                    syncZoomAndPan: vm.syncZoomAndPan
                 )
                 .frame(width: leftWidth)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -988,7 +997,8 @@ struct ScientistReviewWorkspaceView: View {
                                     showXFeatPoints: vm.showXFeatPoints,
                                     showI3SBlobs: vm.showI3SBlobOverlay,
                                     zoomScale: vm.zoomScale,
-                                    panOffset: $vm.panOffset
+                                    panOffset: $vm.panOffset,
+                                    syncZoomAndPan: vm.syncZoomAndPan
                                 )
                                 .frame(height: max(195, (geo.size.height - 86) * 0.5))
 
@@ -1541,11 +1551,17 @@ private struct SimulatedTurtlePhotoPane: View {
     let showI3SBlobs: Bool
     let zoomScale: CGFloat
     @Binding var panOffset: CGSize
+    var syncZoomAndPan: Bool = true
 
+    @State private var localPanOffset: CGSize = .zero
     @State private var dragStartOffset: CGSize? = nil
     @State private var extractedPatterns: [DetectedScalePattern] = []
     @State private var extractedROI: [ScalePoint] = []
     @State private var extractedKey: String = ""
+
+    private var effectivePanOffset: CGSize {
+        syncZoomAndPan ? panOffset : localPanOffset
+    }
 
     private var matchedSampleEntry: I3SSampleEntry? {
         guard let sampleImageName else { return nil }
@@ -1581,21 +1597,35 @@ private struct SimulatedTurtlePhotoPane: View {
                     }
                 }
                 .scaleEffect(zoomScale)
-                .offset(panOffset)
+                .offset(effectivePanOffset)
                 .gesture(
                     DragGesture()
                         .onChanged { value in
-                            let base = dragStartOffset ?? panOffset
-                            if dragStartOffset == nil { dragStartOffset = panOffset }
-                            panOffset = CGSize(
+                            let current = effectivePanOffset
+                            let base = dragStartOffset ?? current
+                            if dragStartOffset == nil { dragStartOffset = current }
+                            let next = CGSize(
                                 width: base.width + value.translation.width,
                                 height: base.height + value.translation.height
                             )
+                            if syncZoomAndPan {
+                                panOffset = next
+                            } else {
+                                localPanOffset = next
+                            }
                         }
                         .onEnded { _ in
                             dragStartOffset = nil
                         }
                 )
+                .onChange(of: syncZoomAndPan) { _, _ in
+                    localPanOffset = panOffset
+                }
+                .onChange(of: panOffset) { _, newValue in
+                    if newValue == .zero {
+                        localPanOffset = .zero
+                    }
+                }
             }
             .task(id: "\(sampleImageName ?? "")|\(showScaleOutlines)") {
                 await extractRealPatternsIfNeeded()
@@ -2001,3 +2031,11 @@ private struct ScientistScalePhotos: View {
             }
     }
 }
+
+#if DEBUG
+#Preview("Practice Review · Pattern 1 vs 3") {
+    ScientistReviewWorkspaceView(store: PreviewFixtures.makeDemoStore(persona: .worldSuperNetwork, section: .scientistReview))
+        .frame(width: 1440, height: 900)
+        .preferredColorScheme(.light)
+}
+#endif

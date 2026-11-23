@@ -73,6 +73,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var favoriteTurtles: [Turtle] = []
     @Published private(set) var sightings: [Sighting] = []
     @Published private(set) var dashboard: DashboardSnapshot = DashboardSnapshot(months: [], species: [])
+    @Published private(set) var trendMonths: [DashboardSnapshot.Month] = []
     @Published var selectedTurtle: Turtle?
     @Published private(set) var detailOrigin: AppSection = .individuals
     @Published private(set) var selectedDetail: TurtleDetailData?
@@ -80,7 +81,11 @@ final class AppStore: ObservableObject {
     @Published private(set) var detailError: String?
     @Published private(set) var totalIndividuals = 0
     @Published private(set) var isLoading = false
+    @Published private(set) var isExporting = false
+    @Published private(set) var isImporting = false
+    @Published private(set) var importProgressText: String?
     @Published private(set) var lastError: String?
+    @Published private(set) var statusMessage: String?
     @Published private(set) var sessionNotice: String?
     @Published var isAuthSheetPresented = false
     @Published private(set) var authEmail = ""
@@ -100,6 +105,7 @@ final class AppStore: ObservableObject {
     @Published var requestedEscalatedCaseID: UUID? = nil
     @Published private(set) var escalatedNotSureCases: [EscalatedNotSureCase] = []
     @Published private(set) var notSureQueueError: String?
+    @Published private(set) var isSyncingMobileQueue = false
     @Published var isReviewPracticePresented = false
     @Published var reviewNavigationTrigger = UUID()
     @Published private(set) var apiBaseURLString: String
@@ -116,6 +122,7 @@ final class AppStore: ObservableObject {
     private var hasBootstrapped = false
     private var searchTask: Task<Void, Never>?
     private var mapTask: Task<Void, Never>?
+    private var demoReloadTask: Task<Void, Never>?
     private var individualRequest = 0
     private var mapRequest = 0
     private var dashboardRequest = 0
@@ -124,7 +131,7 @@ final class AppStore: ObservableObject {
     private var keySettingsObservation: AnyCancellable?
     private var localizationObservation: AnyCancellable?
     private var contourPreferencesObservation: AnyCancellable?
-    private var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
+    var canLoadRecords: Bool { isAuthenticated || hasInjectedRepository }
 
     init(
         repository: TurtleRepository? = nil,
@@ -325,8 +332,9 @@ final class AppStore: ObservableObject {
         }
         updateAccount()
         let generation = sessionGeneration
-        Task {
-            guard sessionGeneration == generation else { return }
+        demoReloadTask?.cancel()
+        demoReloadTask = Task {
+            guard sessionGeneration == generation, !Task.isCancelled else { return }
             await reloadAll()
         }
     }
@@ -343,8 +351,9 @@ final class AppStore: ObservableObject {
             }
             updateAccount()
             let generation = sessionGeneration
-            Task {
-                guard sessionGeneration == generation else { return }
+            demoReloadTask?.cancel()
+            demoReloadTask = Task {
+                guard sessionGeneration == generation, !Task.isCancelled else { return }
                 await reloadAll()
             }
         } else {
@@ -418,7 +427,138 @@ final class AppStore: ObservableObject {
         try saveNotSureCase(item)
     }
 
-    func findNotSureCandidates(for id: UUID) async throws {
+    /// Applies a Not Sure verdict and, when confirming a match on a sighting synced from Mobile
+    /// (`sourceLogID != nil`), links the backend log (`PATCH /api/v2/logs/{id}` with v1 fallback).
+    func resolveNotSureCaseAndSyncBackend(_ id: UUID, action: NotSureReviewAction) async throws {
+        guard let before = escalatedNotSureCases.first(where: { $0.id == id }) else {
+            throw NotSureReviewError.caseUnavailable
+        }
+        try updateNotSureCase(id, action: action)
+
+        if case .recommend(let candidateID, let note) = action,
+           let logID = before.sourceLogID,
+           let turtleUUID = UUID(uuidString: candidateID),
+           canLoadRecords {
+            let matched = before.candidates.first(where: { $0.id == candidateID })
+            let confidence = matched.map { Double($0.confidencePercent) / 100.0 }
+            try await repository.resolvePendingSighting(
+                logID: logID,
+                turtleID: turtleUUID,
+                method: "manual",
+                confidence: confidence,
+                notes: note.isEmpty ? nil : note
+            )
+            statusMessage = "Confirmed match synced to sighting log"
+        }
+    }
+
+    /// Pulls unidentified Mobile "Waiting to Match / Match later" sightings (`identified_only=false`)
+    /// directly into the Desktop Not Sure review queue, deduplicating by `sourceLogID`.
+    @discardableResult
+    func syncMobilePendingSightings() async -> Int {
+        guard canLoadRecords, !isSyncingMobileQueue else { return 0 }
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        isSyncingMobileQueue = true
+        notSureQueueError = nil
+        defer {
+            if sessionGeneration == generation { isSyncingMobileQueue = false }
+        }
+
+        do {
+            let pending = try await repository.listPendingSightings(limit: 50)
+            guard sessionGeneration == generation, notSureReviewScope == scope else { return 0 }
+            let existingLogIDs = Set(escalatedNotSureCases.compactMap(\.sourceLogID))
+            var addedCount = 0
+
+            for sighting in pending where !existingLogIDs.contains(sighting.id) {
+                guard sessionGeneration == generation, !Task.isCancelled else { break }
+                guard let primaryPath = sighting.photoPaths.first else { continue }
+                guard let primaryData = try? await repository.fetchPhotoData(pathOrURL: primaryPath),
+                      NSImage(data: primaryData) != nil else {
+                    continue
+                }
+                var companionData: Data? = nil
+                if sighting.photoPaths.count >= 2,
+                   let secondData = try? await repository.fetchPhotoData(pathOrURL: sighting.photoPaths[1]),
+                   NSImage(data: secondData) != nil {
+                    companionData = secondData
+                }
+
+                let outcome: MatchSearchOutcome?
+                if let rightData = companionData {
+                    outcome = try? await matchPhotoPair(leftData: primaryData, rightData: rightData, limit: 6)
+                } else {
+                    outcome = try? await matchPhoto(imageData: primaryData, side: .left, limit: 6)
+                }
+                guard sessionGeneration == generation else { break }
+
+                var references: [EscalatedNotSureCandidate] = []
+                if let outcome {
+                    for cand in outcome.candidates {
+                        let path = cand.photoURL ?? "/api/v1/individuals/\(cand.id.uuidString)/photos/\(cand.matchedPhotoSide.rawValue)"
+                        let img = await loadPhoto(for: path)
+                        references.append(EscalatedNotSureCandidate(
+                            id: cand.id.uuidString,
+                            rank: cand.rank,
+                            name: cand.name,
+                            profileCode: cand.profileCode ?? "",
+                            side: cand.matchedPhotoSide,
+                            sideMatches: cand.matchedPhotoSide == .left || companionData != nil,
+                            dateText: cand.lastSeenDate ?? "",
+                            location: cand.lastSeenLocation ?? "",
+                            confidencePercent: cand.confidencePercent,
+                            photo: NotSureReviewPhoto(snapshot: img),
+                            sampleImageName: isDemoBypassActive ? (path as NSString).lastPathComponent : nil,
+                            fingerprint: nil,
+                            isBundledExample: isDemoBypassActive
+                        ))
+                    }
+                }
+
+                let titleLocation = sighting.locationName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = titleLocation.isEmpty ? "Mobile sighting" : titleLocation
+                var reviewCase = EscalatedNotSureCase(
+                    title: title,
+                    side: .left,
+                    photo: NotSureReviewPhoto(data: primaryData),
+                    companion: companionData.map { NotSureReviewPhoto(data: $0) },
+                    queryFingerprint: nil,
+                    queryROI: [],
+                    candidates: references,
+                    submittedBy: "Mobile Patrol",
+                    isExample: isDemoBypassActive,
+                    sourceLogID: sighting.id,
+                    createdAt: sighting.observedAt
+                )
+                if let note = sighting.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+                    try? reviewCase.apply(.saveNote(note))
+                }
+                try saveNotSureCase(reviewCase)
+                addedCount += 1
+            }
+
+            if sessionGeneration == generation {
+                if addedCount > 0 {
+                    statusMessage = "Synced \(addedCount) mobile sighting\(addedCount == 1 ? "" : "s") waiting to match"
+                } else {
+                    statusMessage = "Mobile queue is up to date"
+                }
+            }
+            return addedCount
+        } catch {
+            if sessionGeneration == generation, !(error is CancellationError) {
+                notSureQueueError = "Could not sync mobile pending sightings. \(error.localizedDescription)"
+            }
+            return 0
+        }
+    }
+
+    func findNotSureCandidates(
+        for id: UUID,
+        overridePhotoData: Data? = nil,
+        usePairedSide: Bool = false
+    ) async throws {
         guard let item = escalatedNotSureCases.first(where: { $0.id == id }) else {
             throw NotSureReviewError.caseUnavailable
         }
@@ -428,34 +568,95 @@ final class AppStore: ObservableObject {
         guard item.decision == .pending else { throw NotSureReviewError.alreadyReviewed }
         let generation = sessionGeneration
         let scope = notSureReviewScope
-        let result = try await matchPhoto(imageData: item.queryPhotoData, side: item.side, limit: 8)
+        let isHumanGuidedReMatch = overridePhotoData != nil || usePairedSide
+
+        let result: MatchSearchOutcome
+        if usePairedSide, let companionData = item.companion?.data {
+            let leftBytes = item.side == .left ? (overridePhotoData ?? item.queryPhotoData) : companionData
+            let rightBytes = item.side == .right ? (overridePhotoData ?? item.queryPhotoData) : companionData
+            result = try await matchPhotoPair(leftData: leftBytes, rightData: rightBytes, limit: 8)
+        } else {
+            result = try await matchPhoto(imageData: overridePhotoData ?? item.queryPhotoData, side: item.side, limit: 8)
+        }
+
         var references: [EscalatedNotSureCandidate] = []
-        for candidate in result.candidates where candidate.matchedPhotoSide == item.side {
+        for candidate in result.candidates where (usePairedSide || candidate.matchedPhotoSide == item.side) {
             try Task.checkCancellation()
             guard sessionGeneration == generation, notSureReviewScope == scope else { throw CancellationError() }
-            let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.id.uuidString)/photos/\(item.side.rawValue)"
+            let path = candidate.photoURL ?? "/api/v1/individuals/\(candidate.id.uuidString)/photos/\(candidate.matchedPhotoSide.rawValue)"
             let image = await loadPhoto(for: path)
-            references.append(EscalatedNotSureCandidate(id: candidate.id.uuidString, rank: candidate.rank,
-                name: candidate.name, profileCode: candidate.profileCode ?? "",
-                side: candidate.matchedPhotoSide, sideMatches: true, dateText: candidate.lastSeenDate ?? "",
-                location: candidate.lastSeenLocation ?? "", confidencePercent: candidate.confidencePercent,
-                photo: NotSureReviewPhoto(snapshot: image), sampleImageName: nil, fingerprint: nil, isBundledExample: false))
+            references.append(EscalatedNotSureCandidate(
+                id: candidate.id.uuidString,
+                rank: candidate.rank,
+                name: candidate.name,
+                profileCode: candidate.profileCode ?? "",
+                side: candidate.matchedPhotoSide,
+                sideMatches: candidate.matchedPhotoSide == item.side || usePairedSide,
+                dateText: candidate.lastSeenDate ?? "",
+                location: candidate.lastSeenLocation ?? "",
+                confidencePercent: candidate.confidencePercent,
+                photo: NotSureReviewPhoto(snapshot: image),
+                sampleImageName: nil,
+                fingerprint: nil,
+                isBundledExample: false
+            ))
         }
         try Task.checkCancellation()
         guard sessionGeneration == generation, notSureReviewScope == scope else { throw CancellationError() }
         guard var updated = escalatedNotSureCases.first(where: { $0.id == id }), updated.decision == .pending else {
             throw NotSureReviewError.caseUnavailable
         }
-        // Preserve the exact reference already reviewed, and fill any missing photo from this search.
-        var merged = updated.candidates
-        for reference in references {
-            if let index = merged.firstIndex(where: { $0.id == reference.id }) {
-                if merged[index].image == nil { merged[index] = reference }
-            } else {
-                merged.append(reference)
+
+        if isHumanGuidedReMatch {
+            // Compute honest before -> after rank & confidence deltas and refresh candidate ordering.
+            let oldByID = Dictionary(uniqueKeysWithValues: updated.candidates.map { ($0.id, $0) })
+            var deltas: [String: CandidateReMatchDelta] = [:]
+            var refreshed: [EscalatedNotSureCandidate] = []
+            var seenIDs = Set<String>()
+
+            for reference in references {
+                seenIDs.insert(reference.id)
+                let prev = oldByID[reference.id]
+                let photo = reference.photo ?? prev?.photo
+                refreshed.append(EscalatedNotSureCandidate(
+                    id: reference.id,
+                    rank: reference.rank,
+                    name: reference.name,
+                    profileCode: reference.profileCode,
+                    side: reference.side,
+                    sideMatches: reference.sideMatches,
+                    dateText: reference.dateText,
+                    location: reference.location,
+                    confidencePercent: reference.confidencePercent,
+                    photo: photo,
+                    sampleImageName: reference.sampleImageName,
+                    fingerprint: prev?.fingerprint,
+                    isBundledExample: reference.isBundledExample
+                ))
+                deltas[reference.id] = CandidateReMatchDelta(
+                    previousRank: prev?.rank,
+                    newRank: reference.rank,
+                    previousConfidence: prev?.confidencePercent,
+                    newConfidence: reference.confidencePercent
+                )
             }
+            // Keep any previously reviewed or rejected candidates that fell out of top-8 at the tail.
+            for existing in updated.candidates where !seenIDs.contains(existing.id) {
+                refreshed.append(existing)
+            }
+            updated.candidates = refreshed
+            updated.reMatchDeltasByCandidateID = deltas.isEmpty ? nil : deltas
+        } else {
+            var merged = updated.candidates
+            for reference in references {
+                if let index = merged.firstIndex(where: { $0.id == reference.id }) {
+                    if merged[index].image == nil { merged[index] = reference }
+                } else {
+                    merged.append(reference)
+                }
+            }
+            updated.candidates = merged
         }
-        updated.candidates = merged
         try saveNotSureCase(updated)
     }
 
@@ -553,12 +754,14 @@ final class AppStore: ObservableObject {
         sessionGeneration = UUID()
         searchTask?.cancel()
         mapTask?.cancel()
+        demoReloadTask?.cancel()
         photoCache.removeAll()
         turtles = []
         analyticsTurtles = []
         favoriteTurtles = []
         sightings = []
         dashboard = DashboardSnapshot(months: [], species: [])
+        trendMonths = []
         totalIndividuals = 0
         individualsOffset = 0
         isIndividualsLoading = false
@@ -568,14 +771,19 @@ final class AppStore: ObservableObject {
         requestedEscalatedCaseID = nil
         loadedReviewScope = nil
         notSureQueueError = nil
+        isSyncingMobileQueue = false
         isReviewPracticePresented = false
         isLoading = false
+        isExporting = false
+        isImporting = false
+        importProgressText = nil
         lastError = nil
+        statusMessage = nil
         let demoDataset = demoPersona.demoDataset
         repository = isDemoBypassActive ? DemoTurtleRepository(dataset: demoDataset) : RemoteTurtleRepository(client: client)
     }
 
-    deinit { searchTask?.cancel(); mapTask?.cancel() }
+    deinit { searchTask?.cancel(); mapTask?.cancel(); demoReloadTask?.cancel() }
 
     func bootstrap() async {
         guard !hasBootstrapped else { return }
@@ -614,8 +822,9 @@ final class AppStore: ObservableObject {
             async let individuals = repository.listIndividuals(query: individualQuery)
             async let favorites = repository.listFavorites()
             async let dashboard = repository.dashboard(query: dashboardQuery)
+            async let trendSnapshot = try? repository.dashboard(query: currentTrendDashboardQuery)
             async let sightings = repository.mapSightings(query: mapQuery)
-            let (page, favoriteItems, snapshot, mapItems) = try await (individuals, favorites, dashboard, sightings)
+            let (page, favoriteItems, snapshot, trend, mapItems) = try await (individuals, favorites, dashboard, trendSnapshot, sightings)
             guard sessionGeneration == generation else { return }
             if individualRequest == individualRevision, currentIndividualQuery == individualQuery {
                 turtles = page.items
@@ -623,7 +832,10 @@ final class AppStore: ObservableObject {
                 totalIndividuals = page.total
                 favoriteTurtles = favoriteItems
             }
-            if dashboardRequest == dashboardRevision, chartSpecies == dashboardQuery.species { self.dashboard = snapshot }
+            if dashboardRequest == dashboardRevision, chartSpecies == dashboardQuery.species {
+                self.dashboard = snapshot
+                self.trendMonths = trend?.months.isEmpty == false ? (trend?.months ?? snapshot.months) : snapshot.months
+            }
             if mapRequest == mapRevision, currentMapQuery == mapQuery { self.sightings = mapItems }
         } catch {
             guard sessionGeneration == generation, allRequest == allRevision,
@@ -673,8 +885,26 @@ final class AppStore: ObservableObject {
         }
     }
 
+    var allKnownTurtles: [Turtle] {
+        var seen = Set<String>()
+        var combined: [Turtle] = []
+        for source in [analyticsTurtles, turtles, favoriteTurtles] {
+            for turtle in source where seen.insert(turtle.id).inserted {
+                combined.append(turtle)
+            }
+        }
+        return combined
+    }
+
+    func turtle(forID id: String) -> Turtle? {
+        turtles.first(where: { $0.id == id })
+            ?? analyticsTurtles.first(where: { $0.id == id })
+            ?? favoriteTurtles.first(where: { $0.id == id })
+    }
+
     func reloadMap() async {
         guard canLoadRecords else { return }
+        mapTask?.cancel()
         let generation = sessionGeneration
         let query = currentMapQuery
         mapRequest += 1
@@ -694,9 +924,12 @@ final class AppStore: ObservableObject {
         dashboardRequest += 1
         let request = dashboardRequest
         do {
-            let value = try await repository.dashboard(query: currentDashboardQuery)
+            async let value = repository.dashboard(query: currentDashboardQuery)
+            async let trend = try? repository.dashboard(query: currentTrendDashboardQuery)
+            let (snapshot, trendSnapshot) = try await (value, trend)
             guard sessionGeneration == generation, dashboardRequest == request else { return }
-            dashboard = value
+            dashboard = snapshot
+            trendMonths = trendSnapshot?.months.isEmpty == false ? (trendSnapshot?.months ?? snapshot.months) : snapshot.months
         } catch {
             if sessionGeneration == generation, dashboardRequest == request, !(error is CancellationError) { lastError = error.localizedDescription }
         }
@@ -774,23 +1007,273 @@ final class AppStore: ObservableObject {
         guard canLoadRecords else { return }
         let generation = sessionGeneration
         let repository = repository
+        isExporting = true
+        statusMessage = nil
         Task {
+            defer {
+                if sessionGeneration == generation { isExporting = false }
+            }
             guard sessionGeneration == generation else { return }
             do {
                 let file = try await repository.export(request)
                 guard sessionGeneration == generation else { return }
                 let panel = NSSavePanel()
                 panel.nameFieldStringValue = file.filename
-                panel.allowedContentTypes = [.data]
+                panel.allowedContentTypes = Self.allowedContentTypes(for: request.format)
                 guard panel.runModal() == .OK, let url = panel.url else { return }
                 try file.data.write(to: url, options: .atomic)
+                statusMessage = "Exported \(url.lastPathComponent)"
             } catch {
                 if sessionGeneration == generation, !(error is CancellationError) { lastError = error.localizedDescription }
             }
         }
     }
 
+    static func allowedContentTypes(for format: ExportFormat) -> [UTType] {
+        switch format {
+        case .csv: [.commaSeparatedText]
+        case .xlsx: [UTType(filenameExtension: "xlsx") ?? .data]
+        case .pdf: [.pdf]
+        }
+    }
+
+    // MARK: - Batch Import & Not Sure Queue Handoff
+
+    struct ImportExecutionSummary: Equatable, Sendable {
+        let importedCount: Int
+        let escalatedToNotSureCount: Int
+        let failedCount: Int
+        let summaryText: String
+    }
+
+    var existingProfileCodes: Set<String> {
+        Set(allKnownTurtles.compactMap(\.profileCode))
+    }
+
+    func importPhotoEncounters(
+        _ encounters: [StagedPhotoEncounter],
+        destination: PhotoBatchDestination
+    ) async -> ImportExecutionSummary {
+        guard !encounters.isEmpty else {
+            return ImportExecutionSummary(importedCount: 0, escalatedToNotSureCount: 0, failedCount: 0, summaryText: "Nothing to import")
+        }
+        let generation = sessionGeneration
+        isImporting = true
+        statusMessage = nil
+        lastError = nil
+        defer {
+            if sessionGeneration == generation {
+                isImporting = false
+                importProgressText = nil
+            }
+        }
+
+        var imported = 0
+        var escalated = 0
+        var failed = 0
+        var usedCodes = existingProfileCodes
+        var autoCodeSeed = 200_001
+
+        for (index, encounter) in encounters.enumerated() {
+            guard sessionGeneration == generation, !Task.isCancelled else { break }
+            importProgressText = "Importing \(index + 1) of \(encounters.count)…"
+
+            do {
+                switch destination {
+                case .notSureQueue:
+                    let reviewCase = EscalatedNotSureCase(
+                        title: encounter.title,
+                        side: encounter.primary.side,
+                        photo: NotSureReviewPhoto(data: encounter.primary.jpegData),
+                        companion: encounter.companion.map { NotSureReviewPhoto(data: $0.jpegData) },
+                        queryFingerprint: nil,
+                        queryROI: [],
+                        candidates: [],
+                        submittedBy: accountName,
+                        isExample: isDemoBypassActive
+                    )
+                    try saveNotSureCase(reviewCase)
+                    imported += 1
+                    escalated += 1
+
+                case .matchAndTriage:
+                    let outcome: MatchSearchOutcome
+                    if let left = encounter.leftPhoto, let right = encounter.rightPhoto {
+                        outcome = try await matchPhotoPair(leftData: left.jpegData, rightData: right.jpegData, limit: 6)
+                    } else {
+                        outcome = try await matchPhoto(imageData: encounter.primary.jpegData, side: encounter.primary.side, limit: 6)
+                    }
+                    guard sessionGeneration == generation else { break }
+
+                    var references: [EscalatedNotSureCandidate] = []
+                    for cand in outcome.candidates {
+                        let path = cand.photoURL ?? "/api/v1/individuals/\(cand.id.uuidString)/photos/\(cand.matchedPhotoSide.rawValue)"
+                        let img = await loadPhoto(for: path)
+                        references.append(EscalatedNotSureCandidate(
+                            id: cand.id.uuidString,
+                            rank: cand.rank,
+                            name: cand.name,
+                            profileCode: cand.profileCode ?? "",
+                            side: cand.matchedPhotoSide,
+                            sideMatches: cand.matchedPhotoSide == encounter.primary.side || encounter.isPaired,
+                            dateText: cand.lastSeenDate ?? "",
+                            location: cand.lastSeenLocation ?? "",
+                            confidencePercent: cand.confidencePercent,
+                            photo: NotSureReviewPhoto(snapshot: img),
+                            sampleImageName: isDemoBypassActive ? (path as NSString).lastPathComponent : nil,
+                            fingerprint: nil,
+                            isBundledExample: isDemoBypassActive
+                        ))
+                    }
+
+                    let reviewCase = EscalatedNotSureCase(
+                        title: encounter.title,
+                        side: encounter.primary.side,
+                        photo: NotSureReviewPhoto(data: encounter.primary.jpegData),
+                        companion: encounter.companion.map { NotSureReviewPhoto(data: $0.jpegData) },
+                        queryFingerprint: nil,
+                        queryROI: [],
+                        candidates: references,
+                        submittedBy: accountName,
+                        isExample: isDemoBypassActive
+                    )
+                    try saveNotSureCase(reviewCase)
+                    imported += 1
+                    escalated += 1
+
+                case .enrollNew:
+                    while usedCodes.contains(String(format: "%06d", autoCodeSeed)) { autoCodeSeed += 1 }
+                    let code = String(format: "%06d", autoCodeSeed)
+                    usedCodes.insert(code)
+                    autoCodeSeed += 1
+
+                    let draft = IndividualDraft(
+                        profileCode: code,
+                        name: encounter.title,
+                        species: TurtleSpecies.unknown.apiValue,
+                        sex: "unknown",
+                        firstSeenAt: encounter.capturedAt ?? Date()
+                    )
+                    let created = try await repository.createIndividual(draft)
+                    guard sessionGeneration == generation else { break }
+                    if let backendID = created.backendID {
+                        if let left = encounter.leftPhoto {
+                            _ = try await repository.uploadIndividualPhoto(individualID: backendID, side: .left, imageData: left.jpegData)
+                        }
+                        if let right = encounter.rightPhoto {
+                            _ = try await repository.uploadIndividualPhoto(individualID: backendID, side: .right, imageData: right.jpegData)
+                        }
+                    }
+                    imported += 1
+                }
+            } catch {
+                failed += 1
+            }
+        }
+
+        if destination == .enrollNew && imported > 0 && sessionGeneration == generation {
+            demoReloadTask?.cancel()
+            await reloadAll()
+        }
+
+        let summaryText: String
+        switch destination {
+        case .matchAndTriage:
+            summaryText = "Matched & sent \(escalated) encounter\(escalated == 1 ? "" : "s") to Not Sure"
+        case .notSureQueue:
+            summaryText = "Added \(escalated) encounter\(escalated == 1 ? "" : "s") to Not Sure"
+        case .enrollNew:
+            summaryText = "Enrolled \(imported) turtle\(imported == 1 ? "" : "s")"
+        }
+        let suffix = failed > 0 ? " (\(failed) failed)" : ""
+        let fullText = summaryText + suffix
+        if sessionGeneration == generation {
+            statusMessage = fullText
+            if escalated > 0 {
+                openNotSureReview(caseID: escalatedNotSureCases.first?.id)
+            }
+        }
+        return ImportExecutionSummary(
+            importedCount: imported,
+            escalatedToNotSureCount: escalated,
+            failedCount: failed,
+            summaryText: fullText
+        )
+    }
+
+    func importCatalogRows(_ rows: [StagedCatalogRow]) async -> ImportExecutionSummary {
+        let validRows = rows.filter(\.isValid)
+        guard !validRows.isEmpty else {
+            return ImportExecutionSummary(importedCount: 0, escalatedToNotSureCount: 0, failedCount: rows.count, summaryText: "No valid rows to import")
+        }
+        let generation = sessionGeneration
+        isImporting = true
+        statusMessage = nil
+        lastError = nil
+        defer {
+            if sessionGeneration == generation {
+                isImporting = false
+                importProgressText = nil
+            }
+        }
+
+        var imported = 0
+        var failed = 0
+        for (idx, row) in validRows.enumerated() {
+            guard sessionGeneration == generation, !Task.isCancelled, let draft = row.draft else { break }
+            importProgressText = "Importing \(idx + 1) of \(validRows.count)…"
+            do {
+                _ = try await repository.createIndividual(draft)
+                imported += 1
+            } catch {
+                failed += 1
+            }
+        }
+
+        if imported > 0 && sessionGeneration == generation {
+            demoReloadTask?.cancel()
+            await reloadAll()
+        }
+
+        let text = "Imported \(imported) individual\(imported == 1 ? "" : "s")" + (failed > 0 ? " (\(failed) failed)" : "")
+        if sessionGeneration == generation { statusMessage = text }
+        return ImportExecutionSummary(importedCount: imported, escalatedToNotSureCount: 0, failedCount: failed, summaryText: text)
+    }
+
+    func importNotSureBundleCases(_ cases: [EscalatedNotSureCase]) -> Int {
+        var imported = 0
+        for item in cases {
+            if (try? saveNotSureCase(item)) != nil {
+                imported += 1
+            }
+        }
+        if imported > 0 {
+            statusMessage = "Imported \(imported) Not Sure case\(imported == 1 ? "" : "s")"
+            openNotSureReview()
+        }
+        return imported
+    }
+
+    func exportNotSureQueue() {
+        guard !escalatedNotSureCases.isEmpty else {
+            statusMessage = "No Not Sure cases to export"
+            return
+        }
+        do {
+            let data = try NotSureReviewBundle.encode(escalatedNotSureCases, account: accountName)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "ada-penyu-not-sure-queue.json"
+            panel.allowedContentTypes = [.json]
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try data.write(to: url, options: .atomic)
+            statusMessage = "Exported \(escalatedNotSureCases.count) Not Sure case\(escalatedNotSureCases.count == 1 ? "" : "s") to \(url.lastPathComponent)"
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     func clearError() { lastError = nil }
+    func clearStatusMessage() { statusMessage = nil }
 
     func signIn(email: String, password: String, rememberMe: Bool) async throws {
         clearPrivateState()
@@ -918,6 +1401,10 @@ final class AppStore: ObservableObject {
         var query = DashboardQuery.lastTwelveMonths
         query.species = chartSpecies
         return query
+    }
+
+    var currentTrendDashboardQuery: DashboardQuery {
+        DashboardQuery.lastMonths(24, species: chartSpecies)
     }
 
     var currentMapQuery: MapQuery {

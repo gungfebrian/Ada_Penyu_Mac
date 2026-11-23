@@ -138,7 +138,7 @@ struct SidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .clipped()
         }
-        .help("Sightings, favorites, and I3S identification")
+        .help("Sightings, watchlist, and I3S identification")
         .accessibilityLabel("More workspaces")
     }
 
@@ -155,8 +155,8 @@ struct SidebarView: View {
                 }
             ),
             DropdownAction(
-                title: localized("Favorites"),
-                subtitle: localized("Bookmarked sea turtles"),
+                title: localized("Watchlist"),
+                subtitle: localized("Tracked sea turtles"),
                 icon: AppSection.favorites.icon,
                 badge: favoriteCount > 0 ? "\(favoriteCount)" : nil,
                 selected: selection == .favorites,
@@ -221,7 +221,7 @@ struct SidebarView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .background(selection == section || (section == .individuals && selection == .sightings) ? .white.opacity(0.1) : .clear)
+            .background(selection == section || (section == .individuals && (selection == .sightings || selection == .favorites)) ? .white.opacity(0.1) : .clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .clipped()
             .contentShape(Rectangle())

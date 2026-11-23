@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var store: AppStore
     @State private var showingExport = false
+    @State private var showingImport = false
     @State private var exportQueryOverride: IndividualQuery?
     @State private var isSidebarCollapsed = false
     @State private var selectedSightingID: String?
@@ -28,6 +29,7 @@ struct ContentView: View {
         }
         .onChange(of: store.sessionGeneration) { _, _ in
             showingExport = false
+            showingImport = false
             exportQueryOverride = nil
             selectedSightingID = nil
             focusedMapTurtleID = nil
@@ -91,6 +93,7 @@ struct ContentView: View {
 
                 VStack(spacing: 0) {
                     WorkspaceHeader(store: store, title: pageTitle,
+                        onImport: { showingImport = true },
                         onExport: { exportQueryOverride = nil; showingExport = true },
                         isSidebarCollapsed: isSidebarCollapsed,
                         onToggleSidebar: toggleSidebar)
@@ -98,16 +101,38 @@ struct ContentView: View {
                     ZStack {
                         AdaColors.canvas
                         if let turtle = store.selectedTurtle {
-                            ProfileWorkspaceView(turtle: store.selectedDetail?.turtle ?? turtle,
-                                detail: store.selectedDetail, isLoading: store.isDetailLoading, error: store.detailError,
+                            let displayedTurtle = store.selectedDetail?.turtle ?? turtle
+                            let isFavorite = store.favoriteTurtles.contains { $0.id == displayedTurtle.id }
+                            ProfileWorkspaceView(
+                                turtle: displayedTurtle,
+                                detail: store.selectedDetail,
+                                isLoading: store.isDetailLoading,
+                                error: store.detailError,
                                 selectedSightingID: $selectedSightingID,
                                 onBack: { selectedSightingID = nil; store.dismissDetail() },
-                                onMap: { openMap(turtleID: turtle.id) },
-                                onExport: { exportQueryOverride = IndividualQuery(search: turtle.displayName); showingExport = true },
-                                onRetry: { Task { await store.loadDetail(for: turtle) } })
+                                onMap: { openMap(turtleID: displayedTurtle.id) },
+                                onExport: {
+                                    exportQueryOverride = IndividualQuery(search: displayedTurtle.profileCode ?? displayedTurtle.displayName)
+                                    showingExport = true
+                                },
+                                originTitle: store.detailOrigin.title,
+                                isFavorite: isFavorite,
+                                onToggleFavorite: { store.toggleFavorite(displayedTurtle) },
+                                onRetry: { Task { await store.loadDetail(for: turtle) } }
+                            )
                         } else { pageView }
 
-                        if store.activeSection != .settings && (store.isLoading || (store.isIndividualsLoading && store.activeSection == .individuals)) {
+                        if store.isImporting {
+                            ProgressView(store.importProgressText ?? "Importing…")
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(.regularMaterial, in: Capsule())
+                        } else if store.isExporting {
+                            ProgressView("Preparing export…")
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(.regularMaterial, in: Capsule())
+                        } else if store.activeSection != .settings && (store.isLoading || (store.isIndividualsLoading && store.activeSection == .individuals)) {
                             ProgressView("Loading records…")
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 12)
@@ -120,7 +145,7 @@ struct ContentView: View {
                 .background(
                     RightPaneAutoMinimizeObserver(
                         isSidebarCollapsed: isSidebarCollapsed,
-                        isBlocked: showingExport,
+                        isBlocked: showingExport || showingImport,
                         onMinimize: { setSidebarCollapsed(true) }
                     )
                 )
@@ -128,16 +153,31 @@ struct ContentView: View {
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 40, bottomLeadingRadius: 40, bottomTrailingRadius: 0, topTrailingRadius: 0))
             }
 
+            if showingImport {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Color.black.opacity(0.16))
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        if !store.isImporting { showingImport = false }
+                    }
+
+                ImportSheetView(store: store, onDismiss: {
+                    showingImport = false
+                })
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+
             if showingExport {
                 Rectangle()
                     .fill(.ultraThinMaterial)
                     .overlay(Color.black.opacity(0.16))
                     .ignoresSafeArea()
-                    .onTapGesture { showingExport = false }
+                    .onTapGesture { showingExport = false; exportQueryOverride = nil }
 
                 ExportSheet(
                     query: exportQueryOverride ?? store.currentIndividualQuery,
-                    resultCount: exportQueryOverride == nil ? store.turtles.count : 1,
+                    resultCount: exportQueryOverride == nil ? max(store.totalIndividuals, store.turtles.count) : 1,
                     onCancel: { showingExport = false; exportQueryOverride = nil }
                 ) { request in
                     showingExport = false
@@ -216,17 +256,28 @@ struct ContentView: View {
             }
         }
         .background(AdaColors.navy)
-        .onChange(of: store.activeSection) { _, _ in selectedSightingID = nil; store.dismissDetail() }
+        .onChange(of: store.activeSection) { _, nextSection in
+            selectedSightingID = nil
+            store.dismissDetail()
+            if nextSection != .map {
+                focusedMapTurtleID = nil
+            }
+        }
         .frame(minWidth: AdaLayout.minimumWindowSize.width, minHeight: AdaLayout.minimumWindowSize.height)
         .animation(.easeOut(duration: 0.16), value: showingExport)
+        .animation(.easeOut(duration: 0.16), value: showingImport)
         .animation(.easeOut(duration: 0.16), value: store.isReviewPracticePresented)
         .animation(.easeOut(duration: 0.18), value: store.selectedTurtle?.id)
         .onExitCommand {
             if store.isReviewPracticePresented {
                 store.isReviewPracticePresented = false
+            } else if showingImport {
+                if !store.isImporting { showingImport = false }
             } else if showingExport {
                 showingExport = false
                 exportQueryOverride = nil
+            } else if selectedSightingID != nil {
+                selectedSightingID = nil
             } else if store.selectedTurtle != nil {
                 store.dismissDetail()
             } else if store.activeSection == .settings && store.settingsDetail != nil {
@@ -234,16 +285,30 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .top) {
-            if let error = store.lastError {
-                HStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle")
-                    Text(error).font(.callout).textSelection(.enabled)
-                    Spacer()
-                    Button("Retry") { Task { await store.reloadAll() } }
-                    Button("Dismiss") { store.clearError() }
+            VStack(spacing: 0) {
+                if let error = store.lastError {
+                    HStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(AdaColors.red)
+                        Text(error).font(.callout).textSelection(.enabled)
+                        Spacer()
+                        Button("Retry") { Task { await store.reloadAll() } }
+                        Button("Dismiss") { store.clearError() }
+                    }
+                    .padding(12)
+                    .background(AdaColors.card)
                 }
-                .padding(12)
-                .background(AdaColors.card)
+                if let status = store.statusMessage {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(AdaColors.green)
+                        Text(status).font(.callout).foregroundStyle(AdaColors.ink)
+                        Spacer()
+                        Button("Dismiss") { store.clearStatusMessage() }
+                    }
+                    .padding(12)
+                    .background(AdaColors.card)
+                }
             }
         }
     }
@@ -252,7 +317,13 @@ struct ContentView: View {
         if store.selectedTurtle != nil {
             return selectedSightingID == nil ? "Turtle Profile" : "Sighting Details"
         }
-        let rawTitle = store.activeSection == .scientistReview ? AppSection.individuals.title : store.activeSection.title
+        let rawTitle: String
+        switch store.activeSection {
+        case .individuals, .favorites, .scientistReview:
+            rawTitle = AppSection.individuals.title
+        default:
+            rawTitle = store.activeSection.title
+        }
         return store.localization.localized(rawTitle)
     }
 
@@ -275,7 +346,7 @@ struct ContentView: View {
                 turtles: store.analyticsTurtles.isEmpty ? store.turtles : store.analyticsTurtles,
                 recentSightings: store.sightings,
                 chartMode: $store.chartMode, chartSpecies: $store.chartSpecies,
-                onExport: { showingExport = true }, onSelect: store.select,
+                onExport: { exportQueryOverride = nil; showingExport = true }, onSelect: store.select,
                 onBrowseTurtles: { store.activeSection = .individuals },
                 onShowSightings: {
                     store.selectedMapPeriod = .twelveMonths
@@ -284,20 +355,31 @@ struct ContentView: View {
                     store.activeSection = .sightings
                 }, onOpenMap: { openMap(turtleID: nil) })
         case .map:
-            MapPageView(turtles: store.analyticsTurtles.isEmpty ? store.turtles : store.analyticsTurtles,
+            MapPageView(turtles: store.allKnownTurtles,
                 sightings: store.sightings, selectedPeriod: $store.selectedMapPeriod,
                 selectedSpecies: $store.mapSpecies, selectedCondition: $store.mapCondition,
                 onReload: { Task { await store.reloadMap() } }, onSelect: store.select,
-                focusTurtleID: focusedMapTurtleID, onOpenSighting: openSighting)
+                focusTurtleID: focusedMapTurtleID,
+                onFocusConsumed: { focusedMapTurtleID = nil },
+                onOpenSighting: openSighting)
         case .individuals:
             VStack(spacing: 0) {
                 catalogTabs
-                IndividualsView(turtles: store.turtles, total: store.totalIndividuals, searchText: $store.searchText,
-                    selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
-                    onToggleFavorite: store.toggleFavorite, onSelect: store.select,
-                    selectedSpecies: $store.selectedSpecies, pageSize: $store.individualsPageSize,
-                    offset: store.individualsOffset, isLoading: store.isIndividualsLoading,
-                    onPage: { page in Task { await store.loadIndividualsPage(page) } })
+                IndividualsView(
+                    turtles: store.turtles,
+                    total: store.totalIndividuals,
+                    searchText: $store.searchText,
+                    selectedCondition: $store.selectedCondition,
+                    favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                    onToggleFavorite: store.toggleFavorite,
+                    onSelect: store.select,
+                    selectedSpecies: $store.selectedSpecies,
+                    pageSize: $store.individualsPageSize,
+                    offset: store.individualsOffset,
+                    isLoading: store.isIndividualsLoading,
+                    onPage: { page in Task { await store.loadIndividualsPage(page) } },
+                    sort: $store.sort
+                )
             }
         case .sightings:
             SightingsListView(sightings: store.sightings, onSelect: openSighting)
@@ -311,53 +393,99 @@ struct ContentView: View {
         case .identification:
             I3SWorkspaceView(store: store)
         case .favorites:
-            FavoritesView(turtles: store.favoriteTurtles, searchText: $store.searchText, selectedCondition: $store.selectedCondition, favoriteIDs: Set(store.favoriteTurtles.map(\.id)), onToggleFavorite: store.toggleFavorite, onSelect: store.select, onBrowseIndividuals: { store.searchText = ""; store.selectedCondition = nil; store.activeSection = .individuals })
+            VStack(spacing: 0) {
+                catalogTabs
+                FavoritesView(
+                    turtles: store.favoriteTurtles,
+                    searchText: $store.searchText,
+                    selectedCondition: $store.selectedCondition,
+                    favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                    onToggleFavorite: store.toggleFavorite,
+                    onSelect: store.select,
+                    onBrowseIndividuals: {
+                        store.searchText = ""
+                        store.selectedSpecies = nil
+                        store.selectedCondition = nil
+                        store.activeSection = .individuals
+                    },
+                    selectedSpecies: $store.selectedSpecies
+                )
+            }
         case .settings:
             SettingsView(store: store, model: store.organizationKeySettings)
         }
     }
     private func openSighting(_ sighting: Sighting) {
         selectedSightingID = sighting.id
-        store.select(store.turtles.first { $0.id == sighting.turtleID }
-            ?? store.analyticsTurtles.first { $0.id == sighting.turtleID }
-            ?? sighting.turtleReference)
+        store.select(store.turtle(forID: sighting.turtleID) ?? sighting.turtleReference)
     }
 
     private var catalogTabs: some View {
-        HStack(spacing: 18) {
-            catalogTab("Individuals", count: store.totalIndividuals, selected: store.activeSection == .individuals) {
-                store.activeSection = .individuals
+        HStack(spacing: 12) {
+            HStack(spacing: 3) {
+                catalogTab(
+                    "Individuals",
+                    icon: "tortoise",
+                    count: store.totalIndividuals,
+                    selected: store.activeSection == .individuals
+                ) {
+                    store.activeSection = .individuals
+                }
+                catalogTab(
+                    "Watchlist",
+                    icon: "bookmark",
+                    count: store.favoriteTurtles.count,
+                    selected: store.activeSection == .favorites
+                ) {
+                    store.activeSection = .favorites
+                }
+                catalogTab(
+                    "Not Sure",
+                    icon: "questionmark.circle",
+                    count: store.pendingNotSureCases.count,
+                    selected: store.activeSection == .scientistReview
+                ) {
+                    store.openNotSureReview()
+                }
             }
-            catalogTab("Not Sure", count: store.pendingNotSureCases.count, selected: store.activeSection == .scientistReview) {
-                store.openNotSureReview()
-            }
-            Spacer()
+            .padding(3)
+            .background(AdaColors.card, in: Capsule())
+            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
+
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, AdaLayout.pagePadding)
-        .overlay(alignment: .bottom) { Rectangle().fill(AdaColors.line).frame(height: 1) }
+        .padding(.bottom, 10)
     }
 
-    private func catalogTab(_ title: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func catalogTab(_ title: String, icon: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Text(title).font(.system(size: 13, weight: selected ? .semibold : .medium))
-                Text(count.formatted()).font(.caption.monospacedDigit()).foregroundStyle(AdaColors.secondaryInk)
+            HStack(spacing: 7) {
+                Image(systemName: selected && icon == "bookmark" ? "bookmark.fill" : icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
+                Text(count.formatted())
+                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(selected ? .white.opacity(0.92) : AdaColors.secondaryInk)
+                    .padding(.horizontal, 7)
+                    .frame(height: 18)
+                    .background(selected ? .white.opacity(0.18) : AdaColors.surfaceMuted, in: Capsule())
             }
-            .foregroundStyle(selected ? AdaColors.navy : AdaColors.secondaryInk)
-            .padding(.horizontal, 12)
-            .frame(height: 38)
-            .contentShape(Rectangle())
-            .overlay(alignment: .bottom) {
-                if selected { Rectangle().fill(AdaColors.navy).frame(height: 2) }
-            }
+            .foregroundStyle(selected ? .white : AdaColors.secondaryInk)
+            .padding(.horizontal, 13)
+            .frame(height: 32)
+            .background(selected ? AdaColors.navy : .clear, in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.14), value: selected)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
 }
 
-private struct ExportSheet: View {
+struct ExportSheet: View {
     let query: IndividualQuery
     let resultCount: Int
     let onCancel: () -> Void
@@ -675,3 +803,20 @@ private struct RightPaneAutoMinimizeObserver: NSViewRepresentable {
         }
     }
 }
+
+#if DEBUG
+#Preview("App · World Super Account") {
+    PreviewDemoShell(persona: .worldSuperNetwork, section: .dashboard)
+        .frame(width: 1440, height: 900)
+        .preferredColorScheme(.light)
+}
+
+#Preview("Export Data Modal") {
+    ZStack {
+        AdaColors.canvas
+        ExportSheet(query: IndividualQuery(), resultCount: 45, onCancel: {}, onExport: { _ in })
+    }
+    .frame(width: 640, height: 600)
+    .preferredColorScheme(.light)
+}
+#endif
