@@ -73,6 +73,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var favoriteTurtles: [Turtle] = []
     @Published private(set) var sightings: [Sighting] = []
     @Published private(set) var dashboard: DashboardSnapshot = DashboardSnapshot(months: [], species: [])
+    @Published private(set) var trendMonths: [DashboardSnapshot.Month] = []
     @Published var selectedTurtle: Turtle?
     @Published private(set) var detailOrigin: AppSection = .individuals
     @Published private(set) var selectedDetail: TurtleDetailData?
@@ -760,6 +761,7 @@ final class AppStore: ObservableObject {
         favoriteTurtles = []
         sightings = []
         dashboard = DashboardSnapshot(months: [], species: [])
+        trendMonths = []
         totalIndividuals = 0
         individualsOffset = 0
         isIndividualsLoading = false
@@ -820,8 +822,9 @@ final class AppStore: ObservableObject {
             async let individuals = repository.listIndividuals(query: individualQuery)
             async let favorites = repository.listFavorites()
             async let dashboard = repository.dashboard(query: dashboardQuery)
+            async let trendSnapshot = try? repository.dashboard(query: currentTrendDashboardQuery)
             async let sightings = repository.mapSightings(query: mapQuery)
-            let (page, favoriteItems, snapshot, mapItems) = try await (individuals, favorites, dashboard, sightings)
+            let (page, favoriteItems, snapshot, trend, mapItems) = try await (individuals, favorites, dashboard, trendSnapshot, sightings)
             guard sessionGeneration == generation else { return }
             if individualRequest == individualRevision, currentIndividualQuery == individualQuery {
                 turtles = page.items
@@ -829,7 +832,10 @@ final class AppStore: ObservableObject {
                 totalIndividuals = page.total
                 favoriteTurtles = favoriteItems
             }
-            if dashboardRequest == dashboardRevision, chartSpecies == dashboardQuery.species { self.dashboard = snapshot }
+            if dashboardRequest == dashboardRevision, chartSpecies == dashboardQuery.species {
+                self.dashboard = snapshot
+                self.trendMonths = trend?.months.isEmpty == false ? (trend?.months ?? snapshot.months) : snapshot.months
+            }
             if mapRequest == mapRevision, currentMapQuery == mapQuery { self.sightings = mapItems }
         } catch {
             guard sessionGeneration == generation, allRequest == allRevision,
@@ -918,9 +924,12 @@ final class AppStore: ObservableObject {
         dashboardRequest += 1
         let request = dashboardRequest
         do {
-            let value = try await repository.dashboard(query: currentDashboardQuery)
+            async let value = repository.dashboard(query: currentDashboardQuery)
+            async let trend = try? repository.dashboard(query: currentTrendDashboardQuery)
+            let (snapshot, trendSnapshot) = try await (value, trend)
             guard sessionGeneration == generation, dashboardRequest == request else { return }
-            dashboard = value
+            dashboard = snapshot
+            trendMonths = trendSnapshot?.months.isEmpty == false ? (trendSnapshot?.months ?? snapshot.months) : snapshot.months
         } catch {
             if sessionGeneration == generation, dashboardRequest == request, !(error is CancellationError) { lastError = error.localizedDescription }
         }
@@ -1392,6 +1401,10 @@ final class AppStore: ObservableObject {
         var query = DashboardQuery.lastTwelveMonths
         query.species = chartSpecies
         return query
+    }
+
+    var currentTrendDashboardQuery: DashboardQuery {
+        DashboardQuery.lastMonths(24, species: chartSpecies)
     }
 
     var currentMapQuery: MapQuery {

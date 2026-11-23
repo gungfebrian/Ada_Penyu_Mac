@@ -19,7 +19,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .individuals: "Sea Turtles"
         case .scientistReview: "Not Sure Review"
         case .identification: "I3S Pattern ID"
-        case .favorites: "Favorites"
+        case .favorites: "Watchlist"
         case .sightings: "Sightings"
         case .settings: "Settings"
         }
@@ -32,7 +32,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .individuals: "tortoise"
         case .scientistReview: "questionmark.circle"
         case .identification: "viewfinder.circle"
-        case .favorites: "heart"
+        case .favorites: "bookmark"
         case .sightings: "binoculars"
         case .settings: "gearshape"
         }

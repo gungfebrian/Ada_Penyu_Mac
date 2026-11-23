@@ -686,16 +686,16 @@ private struct TurtleSummaryCard: View {
                 DetailMetric(title: "Total sightings", value: String(format: "%02d", turtle.sightings))
             }
             Button(action: onToggleFavorite) {
-                Image(systemName: isFavorite ? "heart.fill" : "heart")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(isFavorite ? AdaColors.accent : AdaColors.ink)
+                Image(systemName: isFavorite ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isFavorite ? .white : AdaColors.ink)
                     .frame(width: 29, height: 29)
-                    .background(Color.black.opacity(0.035))
+                    .background(isFavorite ? AdaColors.navy : Color.black.opacity(0.035))
                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
             .buttonStyle(.plain)
-            .help(isFavorite ? "Remove from favorites" : "Favorite")
-            .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
+            .help(isFavorite ? "Remove from watchlist" : "Add to watchlist")
+            .accessibilityLabel(isFavorite ? "Remove from watchlist" : "Add to watchlist")
 
             Button(action: onExport) {
                 Image(systemName: "arrow.down")

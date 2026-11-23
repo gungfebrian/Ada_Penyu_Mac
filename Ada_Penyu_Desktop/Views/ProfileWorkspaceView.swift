@@ -29,12 +29,16 @@ struct ProfileWorkspaceView: View {
                     Spacer()
                     if let onToggleFavorite {
                         Button(action: onToggleFavorite) {
-                            Label(isFavorite ? "Favorited" : "Favorite", systemImage: isFavorite ? "heart.fill" : "heart")
-                                .font(.system(size: 12))
-                                .foregroundStyle(isFavorite ? AdaColors.accent : AdaColors.ink)
+                            Label(isFavorite ? "On Watchlist" : "Watchlist", systemImage: isFavorite ? "bookmark.fill" : "bookmark")
+                                .font(.system(size: 12, weight: isFavorite ? .semibold : .medium))
+                                .foregroundStyle(isFavorite ? .white : AdaColors.ink)
+                                .padding(.horizontal, 12)
+                                .frame(height: 30)
+                                .background(isFavorite ? AdaColors.navy : AdaColors.card, in: Capsule())
+                                .overlay(Capsule().stroke(isFavorite ? AdaColors.navy : AdaColors.line, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
+                        .accessibilityLabel(isFavorite ? "Remove from watchlist" : "Add to watchlist")
                     }
                     Button(action: onExport) {
                         Label("Export", systemImage: "arrow.down.doc")

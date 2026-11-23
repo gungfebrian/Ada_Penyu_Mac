@@ -190,4 +190,32 @@ final class DashboardWidgetTests: XCTestCase {
         let asiaSightings = try await repo.mapSightings(query: MapQuery(period: .allTime, page: PageRequest(limit: 200)))
         XCTAssertGreaterThanOrEqual(asiaSightings.count, 30)
     }
+
+    func testSightingsTimelineWindowSlidesAcrossHistoryAndSnapsToNow() async throws {
+        let repo = DemoTurtleRepository(dataset: .panAsiaSuperAccount)
+        let snapshot24 = try await repo.dashboard(query: .lastMonths(24))
+        XCTAssertEqual(snapshot24.months.count, 24)
+        XCTAssertEqual(snapshot24.months.last?.month, SightingsTimelineWindow.currentMonthKey())
+
+        // Anchored at Now (offset = 0) with 6M span
+        let atNow = SightingsTimelineWindow(allMonths: snapshot24.months, span: .sixMonths, endOffsetFromNow: 0)
+        XCTAssertTrue(atNow.isAtNow)
+        XCTAssertEqual(atNow.visibleMonths.count, 6)
+        XCTAssertEqual(atNow.maxOffset, 18)
+        XCTAssertEqual(atNow.visibleMonths.last?.month, snapshot24.months.last?.month)
+        XCTAssertTrue(atNow.rangeLabel.contains("Now"))
+
+        // Slide 10 months into the past
+        let earlier = SightingsTimelineWindow(allMonths: snapshot24.months, span: .sixMonths, endOffsetFromNow: 10)
+        XCTAssertFalse(earlier.isAtNow)
+        XCTAssertEqual(earlier.visibleMonths.count, 6)
+        XCTAssertEqual(earlier.visibleMonths.last?.month, snapshot24.months[13].month)
+        XCTAssertEqual(earlier.visibleMonths.first?.month, snapshot24.months[8].month)
+
+        // Over-scrolling past oldest history clamps cleanly to maxOffset
+        let clamped = SightingsTimelineWindow(allMonths: snapshot24.months, span: .oneYear, endOffsetFromNow: 99)
+        XCTAssertEqual(clamped.clampedOffset, 12)
+        XCTAssertEqual(clamped.visibleMonths.first?.month, snapshot24.months.first?.month)
+        XCTAssertEqual(clamped.visibleMonths.count, 12)
+    }
 }

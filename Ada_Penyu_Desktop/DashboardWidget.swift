@@ -86,7 +86,7 @@ enum DashboardWidgetKind: String, CaseIterable, Identifiable, Codable, Hashable 
         case .conditionBreakdown: "Body Condition"
         case .speciesBreakdown: "Species Observed"
         case .recentSightings: "Recent Resightings"
-        case .favoritesWatch: "Pinned Turtles"
+        case .favoritesWatch: "Watchlist"
         }
     }
 
@@ -145,7 +145,7 @@ enum DashboardWidgetKind: String, CaseIterable, Identifiable, Codable, Hashable 
         case .recentSightings:
             "Chronological feed of recent field encounters and resightings with condition filter pills."
         case .favoritesWatch:
-            "Quick status monitor for your account's favorited / pinned turtles."
+            "Quick status monitor for individuals on your account's watchlist."
         }
     }
 
@@ -175,7 +175,7 @@ enum DashboardWidgetKind: String, CaseIterable, Identifiable, Codable, Hashable 
         case .conditionBreakdown: "heart.text.square"
         case .speciesBreakdown: "tortoise.fill"
         case .recentSightings: "clock.arrow.circlepath"
-        case .favoritesWatch: "heart.fill"
+        case .favoritesWatch: "bookmark.fill"
         }
     }
 

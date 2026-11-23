@@ -68,8 +68,26 @@ struct DashboardQuery: Hashable, Sendable {
     var species: TurtleSpecies?
 
     static var lastTwelveMonths: DashboardQuery {
-        let now = Date()
-        return DashboardQuery(since: Calendar.current.date(byAdding: .month, value: -11, to: now), until: now)
+        lastMonths(12)
+    }
+
+    static func lastMonths(_ count: Int, species: TurtleSpecies? = nil, now: Date = Date()) -> DashboardQuery {
+        let clamped = max(1, min(60, count))
+        let start = Calendar.current.date(byAdding: .month, value: -(clamped - 1), to: now)
+        return DashboardQuery(since: start, until: now, species: species)
+    }
+
+    /// Number of calendar months spanned by `[since, until]`, defaulting to 12.
+    var resolvedMonthCount: Int {
+        let end = until ?? Date()
+        guard let since else { return 12 }
+        let cal = Calendar.current
+        let startComps = cal.dateComponents([.year, .month], from: since)
+        let endComps = cal.dateComponents([.year, .month], from: end)
+        guard let sy = startComps.year, let sm = startComps.month,
+              let ey = endComps.year, let em = endComps.month else { return 12 }
+        let diff = (ey - sy) * 12 + (em - sm) + 1
+        return max(1, min(60, diff))
     }
 
     var queryItems: [URLQueryItem] {
@@ -780,7 +798,8 @@ final class RemoteTurtleRepository: TurtleRepository {
         let species = dto.species.map {
             SpeciesSummary(id: $0.species, species: TurtleSpecies(apiValue: $0.species), individuals: $0.individuals, sightings: $0.sightings)
         }
-        return DashboardSnapshot(months: dto.months.map { .init(month: $0.month, sightings: $0.sightings, newIndividuals: $0.newIndividuals) }, species: species).fillingMissingMonths()
+        return DashboardSnapshot(months: dto.months.map { .init(month: $0.month, sightings: $0.sightings, newIndividuals: $0.newIndividuals) }, species: species)
+            .fillingMissingMonths(monthCount: query.resolvedMonthCount, now: query.until ?? Date())
     }
 
     func mapSightings(query: MapQuery) async throws -> [Sighting] {
@@ -1072,12 +1091,13 @@ final class RemoteTurtleRepository: TurtleRepository {
     }
 }
 
-private extension DashboardSnapshot {
-    func fillingMissingMonths(now: Date = Date()) -> DashboardSnapshot {
+extension DashboardSnapshot {
+    func fillingMissingMonths(monthCount: Int = 12, now: Date = Date()) -> DashboardSnapshot {
         let calendar = Calendar.current
+        let clampedCount = max(1, min(60, monthCount))
         let byMonth = Dictionary(uniqueKeysWithValues: months.map { ($0.month, $0) })
-        let normalized = (0..<12).compactMap { index -> Month? in
-            guard let date = calendar.date(byAdding: .month, value: -11 + index, to: now) else { return nil }
+        let normalized = (0..<clampedCount).compactMap { index -> Month? in
+            guard let date = calendar.date(byAdding: .month, value: -(clampedCount - 1) + index, to: now) else { return nil }
             let key = String(format: "%04d-%02d", calendar.component(.year, from: date), calendar.component(.month, from: date))
             return byMonth[key] ?? Month(month: key, sightings: 0, newIndividuals: 0)
         }
@@ -1160,8 +1180,10 @@ final class DemoTurtleRepository: TurtleRepository {
 
     func dashboard(query: DashboardQuery) async throws -> DashboardSnapshot {
         let calendar = Calendar.current
-        let monthKeys = (0..<12).compactMap { index -> String? in
-            guard let date = calendar.date(byAdding: .month, value: -11 + index, to: Date()) else { return nil }
+        let endDate = query.until ?? Date()
+        let count = query.resolvedMonthCount
+        let monthKeys = (0..<count).compactMap { index -> String? in
+            guard let date = calendar.date(byAdding: .month, value: -(count - 1) + index, to: endDate) else { return nil }
             return String(format: "%04d-%02d", calendar.component(.year, from: date), calendar.component(.month, from: date))
         }
         let scopedSightings = query.species.map { species in sightings.filter { $0.species == species } } ?? sightings
