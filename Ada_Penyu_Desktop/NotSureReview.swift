@@ -48,7 +48,8 @@ struct EscalatedNotSureCandidate: Codable, Identifiable {
     let dateText: String
     let location: String
     let confidencePercent: Int
-    let photo: NotSureReviewPhoto?
+    var photo: NotSureReviewPhoto?
+    var photoPath: String? = nil
     let sampleImageName: String?
     let fingerprint: I3SFingerprint?
     let isBundledExample: Bool
@@ -122,14 +123,16 @@ enum NotSureReviewError: LocalizedError {
 struct EscalatedNotSureCase: Codable, Identifiable {
     var id = UUID()
     let title: String
-    let side: TurtlePhotoSide
-    let photo: NotSureReviewPhoto
-    let companion: NotSureReviewPhoto?
+    var side: TurtlePhotoSide
+    var photo: NotSureReviewPhoto
+    var companion: NotSureReviewPhoto?
     let queryFingerprint: I3SFingerprint?
     let queryROI: [ScalePoint]
     var candidates: [EscalatedNotSureCandidate]
     let submittedBy: String
     let isExample: Bool
+    var matchAttemptID: UUID? = nil
+    var reviewInputs: [ReviewQueryInput]? = nil
     var sourceLogID: UUID? = nil
     var createdAt = Date()
     private(set) var updatedAt = Date()
@@ -155,6 +158,18 @@ struct EscalatedNotSureCase: Codable, Identifiable {
         case .recommendedMatch: "Match"
         case .reviewedUnknown: unknownOutcome?.title ?? "Unknown"
         }
+    }
+
+    mutating func replaceQueryEvidence(side: TurtlePhotoSide, photo: NotSureReviewPhoto, companion: NotSureReviewPhoto?) {
+        if self.side != side || self.photo.data != photo.data || self.companion?.data != companion?.data {
+            verifiedPairsByCandidateID = nil
+            manualAnchorsByCandidateID = nil
+            excludedQueryScaleNumbers = nil
+            customQueryLandmarks = nil
+        }
+        self.side = side
+        if self.photo.data != photo.data { self.photo = photo }
+        if self.companion?.data != companion?.data { self.companion = companion }
     }
 
     func verifiedPairs(for candidateID: String) -> [PatternPairLink] {

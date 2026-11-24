@@ -25,43 +25,72 @@ struct NotSureWorkspaceView: View {
     @State private var selectedCaseID: UUID?
     @State private var sessionCaseIDs: [UUID] = []
     @State private var showsReviewed = false
+    @State private var preparedMobileID: UUID?
+    @State private var preparationError: String?
+    @State private var inputSelection: MobileReviewSighting?
+    @State private var chosenPhotoID: UUID?
+    @State private var chosenSide: TurtlePhotoSide?
+    @State private var sourcePreview: NSImage?
+    @State private var sourcePreviewLoading = false
+    @State private var sourcePreviewRetry = UUID()
 
-    private var pendingCount: Int { store.pendingNotSureCases.count }
-    private var reviewedCount: Int { store.escalatedNotSureCases.count - pendingCount }
+    @State private var preparationRetry = UUID()
+
+    private var pendingMobileRows: [MobileReviewSighting] {
+        let locallyReviewed = Set(store.escalatedNotSureCases.filter { $0.decision != .pending }.compactMap(\.sourceLogID))
+        return store.mobileReviewRows.filter { !locallyReviewed.contains($0.id) }
+    }
+    private var remoteRows: [MobileReviewSighting] { showsReviewed ? [] : pendingMobileRows }
+    private var remoteIDs: Set<UUID> { Set(store.mobileReviewRows.map(\.id)) }
+    private var selectedMobileLogID: UUID? {
+        guard let id = selectedCaseID else { return nil }
+        if let local = store.escalatedNotSureCases.first(where: { $0.id == id || $0.sourceLogID == id }), local.decision != .pending {
+            return nil
+        }
+        return remoteIDs.contains(id) ? id : store.escalatedNotSureCases.first(where: { $0.id == id })?.sourceLogID
+    }
+
+
+    private var pendingCount: Int {
+        store.pendingNotSureCases.filter { !remoteIDs.contains($0.sourceLogID ?? $0.id) }.count + pendingMobileRows.count
+    }
+    private var reviewedCount: Int { store.escalatedNotSureCases.filter { $0.decision != .pending }.count }
 
     private var visibleCases: [EscalatedNotSureCase] {
         store.escalatedNotSureCases
-            .filter { ($0.decision != .pending) == showsReviewed }
+            .filter { ($0.decision != .pending) == showsReviewed && (showsReviewed || !remoteIDs.contains($0.sourceLogID ?? $0.id)) }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     private var activeQueueIDs: [UUID] {
-        let existingIDs = Set(store.escalatedNotSureCases.map(\.id))
+        let existingIDs = Set(store.escalatedNotSureCases.map(\.id)).union(remoteIDs)
         let validSession = sessionCaseIDs.filter { existingIDs.contains($0) }
         if let selectedCaseID, validSession.contains(selectedCaseID) { return validSession }
-        return visibleCases.map(\.id)
+        return remoteRows.map(\.id) + visibleCases.map(\.id)
     }
 
     var body: some View {
         Group {
-            if let item = store.escalatedNotSureCases.first(where: { $0.id == selectedCaseID }) {
+            if let selectedCaseID, selectedMobileLogID != nil, preparedMobileID != selectedCaseID {
+                mobilePreparation
+            } else if let selectedID = selectedCaseID, let item = store.escalatedNotSureCases.first(where: { $0.id == selectedID || $0.sourceLogID == selectedID }) {
                 let queueIDs = activeQueueIDs
-                let index = queueIDs.firstIndex(of: item.id) ?? 0
+                let index = queueIDs.firstIndex(of: selectedID) ?? 0
                 NotSureCaseDetail(
                     store: store,
                     item: item,
                     initialStageMode: initialStageMode,
                     queueIndex: index,
                     queueCount: max(queueIDs.count, 1),
-                    onPrevious: index > 0 ? { selectedCaseID = queueIDs[index - 1] } : nil,
-                    onNext: index + 1 < queueIDs.count ? { selectedCaseID = queueIDs[index + 1] } : nil,
+                    onPrevious: index > 0 ? { chosenPhotoID = nil; chosenSide = nil; selectedCaseID = queueIDs[index - 1] } : nil,
+                    onNext: index + 1 < queueIDs.count ? { chosenPhotoID = nil; chosenSide = nil; selectedCaseID = queueIDs[index + 1] } : nil,
                     onBack: {
                         showsReviewed = item.decision != .pending
                         selectedCaseID = nil
                         sessionCaseIDs = []
                     }
                 )
-                .id(item.id)
+                .id("\(item.id)-\(item.matchAttemptID?.uuidString ?? "local")")
             } else {
                 inbox
             }
@@ -69,6 +98,35 @@ struct NotSureWorkspaceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AdaColors.canvas)
         .foregroundStyle(AdaColors.ink)
+        .task(id: store.sessionGeneration) { await store.loadMobileReviewQueue() }
+        .task(id: "\(selectedCaseID?.uuidString ?? "")-\(selectedMobileLogID?.uuidString ?? "local")-\(preparationRetry)") {
+            guard let id = selectedCaseID, let logID = selectedMobileLogID else { return }
+            preparationError = nil
+            inputSelection = nil
+            preparedMobileID = nil
+            do {
+                let inputs: [ReviewQueryInput]?
+                if let photoID = chosenPhotoID, let side = chosenSide {
+                    inputs = [ReviewQueryInput(photoID: photoID, side: side, file: nil)]
+                } else { inputs = nil }
+                try await store.prepareMobileReview(logID, inputs: inputs)
+                try Task.checkCancellation()
+                preparedMobileID = id
+            } catch let choice as ReviewInputSelectionRequired {
+                guard !Task.isCancelled else { return }
+                inputSelection = choice.sighting
+            } catch {
+                guard !Task.isCancelled else { return }
+                preparationError = error.localizedDescription
+            }
+        }
+        .onChange(of: store.sessionGeneration) { _, _ in
+            selectedCaseID = nil
+            sessionCaseIDs = []
+            preparedMobileID = nil
+            chosenPhotoID = nil
+            chosenSide = nil
+        }
         .onAppear(perform: openRequestedCase)
         .onChange(of: store.reviewNavigationTrigger) { _, _ in
             selectedCaseID = nil
@@ -77,7 +135,7 @@ struct NotSureWorkspaceView: View {
         }
     }
 
-    // MARK: - Inbox (Direct, Minimal Text, FigCraft Cards + Mobile Queue Sync)
+    // MARK: - Inbox
 
     private var inbox: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -94,20 +152,20 @@ struct NotSureWorkspaceView: View {
 
                 if store.canLoadRecords {
                     Button {
-                        Task { await store.syncMobilePendingSightings() }
+                        Task { await store.loadMobileReviewQueue() }
                     } label: {
                         HStack(spacing: 6) {
                             if store.isSyncingMobileQueue {
                                 ProgressView().controlSize(.mini)
                             } else {
-                                Image(systemName: "iphone.and.arrow.forward")
+                                Image(systemName: "arrow.clockwise")
                             }
-                            Text(store.isSyncingMobileQueue ? "Syncing…" : "Sync mobile")
+                            Text(store.isSyncingMobileQueue ? "Loading…" : "Refresh")
                         }
                     }
                     .buttonStyle(NotSurePillButtonStyle(.secondary, height: 34))
                     .disabled(store.isSyncingMobileQueue)
-                    .help("Pull unidentified sightings marked 'Match later' on Mobile")
+                    .help("Refresh pending sightings")
                 }
 
                 if !store.escalatedNotSureCases.isEmpty {
@@ -132,18 +190,30 @@ struct NotSureWorkspaceView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(AdaColors.red)
                     Spacer()
-                    Button("Retry", action: store.reloadNotSureQueue)
+                    Button("Retry") { Task { await store.loadMobileReviewQueue() } }
                         .buttonStyle(AdaPillButtonStyle(secondary: true))
                 }
                 .adaCard(padding: 14, radius: 18)
             }
 
-            if visibleCases.isEmpty {
+            if visibleCases.isEmpty && remoteRows.isEmpty {
                 emptyQueue
+                if !showsReviewed && store.hasMoreMobileReviews {
+                    Button("Load more") { Task { await store.loadMobileReviewQueue(loadMore: true) } }
+                        .buttonStyle(AdaPillButtonStyle(secondary: true)).disabled(store.isSyncingMobileQueue)
+                }
             } else {
                 ScrollView {
-                    caseList
-                        .padding(.bottom, 24)
+                    VStack(spacing: 12) {
+                        if !remoteRows.isEmpty { mobileCaseList }
+                        if !visibleCases.isEmpty { caseList }
+                        if !showsReviewed && store.hasMoreMobileReviews {
+                            Button("Load more") { Task { await store.loadMobileReviewQueue(loadMore: true) } }
+                                .buttonStyle(AdaPillButtonStyle(secondary: true))
+                                .disabled(store.isSyncingMobileQueue)
+                        }
+                    }
+                    .padding(.bottom, 24)
                 }
             }
         }
@@ -176,16 +246,17 @@ struct NotSureWorkspaceView: View {
 
     private var emptyQueue: some View {
         VStack(spacing: 12) {
+            if store.isSyncingMobileQueue && !showsReviewed { ProgressView("Loading pending sightings…") }
             Image(systemName: showsReviewed ? "checkmark.circle" : "tray")
                 .font(.system(size: 28, weight: .light))
                 .foregroundStyle(AdaColors.secondaryInk)
-            Text(showsReviewed ? "No reviewed cases" : "No pending cases")
+            Text(showsReviewed ? "No reviewed cases" : store.isSyncingMobileQueue ? "" : "No pending cases")
                 .font(.system(size: 16, weight: .semibold))
             if !showsReviewed {
                 HStack(spacing: 10) {
                     if store.canLoadRecords {
-                        Button("Sync mobile") {
-                            Task { await store.syncMobilePendingSightings() }
+                        Button("Refresh") {
+                            Task { await store.loadMobileReviewQueue() }
                         }
                         .buttonStyle(AdaPillButtonStyle(secondary: true))
                     }
@@ -196,6 +267,98 @@ struct NotSureWorkspaceView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 220)
         .adaCard(padding: 24, radius: AdaLayout.cardRadius)
+    }
+
+    private var mobileCaseList: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(remoteRows) { row in
+                Button {
+                    chosenPhotoID = nil
+                    chosenSide = nil
+                    preparedMobileID = nil
+                    sessionCaseIDs = remoteRows.map(\.id) + visibleCases.map(\.id)
+                    selectedCaseID = row.id
+                } label: {
+                    HStack(spacing: 16) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 24))
+                            .frame(width: 68, height: 68)
+                            .background(AdaColors.surfaceMuted, in: RoundedRectangle(cornerRadius: 12))
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(row.location.name).font(.system(size: 15, weight: .semibold))
+                            Text("Mobile · \(row.headPhotos.count) photos · \(row.matchResult == nil ? "Waiting to match" : "Saved results")")
+                                .font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk)
+                            Text(row.observedAt.formatted(date: .abbreviated, time: .omitted))
+                                .font(.system(size: 12)).foregroundStyle(AdaColors.secondaryInk)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                    }
+                    .padding(.horizontal, 20).padding(.vertical, 14).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if row.id != remoteRows.last?.id { Divider().padding(.horizontal, 20) }
+            }
+        }
+        .adaCard(padding: 0, radius: AdaLayout.cardRadius)
+    }
+
+    private var mobilePreparation: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Button("Back to queue") {
+                selectedCaseID = nil
+                chosenPhotoID = nil
+                chosenSide = nil
+            }.buttonStyle(AdaPillButtonStyle(secondary: true))
+            if let choice = inputSelection {
+                Text("Choose a head photo and side").font(.title2.bold())
+                if choice.headPhotos.isEmpty {
+                    Text("This sighting has no head photos available for matching.")
+                } else {
+                    Picker("Head photo", selection: $chosenPhotoID) {
+                        Text("Choose a photo").tag(UUID?.none)
+                        ForEach(choice.headPhotos) { photo in
+                            Text("\(photo.id.uuidString.prefix(8)) · \(photo.side?.shortLabel ?? "Side unknown")").tag(Optional(photo.id))
+                        }
+                    }
+                    .onChange(of: chosenPhotoID) { _, id in
+                        chosenSide = choice.headPhotos.first(where: { $0.id == id })?.side
+                    }
+                    Group {
+                        if let sourcePreview {
+                            Image(nsImage: sourcePreview).resizable().scaledToFit().frame(maxHeight: 220)
+                        } else if sourcePreviewLoading { ProgressView("Loading photo…") }
+                        else if chosenPhotoID != nil {
+                            Button("Retry photo preview") { sourcePreviewRetry = UUID() }
+                        }
+                    }
+                    .task(id: "\(chosenPhotoID?.uuidString ?? "")-\(sourcePreviewRetry)") {
+                        sourcePreview = nil
+                        sourcePreviewLoading = false
+                        guard let photo = choice.headPhotos.first(where: { $0.id == chosenPhotoID }) else { return }
+                        sourcePreviewLoading = true
+                        let image = await store.loadPhoto(for: photo.fetchPath)
+                        guard !Task.isCancelled else { return }
+                        sourcePreview = image
+                        sourcePreviewLoading = false
+                    }
+                    Picker("Side", selection: $chosenSide) {
+                        Text("Choose a side").tag(TurtlePhotoSide?.none)
+                        ForEach(TurtlePhotoSide.allCases) { side in Text(side.shortLabel).tag(Optional(side)) }
+                    }
+                    .disabled(choice.headPhotos.first(where: { $0.id == chosenPhotoID })?.side != nil)
+                    Button("Match selected photo") { preparationRetry = UUID() }
+                        .buttonStyle(AdaPillButtonStyle())
+                        .disabled(chosenPhotoID == nil || chosenSide == nil)
+                }
+            } else if let error = preparationError {
+                Text(error).foregroundStyle(AdaColors.red)
+                Button("Retry") { preparationRetry = UUID() }.buttonStyle(AdaPillButtonStyle())
+            } else { ProgressView("Preparing this case…") }
+            Spacer()
+        }
+        .padding(AdaLayout.pagePadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var caseList: some View {
@@ -408,6 +571,8 @@ private struct NotSureCaseDetail: View {
     // Primary stage state (Obvious & Easy)
     @State private var stageMode: NotSureStageMode
     @State private var selectedCandidateID = ""
+    @State private var candidatePhotoError: String?
+
     @State private var showsRejected = false
     @State private var showingCompanionSide = false
 
@@ -706,6 +871,12 @@ private struct NotSureCaseDetail: View {
                         .font(.system(size: 12))
                         .foregroundStyle(AdaColors.red)
                     Spacer()
+                    if store.hasPendingNotSureMatch(item.id) {
+                        Button("Retry match") {
+                            Task { await runLiveSearch(overridePhotoData: nil, usePairedSide: false, retryPreviousAttempt: true) }
+                        }
+                        .disabled(isSearching)
+                    }
                     Button("Dismiss") { self.inlineError = nil }
                         .buttonStyle(.plain)
                         .font(.system(size: 11, weight: .semibold))
@@ -716,12 +887,32 @@ private struct NotSureCaseDetail: View {
                 .background(AdaColors.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
 
+            if let error = candidatePhotoError {
+                HStack {
+                    Text(error).font(.caption).foregroundStyle(AdaColors.red)
+                    Button("Retry photo") {
+                        guard let candidate = selectedCandidate else { return }
+                        Task {
+                            do {
+                                try await store.loadNotSureCandidatePhoto(caseID: item.id, candidateID: candidate.id)
+                                candidatePhotoError = nil
+                            } catch { candidatePhotoError = error.localizedDescription }
+                        }
+                    }
+                }
+            }
             verdictBar
         }
         .padding(.horizontal, AdaLayout.pagePadding)
         .padding(.top, 10)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: "\(item.matchAttemptID?.uuidString ?? "")-\(selectedCandidate?.id ?? "")") {
+            guard let candidate = selectedCandidate else { return }
+            candidatePhotoError = nil
+            do { try await store.loadNotSureCandidatePhoto(caseID: item.id, candidateID: candidate.id) }
+            catch { if !Task.isCancelled { candidatePhotoError = error.localizedDescription } }
+        }
         .task(id: contourExtractionTrigger) {
             guard stageMode != .compare else { return }
             await extractVisibleContours()
@@ -2800,7 +2991,7 @@ private struct NotSureCaseDetail: View {
         await runLiveSearch(overridePhotoData: preparedJPEG, usePairedSide: usePairedSide)
     }
 
-    private func runLiveSearch(overridePhotoData: Data?, usePairedSide: Bool) async {
+    private func runLiveSearch(overridePhotoData: Data?, usePairedSide: Bool, retryPreviousAttempt: Bool = false) async {
         guard liveSearchAvailable, !isSearching else { return }
         isSearching = true
         inlineError = nil
@@ -2809,7 +3000,8 @@ private struct NotSureCaseDetail: View {
             try await store.findNotSureCandidates(
                 for: item.id,
                 overridePhotoData: overridePhotoData,
-                usePairedSide: usePairedSide
+                usePairedSide: usePairedSide,
+                retryPreviousAttempt: retryPreviousAttempt
             )
             guard !Task.isCancelled else { return }
             showsRejected = false
