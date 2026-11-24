@@ -6,6 +6,15 @@ struct NotSureReviewPhoto: Codable {
     let data: Data
     let image: NSImage?
 
+    static func refreshed(
+        _ fresh: Self?,
+        side: TurtlePhotoSide,
+        previous: Self?,
+        previousSide: TurtlePhotoSide?
+    ) -> Self? {
+        fresh ?? (side == previousSide ? previous : nil)
+    }
+
     init(data: Data) {
         self.data = data
         self.image = NSImage(data: data)

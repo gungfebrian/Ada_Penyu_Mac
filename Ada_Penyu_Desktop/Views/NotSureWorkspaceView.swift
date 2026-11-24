@@ -417,9 +417,15 @@ private struct NotSureCaseDetail: View {
     @State private var overlayOpacity: Double = 0.55
     @State private var isBlinking = false
     @State private var blinkShowsCandidate = false
-    @State private var zoomScale: CGFloat = 1.0
-    @State private var panOffset: CGSize = .zero
-    @State private var dragDelta: CGSize = .zero
+    @State private var viewports = NotSureComparisonViewports()
+    @State private var patchSession = NotSurePatchSession()
+    @State private var patchViewports = NotSureComparisonViewports()
+    @State private var showsPatchTool = false
+    @State private var showsPatchPreviews = false
+    @State private var showsPatchOutlines = true
+    @GestureState private var sightingMagnification: CGFloat = 1
+    @GestureState private var candidateMagnification: CGFloat = 1
+    @GestureState private var overlayMagnification: CGFloat = 1
 
     // Backend XFeat/LighterGlue Correspondences + Geometric Consensus (RANSAC)
     @State private var showsAIMatches = false
@@ -518,6 +524,19 @@ private struct NotSureCaseDetail: View {
         return pool.first { $0.id == preferred }
             ?? pool.first(where: { $0.sideMatches && $0.image != nil })
             ?? pool.first
+    }
+
+    private var sightingPatchSource: NotSurePatchSource? {
+        displayedQueryImage.map { NotSurePatchSource(photo: $0, side: activeSightingSide) }
+    }
+
+    private var candidatePatchSource: NotSurePatchSource? {
+        guard let candidate = selectedCandidate, let image = candidate.image else { return nil }
+        return NotSurePatchSource(photo: image, side: candidate.side, candidateID: candidate.id)
+    }
+
+    private var canSelectPatches: Bool {
+        sightingPatchSource != nil && candidatePatchSource?.side == activeSightingSide
     }
 
     private var activeSightingSide: TurtlePhotoSide {
@@ -726,7 +745,15 @@ private struct NotSureCaseDetail: View {
                 withAnimation(.easeInOut(duration: 0.10)) { blinkShowsCandidate.toggle() }
             }
         }
+        .onChange(of: sightingPatchSource, initial: true) { _, _ in updatePatchSources() }
+        .onChange(of: candidatePatchSource) { _, _ in updatePatchSources() }
+        .onChange(of: activeSightingSide) { _, _ in
+            viewports.sighting = NotSurePhotoViewport()
+            viewports.overlay = NotSurePhotoViewport()
+        }
         .onChange(of: selectedCandidate?.id) { _, _ in
+            viewports.candidate = NotSurePhotoViewport()
+            viewports.overlay = NotSurePhotoViewport()
             selectedCandidateScale = nil
             pendingQueryPin = nil
             selectedAIFeatureID = nil
@@ -735,6 +762,7 @@ private struct NotSureCaseDetail: View {
             migrateLegacyPairsIntoAnchorsIfNeeded()
         }
         .onChange(of: stageMode) { _, mode in
+            showsPatchTool = false
             isBlinking = false
             pendingQueryPin = nil
             isAddingManualLandmark = false
@@ -1009,7 +1037,11 @@ private struct NotSureCaseDetail: View {
             case .compare:
                 compareControls
             case .contours:
-                contourControls
+                if showsPatchTool {
+                    patchControls
+                } else {
+                    contourControls
+                }
             case .align:
                 alignControls
             }
@@ -1023,7 +1055,14 @@ private struct NotSureCaseDetail: View {
                     .accessibilityLabel("Processing visual alignment")
             }
 
-            zoomControls
+            if showsPatchTool && stageMode == .contours {
+                if showsPatchPreviews && canSelectPatches {
+                    zoomControls("Sighting", scale: patchViewports.sighting.magnified(by: sightingMagnification).scale, viewport: $patchViewports.sighting)
+                    zoomControls("Candidate", scale: patchViewports.candidate.magnified(by: candidateMagnification).scale, viewport: $patchViewports.candidate)
+                }
+            } else {
+                zoomControls
+            }
         }
         .padding(.horizontal, 14)
         .frame(height: 44)
@@ -1108,6 +1147,11 @@ private struct NotSureCaseDetail: View {
 
     @ViewBuilder
     private var contourControls: some View {
+        darkModeChip("Compare scales", active: false) {
+            isAddingManualLandmark = false
+            showsPatchTool = true
+        }
+
         Button {
             withAnimation(.easeOut(duration: 0.14)) {
                 isAddingManualLandmark.toggle()
@@ -1352,24 +1396,91 @@ private struct NotSureCaseDetail: View {
         .background(Self.stageChipBg, in: Capsule())
     }
 
+    private var usesOverlayViewport: Bool {
+        switch stageMode {
+        case .compare:
+            comparePresentation != .sideBySide
+        case .contours:
+            false
+        case .align:
+            alignPresentation != .pins && alignmentResult.isReadyForWarp
+        }
+    }
+
+    private var sightingViewport: NotSurePhotoViewport {
+        viewports.sighting.magnified(by: sightingMagnification)
+    }
+
+    private var candidateViewport: NotSurePhotoViewport {
+        viewports.candidate.magnified(by: candidateMagnification)
+    }
+
+    private var overlayViewport: NotSurePhotoViewport {
+        viewports.overlay.magnified(by: overlayMagnification)
+    }
+
+    @ViewBuilder
     private var zoomControls: some View {
-        HStack(spacing: 2) {
-            zoomStepButton("minus", label: "Zoom out", disabled: zoomScale <= 1.01) { stepZoom(by: -0.5) }
-            Button(action: resetZoom) {
-                Text("\(Int((zoomScale * 100).rounded()))%")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 40, minHeight: 24)
-                    .contentShape(Capsule())
+        if usesOverlayViewport {
+            zoomControls("Comparison", scale: overlayViewport.scale, viewport: $viewports.overlay)
+                .disabled(displayedQueryImage == nil && selectedCandidate?.image == nil)
+        } else {
+            zoomControls("Sighting", scale: sightingViewport.scale, viewport: $viewports.sighting)
+                .disabled(displayedQueryImage == nil)
+            zoomControls("Candidate", scale: candidateViewport.scale, viewport: $viewports.candidate)
+                .disabled(selectedCandidate?.image == nil)
+        }
+    }
+
+    private func zoomControls(
+        _ label: String,
+        scale: CGFloat,
+        viewport: Binding<NotSurePhotoViewport>
+    ) -> some View {
+        VStack(spacing: 0) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .accessibilityHidden(true)
+            HStack(spacing: 2) {
+                zoomStepButton("minus", label: "Zoom out · \(label)", disabled: scale <= 1) {
+                    withAnimation(.easeOut(duration: 0.14)) { viewport.wrappedValue.stepZoom(by: -0.5) }
+                }
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) { viewport.wrappedValue = NotSurePhotoViewport() }
+                } label: {
+                    Text("\(Int((scale * 100).rounded()))%")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 36, minHeight: 22)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Reset zoom · \(label)")
+                .accessibilityValue("\(Int((scale * 100).rounded()))%")
+                .help("Reset zoom · \(label)")
+                zoomStepButton("plus", label: "Zoom in · \(label)", disabled: scale >= NotSurePhotoViewport.maximumScale) {
+                    withAnimation(.easeOut(duration: 0.14)) { viewport.wrappedValue.stepZoom(by: 0.5) }
+                }
             }
-            .buttonStyle(.plain)
-            .help("Reset zoom")
-            zoomStepButton("plus", label: "Zoom in", disabled: zoomScale >= 3.99) { stepZoom(by: 0.5) }
         }
         .padding(.horizontal, 5)
-        .frame(height: 28)
-        .background(Self.stageChipBg, in: Capsule())
+        .frame(height: 36)
+        .background(Self.stageChipBg, in: RoundedRectangle(cornerRadius: 12))
         .fixedSize()
+    }
+
+    private func pinchZoom(
+        _ viewport: Binding<NotSurePhotoViewport>,
+        magnification: GestureState<CGFloat>
+    ) -> some Gesture {
+        MagnifyGesture()
+            .updating(magnification) { value, factor, _ in
+                factor = value.magnification
+            }
+            .onEnded { value in
+                viewport.wrappedValue = viewport.wrappedValue.magnified(by: value.magnification)
+            }
     }
 
     private func zoomStepButton(_ symbol: String, label: String, disabled: Bool, action: @escaping () -> Void) -> some View {
@@ -1385,11 +1496,96 @@ private struct NotSureCaseDetail: View {
         .accessibilityLabel(label)
     }
 
+    private func updatePatchSources() {
+        patchSession.updateSources(sighting: sightingPatchSource, candidate: candidatePatchSource)
+        patchViewports = NotSureComparisonViewports()
+        showsPatchPreviews = false
+    }
+
+    @ViewBuilder
+    private var patchControls: some View {
+        darkModeChip("Back to Contours", active: false) { showsPatchTool = false }
+        if !canSelectPatches {
+            let message = if displayedQueryImage == nil || selectedCandidate?.image == nil {
+                "Both photos are needed"
+            } else if item.companionImage != nil, let side = selectedCandidate?.side {
+                "Switch the sighting to \(side.shortLabel)"
+            } else {
+                "Photos must show the same side"
+            }
+            Text(message).font(.caption).foregroundStyle(.white)
+        } else if showsPatchPreviews {
+            darkModeChip("Edit patches", active: false) { showsPatchPreviews = false }
+            darkModeChip("Outlines", active: showsPatchOutlines) { showsPatchOutlines.toggle() }
+        } else {
+            darkModeChip("Compare patches", active: false) {
+                patchViewports = NotSureComparisonViewports()
+                showsPatchPreviews = true
+            }
+            .disabled(patchSession.sighting == nil || patchSession.candidate == nil)
+            Text("Drag a box around the same scales in both photos")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.75))
+                .lineLimit(1)
+        }
+    }
+
+    private func patchStage(sighting: NSImage, candidate: NSImage) -> some View {
+        HStack(spacing: 1) {
+            patchPane(
+                image: sighting, patch: $patchSession.sighting, patterns: visibleQueryPatterns,
+                viewport: $patchViewports.sighting, magnification: sightingMagnification,
+                gestureState: $sightingMagnification, badge: "SIGHTING · \(activeSightingSide.shortLabel.uppercased())",
+                accent: .cyan
+            )
+            .id(sightingPatchSource)
+            patchPane(
+                image: candidate, patch: $patchSession.candidate, patterns: visibleCandidatePatterns,
+                viewport: $patchViewports.candidate, magnification: candidateMagnification,
+                gestureState: $candidateMagnification, badge: selectedCandidate?.name ?? "CANDIDATE",
+                accent: AdaColors.orange
+            )
+            .id(candidatePatchSource)
+        }
+    }
+
+    private func patchPane(
+        image: NSImage,
+        patch: Binding<CGRect?>,
+        patterns: [DetectedScalePattern],
+        viewport: Binding<NotSurePhotoViewport>,
+        magnification: CGFloat,
+        gestureState: GestureState<CGFloat>,
+        badge: String,
+        accent: Color
+    ) -> some View {
+        Group {
+            if showsPatchPreviews, let rect = patch.wrappedValue {
+                NotSurePatchPreview(
+                    image: image, patch: rect, outlines: showsPatchOutlines ? patterns : [],
+                    accent: accent, viewport: viewport.wrappedValue.magnified(by: magnification),
+                    onPanChanged: { viewport.wrappedValue.dragDelta = $0 },
+                    onPanEnded: { viewport.wrappedValue.commitPan($0) }
+                )
+                .simultaneousGesture(pinchZoom(viewport, magnification: gestureState))
+            } else {
+                NotSurePatchPicker(image: image, accent: accent, patch: patch)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topLeading) {
+            stageCornerBadge(badge).padding(10).allowsHitTesting(false)
+        }
+    }
+
     // MARK: Stage Body
 
     @ViewBuilder
     private var stageBody: some View {
-        if stageMode == .compare && comparePresentation == .curtain {
+        if stageMode == .contours, showsPatchTool, canSelectPatches,
+           let sighting = displayedQueryImage, let candidate = selectedCandidate?.image {
+            patchStage(sighting: sighting, candidate: candidate)
+        } else if stageMode == .compare && comparePresentation == .curtain {
             curtainWipeCanvas(
                 leftImage: displayedQueryImage,
                 rightImage: selectedCandidate?.image,
@@ -1487,16 +1683,20 @@ private struct NotSureCaseDetail: View {
             anchors: pins,
             pendingPoint: stageMode == .align ? pendingQueryPin?.point : nil,
             allowsFreeTap: stageMode == .align || isAddingManualLandmark,
-            zoomScale: zoomScale,
-            panOffset: currentPanOffset,
-            onPanChanged: { dragDelta = $0 },
-            onPanEnded: commitPan,
+            zoomScale: sightingViewport.scale,
+            panOffset: sightingViewport.offset,
+            onPanChanged: { viewports.sighting.dragDelta = $0 },
+            onPanEnded: { viewports.sighting.commitPan($0) },
             onTapScale: handleQueryScaleTap,
             onExcludeScale: excludeHandler,
             onTapNormalizedPoint: handleQueryFreeTap,
             onDragAnchor: { id, pt in moveAnchor(id: id, isQuery: true, to: pt) },
             onDeleteAnchor: deleteAnchor(id:),
             onDeleteLandmark: { id in _ = perform(.removeCustomQueryLandmark(id)) }
+        )
+        .simultaneousGesture(
+            pinchZoom($viewports.sighting, magnification: $sightingMagnification),
+            including: displayedQueryImage == nil ? .none : .all
         )
     }
 
@@ -1529,16 +1729,20 @@ private struct NotSureCaseDetail: View {
             anchors: pins,
             pendingPoint: nil,
             allowsFreeTap: stageMode == .align && pendingQueryPin != nil,
-            zoomScale: zoomScale,
-            panOffset: currentPanOffset,
-            onPanChanged: { dragDelta = $0 },
-            onPanEnded: commitPan,
+            zoomScale: candidateViewport.scale,
+            panOffset: candidateViewport.offset,
+            onPanChanged: { viewports.candidate.dragDelta = $0 },
+            onPanEnded: { viewports.candidate.commitPan($0) },
             onTapScale: handleCandidateScaleTap,
             onExcludeScale: nil,
             onTapNormalizedPoint: handleCandidateFreeTap,
             onDragAnchor: { id, pt in moveAnchor(id: id, isQuery: false, to: pt) },
             onDeleteAnchor: deleteAnchor(id:),
             onDeleteLandmark: nil
+        )
+        .simultaneousGesture(
+            pinchZoom($viewports.candidate, magnification: $candidateMagnification),
+            including: selectedCandidate?.image == nil ? .none : .all
         )
     }
 
@@ -1552,8 +1756,8 @@ private struct NotSureCaseDetail: View {
     ) -> some View {
         let paneWidth = max(1, (stageSize.width - 1) * 0.5)
         let paneSize = CGSize(width: paneWidth, height: stageSize.height)
-        let qFitted = Self.aspectFitRect(imageSize: queryImage.size, in: paneSize)
-        let cFitted = Self.aspectFitRect(imageSize: candidateImage.size, in: paneSize)
+        let qFitted = NotSurePhotoGeometry.aspectFitRect(imageSize: queryImage.size, in: paneSize)
+        let cFitted = NotSurePhotoGeometry.aspectFitRect(imageSize: candidateImage.size, in: paneSize)
         let rightOriginX = paneWidth + 1
 
         let displayed = annotations.filter { ann in
@@ -1569,15 +1773,15 @@ private struct NotSureCaseDetail: View {
                         from: ScalePoint(x: ann.query.x, y: ann.query.y),
                         fitted: qFitted,
                         container: paneSize,
-                        zoom: zoomScale,
-                        pan: currentPanOffset
+                        zoom: sightingViewport.scale,
+                        pan: sightingViewport.offset
                     )
                     var cPt = Self.screenPoint(
                         from: ScalePoint(x: ann.candidate.x, y: ann.candidate.y),
                         fitted: cFitted,
                         container: paneSize,
-                        zoom: zoomScale,
-                        pan: currentPanOffset
+                        zoom: candidateViewport.scale,
+                        pan: candidateViewport.offset
                     )
                     cPt.x += rightOriginX
 
@@ -1615,8 +1819,8 @@ private struct NotSureCaseDetail: View {
                     from: ScalePoint(x: ann.query.x, y: ann.query.y),
                     fitted: qFitted,
                     container: paneSize,
-                    zoom: zoomScale,
-                    pan: currentPanOffset
+                    zoom: sightingViewport.scale,
+                    pan: sightingViewport.offset
                 )
                 Button {
                     selectedAIFeatureID = (selectedAIFeatureID == ann.featureID) ? nil : ann.featureID
@@ -1669,7 +1873,7 @@ private struct NotSureCaseDetail: View {
             let h = max(1, geo.size.height)
             let splitX = min(max(curtainPosition, 0.04), 0.96) * w
             let refSize = rightImage?.size ?? leftImage?.size ?? geo.size
-            let fitted = Self.aspectFitRect(imageSize: refSize, in: geo.size)
+            let fitted = NotSurePhotoGeometry.aspectFitRect(imageSize: refSize, in: geo.size)
 
             ZStack {
                 // Right half (Candidate full canvas)
@@ -1678,8 +1882,8 @@ private struct NotSureCaseDetail: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: w, height: h)
-                        .scaleEffect(zoomScale)
-                        .offset(currentPanOffset)
+                        .scaleEffect(overlayViewport.scale)
+                        .offset(overlayViewport.offset)
                 }
 
                 // Left half (Pixel-warped Sighting clipped sharply at splitX!)
@@ -1688,8 +1892,8 @@ private struct NotSureCaseDetail: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: w, height: h)
-                        .scaleEffect(zoomScale)
-                        .offset(currentPanOffset)
+                        .scaleEffect(overlayViewport.scale)
+                        .offset(overlayViewport.offset)
                         .mask(alignment: .leading) {
                             Rectangle().frame(width: splitX)
                         }
@@ -1699,12 +1903,12 @@ private struct NotSureCaseDetail: View {
                 if let warpedContours, !warpedContours.isEmpty {
                     Canvas { ctx, _ in
                         for warped in warpedContours {
-                            let path = Self.polygonPath(warped.polygon, in: fitted)
+                            let path = NotSurePhotoGeometry.polygonPath(warped.polygon, in: fitted)
                             ctx.stroke(path, with: .color(Color.cyan.opacity(0.9)), lineWidth: 1.7)
                         }
                     }
-                    .scaleEffect(zoomScale)
-                    .offset(currentPanOffset)
+                    .scaleEffect(overlayViewport.scale)
+                    .offset(overlayViewport.offset)
                     .allowsHitTesting(false)
                 }
 
@@ -1740,18 +1944,17 @@ private struct NotSureCaseDetail: View {
             .gesture(
                 DragGesture(minimumDistance: 3)
                     .onChanged { value in
-                        if zoomScale > 1.01 {
-                            dragDelta = value.translation
+                        if viewports.overlay.isZoomed {
+                            viewports.overlay.dragDelta = value.translation
                         } else {
                             curtainPosition = min(0.96, max(0.04, value.location.x / w))
                         }
                     }
                     .onEnded { value in
-                        if zoomScale > 1.01 {
-                            commitPan(value.translation)
-                        }
+                        viewports.overlay.commitPan(value.translation)
                     }
             )
+            .simultaneousGesture(pinchZoom($viewports.overlay, magnification: $overlayMagnification))
             .overlay(alignment: .topLeading) {
                 stageCornerBadge(leftLabel).padding(12)
             }
@@ -1772,7 +1975,7 @@ private struct NotSureCaseDetail: View {
     ) -> some View {
         GeometryReader { geo in
             let refSize = baseImage?.size ?? topImage?.size ?? geo.size
-            let fitted = Self.aspectFitRect(imageSize: refSize, in: geo.size)
+            let fitted = NotSurePhotoGeometry.aspectFitRect(imageSize: refSize, in: geo.size)
 
             ZStack {
                 if let baseImage, !linesOnly {
@@ -1780,35 +1983,36 @@ private struct NotSureCaseDetail: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: geo.size.width, height: geo.size.height)
-                        .scaleEffect(zoomScale)
-                        .offset(currentPanOffset)
+                        .scaleEffect(overlayViewport.scale)
+                        .offset(overlayViewport.offset)
                 }
                 if let topImage, !linesOnly {
                     Image(nsImage: topImage)
                         .resizable()
                         .scaledToFit()
                         .frame(width: geo.size.width, height: geo.size.height)
-                        .scaleEffect(zoomScale)
-                        .offset(currentPanOffset)
+                        .scaleEffect(overlayViewport.scale)
+                        .offset(overlayViewport.offset)
                         .opacity(min(1, max(0, topAlpha)))
                 }
                 if let warpedContours, !warpedContours.isEmpty {
                     Canvas { ctx, _ in
                         for warped in warpedContours {
-                            let path = Self.polygonPath(warped.polygon, in: fitted)
+                            let path = NotSurePhotoGeometry.polygonPath(warped.polygon, in: fitted)
                             ctx.fill(path, with: .color(Color.cyan.opacity(0.12)))
                             ctx.stroke(path, with: .color(Color.cyan.opacity(0.95)), lineWidth: 1.9)
                         }
                     }
-                    .scaleEffect(zoomScale)
-                    .offset(currentPanOffset)
+                    .scaleEffect(overlayViewport.scale)
+                    .offset(overlayViewport.offset)
                     .allowsHitTesting(false)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
             .contentShape(Rectangle())
-            .gesture(panGesture)
+            .gesture(overlayPanGesture)
+            .simultaneousGesture(pinchZoom($viewports.overlay, magnification: $overlayMagnification))
             .overlay(alignment: .topLeading) {
                 stageCornerBadge(badge).padding(12)
             }
@@ -1824,40 +2028,15 @@ private struct NotSureCaseDetail: View {
             .background(Color.black.opacity(0.58), in: Capsule())
     }
 
-    private var currentPanOffset: CGSize {
-        CGSize(width: panOffset.width + dragDelta.width, height: panOffset.height + dragDelta.height)
-    }
-
-    private var panGesture: some Gesture {
+    private var overlayPanGesture: some Gesture {
         DragGesture(minimumDistance: 3)
             .onChanged { value in
-                guard zoomScale > 1.01 else { return }
-                dragDelta = value.translation
+                guard viewports.overlay.isZoomed else { return }
+                viewports.overlay.dragDelta = value.translation
             }
             .onEnded { value in
-                guard zoomScale > 1.01 else { dragDelta = .zero; return }
-                commitPan(value.translation)
+                viewports.overlay.commitPan(value.translation)
             }
-    }
-
-    private func commitPan(_ translation: CGSize) {
-        panOffset = CGSize(width: panOffset.width + translation.width, height: panOffset.height + translation.height)
-        dragDelta = .zero
-    }
-
-    private func stepZoom(by delta: CGFloat) {
-        withAnimation(.easeOut(duration: 0.14)) {
-            zoomScale = min(4.0, max(1.0, zoomScale + delta))
-            if zoomScale <= 1.01 { panOffset = .zero; dragDelta = .zero }
-        }
-    }
-
-    private func resetZoom() {
-        withAnimation(.easeOut(duration: 0.14)) {
-            zoomScale = 1.0
-            panOffset = .zero
-            dragDelta = .zero
-        }
     }
 
     // MARK: - 3. Slim Right Candidate Rail (+ Direct Crop/Re-Match & Delta Badges)
@@ -2094,7 +2273,13 @@ private struct NotSureCaseDetail: View {
                 .buttonStyle(NotSurePillButtonStyle(.primary, height: 38))
                 .disabled(!canConfirmSameTurtle || isCropResearching)
             } else {
-                Button("Reopen review") { perform(.reopen) }
+                Button("Reopen review") {
+                    if perform(.reopen) {
+                        patchSession = NotSurePatchSession()
+                        updatePatchSources()
+                        showsPatchTool = false
+                    }
+                }
                     .buttonStyle(NotSurePillButtonStyle(.secondary, height: 38))
             }
         }
@@ -2650,16 +2835,6 @@ private struct NotSureCaseDetail: View {
 
     // MARK: Geometry Helpers
 
-    fileprivate static func aspectFitRect(imageSize: NSSize, in container: CGSize) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0, container.width > 0, container.height > 0 else {
-            return CGRect(origin: .zero, size: container)
-        }
-        let scale = min(container.width / imageSize.width, container.height / imageSize.height)
-        let w = imageSize.width * scale
-        let h = imageSize.height * scale
-        return CGRect(x: (container.width - w) * 0.5, y: (container.height - h) * 0.5, width: w, height: h)
-    }
-
     fileprivate static func screenPoint(
         from normalized: ScalePoint,
         fitted: CGRect,
@@ -2675,16 +2850,6 @@ private struct NotSureCaseDetail: View {
             x: cx + (ux - cx) * zoom + pan.width,
             y: cy + (uy - cy) * zoom + pan.height
         )
-    }
-
-    fileprivate static func polygonPath(_ polygon: [ScalePoint], in rect: CGRect) -> Path {
-        var path = Path()
-        for (idx, pt) in polygon.enumerated() {
-            let p = CGPoint(x: rect.minX + pt.x * rect.width, y: rect.minY + pt.y * rect.height)
-            if idx == 0 { path.move(to: p) } else { path.addLine(to: p) }
-        }
-        path.closeSubpath()
-        return path
     }
 }
 
@@ -2730,7 +2895,7 @@ private struct NotSurePhotoPane: View {
         GeometryReader { geo in
             ZStack {
                 if let image {
-                    let fitted = NotSureCaseDetail.aspectFitRect(imageSize: image.size, in: geo.size)
+                    let fitted = NotSurePhotoGeometry.aspectFitRect(imageSize: image.size, in: geo.size)
                     ZStack {
                         if !linesOnly {
                             Image(nsImage: image)
@@ -2767,7 +2932,7 @@ private struct NotSurePhotoPane: View {
                                 for pat in patterns {
                                     let isSelected = highlightedScale == pat.number
                                     let isPaired = pairedNumbers.contains(pat.number)
-                                    let path = NotSureCaseDetail.polygonPath(pat.polygon, in: fitted)
+                                    let path = NotSurePhotoGeometry.polygonPath(pat.polygon, in: fitted)
                                     if isSelected {
                                         ctx.fill(path, with: .color(accent.opacity(0.30)))
                                         ctx.stroke(path, with: .color(.white), lineWidth: 2.3)
@@ -2935,11 +3100,10 @@ private struct NotSurePhotoPane: View {
             .gesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { value in
-                        guard zoomScale > 1.01 else { return }
+                        guard image != nil, zoomScale > 1 else { return }
                         onPanChanged(value.translation)
                     }
                     .onEnded { value in
-                        guard zoomScale > 1.01 else { onPanChanged(.zero); return }
                         onPanEnded(value.translation)
                     }
             )
@@ -3022,7 +3186,7 @@ private struct NotSureHeadCropSheet: View {
                 ZStack {
                     Color(red: 10 / 255, green: 21 / 255, blue: 33 / 255)
                     if let image {
-                        let fitted = NotSureCaseDetail.aspectFitRect(imageSize: image.size, in: geo.size)
+                        let fitted = NotSurePhotoGeometry.aspectFitRect(imageSize: image.size, in: geo.size)
                         Image(nsImage: image)
                             .resizable()
                             .scaledToFit()
@@ -3055,7 +3219,7 @@ private struct NotSureHeadCropSheet: View {
                     DragGesture(minimumDistance: 4)
                         .onChanged { value in
                             guard let image else { return }
-                            let fitted = NotSureCaseDetail.aspectFitRect(imageSize: image.size, in: geo.size)
+                            let fitted = NotSurePhotoGeometry.aspectFitRect(imageSize: image.size, in: geo.size)
                             guard fitted.width > 10, fitted.height > 10 else { return }
                             let x1 = min(max((value.startLocation.x - fitted.minX) / fitted.width, 0.02), 0.96)
                             let y1 = min(max((value.startLocation.y - fitted.minY) / fitted.height, 0.02), 0.96)
