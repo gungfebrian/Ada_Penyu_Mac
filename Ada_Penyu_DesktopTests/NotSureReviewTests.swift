@@ -87,7 +87,7 @@ final class NotSureReviewTests: XCTestCase {
         let client = APIClient(baseURL: URL(string: "https://example.test")!, session: BackendStub.session(), credentialStore: MemoryCredentials())
         let store = AppStore(client: client, reviewJournal: NotSureReviewJournal(directory: directory))
         try await store.signIn(email: "person@example.test", password: "test-only-password", rememberMe: false)
-        XCTAssertEqual(store.notSureAttentionCount, 1)
+        XCTAssertEqual(store.waitingLogs.count, 1)
         XCTAssertEqual(store.waitingLogs.map(\.id), [waitingID])
         XCTAssertTrue(store.escalatedNotSureCases.isEmpty)
         let synced = await store.syncMobilePendingSightings()

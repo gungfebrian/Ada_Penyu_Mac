@@ -109,6 +109,16 @@ final class AppStore: ObservableObject {
     @Published private(set) var isOpeningWaitingLog = false
     @Published private(set) var notSureQueueError: String?
     @Published private(set) var isSyncingMobileQueue = false
+    @Published private(set) var mobileReviewRows: [MobileReviewSighting] = []
+    @Published private(set) var hasMoreMobileReviews = false
+    private var mobileReviewOffset = 0
+    private var mobileReviewLoaded = false
+    private struct PendingReviewAttempt {
+        let command: ReviewRematchCommand
+        let crop: Data?
+    }
+    private var pendingReviewAttempts: [UUID: PendingReviewAttempt] = [:]
+
     @Published var isReviewPracticePresented = false
     @Published var reviewNavigationTrigger = UUID()
     @Published private(set) var apiBaseURLString: String
@@ -368,8 +378,14 @@ final class AppStore: ObservableObject {
         escalatedNotSureCases.filter { $0.decision == .pending }
     }
 
-    /// Sidebar and catalog count. Same waiting set iOS shows on the list.
-    var notSureAttentionCount: Int { waitingLogs.count }
+    /// Sidebar and catalog count. Same pending set the Not Sure inbox shows.
+    var notSureAttentionCount: Int {
+        let reviewed = Set(escalatedNotSureCases.filter { $0.decision != .pending }.compactMap(\.sourceLogID))
+        let remoteIDs = Set(mobileReviewRows.map(\.id))
+        let remotePending = mobileReviewRows.filter { !reviewed.contains($0.id) }.count
+        let localPending = pendingNotSureCases.filter { !remoteIDs.contains($0.sourceLogID ?? $0.id) }.count
+        return remotePending + localPending
+    }
 
     private var notSureReviewScope: String? {
         if isDemoBypassActive { return demoPersona.accountStorageKey }
@@ -433,29 +449,77 @@ final class AppStore: ObservableObject {
         try saveNotSureCase(item)
     }
 
-    /// Applies a Not Sure verdict and, when confirming a match on a sighting synced from Mobile
-    /// (`sourceLogID != nil`), links the backend log (`PATCH /api/v2/logs/{id}` with v1 fallback).
+    /// A server-backed verdict becomes local only after the server accepts its provenance.
     func resolveNotSureCaseAndSyncBackend(_ id: UUID, action: NotSureReviewAction) async throws {
-        guard let before = escalatedNotSureCases.first(where: { $0.id == id }) else {
+        guard var updated = escalatedNotSureCases.first(where: { $0.id == id }) else {
             throw NotSureReviewError.caseUnavailable
         }
-        try updateNotSureCase(id, action: action)
-
-        if case .recommend(let candidateID, let note) = action,
-           let logID = before.sourceLogID,
-           let turtleUUID = UUID(uuidString: candidateID),
-           canLoadRecords {
-            let matched = before.candidates.first(where: { $0.id == candidateID })
-            let confidence = matched.map { Double($0.confidencePercent) / 100.0 }
-            try await repository.resolvePendingSighting(
-                logID: logID,
-                turtleID: turtleUUID,
-                method: "manual",
-                confidence: confidence,
-                notes: note.isEmpty ? nil : note
-            )
-            await loadWaitingLogs()
+        try updated.apply(action)
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        if case .recommend(let candidateID, let note) = action, let logID = updated.sourceLogID,
+           let turtleID = UUID(uuidString: candidateID), canLoadRecords {
+            do {
+                if !isDemoBypassActive {
+                    guard let attemptID = updated.matchAttemptID else {
+                        throw APIError.validation("Run a new match before confirming this legacy review.")
+                    }
+                    try await repository.confirmReview(logID: logID, attemptID: attemptID, turtleID: turtleID)
+                } else {
+                    try await repository.resolvePendingSighting(logID: logID, turtleID: turtleID, method: "manual", confidence: nil, notes: note)
+                }
+            } catch APIError.conflict(let detail) {
+                try checkReviewContext(generation, scope: scope)
+                await loadMobileReviewQueue()
+                throw APIError.conflict(detail + " Refresh or reopen this case to review the current sighting.")
+            }
+            guard generation == sessionGeneration, scope == notSureReviewScope else { throw CancellationError() }
+            removeMobileReviewRow(logID)
             statusMessage = "Confirmed match synced to sighting log"
+        }
+        guard generation == sessionGeneration, scope == notSureReviewScope else { throw CancellationError() }
+        // Keep notes/annotations saved while the request was in flight.
+        guard var current = escalatedNotSureCases.first(where: { $0.id == id }) else { throw NotSureReviewError.caseUnavailable }
+        try current.apply(action)
+        try saveNotSureCase(current)
+    }
+
+    private func removeMobileReviewRow(_ logID: UUID) {
+        let removed = mobileReviewRows.filter { $0.id == logID }.count
+        mobileReviewRows.removeAll { $0.id == logID }
+        mobileReviewOffset = max(0, mobileReviewOffset - removed)
+    }
+
+    func hasPendingNotSureMatch(_ caseID: UUID) -> Bool {
+        guard let logID = escalatedNotSureCases.first(where: { $0.id == caseID })?.sourceLogID else { return false }
+        return pendingReviewAttempts[logID] != nil
+    }
+
+    /// One metadata request per page. No image or inference work belongs in this path.
+    func loadMobileReviewQueue(loadMore: Bool = false, ifNeeded: Bool = false) async {
+        guard canLoadRecords, !isSyncingMobileQueue, !(ifNeeded && mobileReviewLoaded) else { return }
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        let offset = loadMore ? mobileReviewOffset : 0
+        isSyncingMobileQueue = true
+        notSureQueueError = nil
+        defer { if generation == sessionGeneration { isSyncingMobileQueue = false } }
+        do {
+            let page = try await repository.reviewQueue(limit: 50, offset: offset)
+            try Task.checkCancellation()
+            guard generation == sessionGeneration, scope == notSureReviewScope else { return }
+            let rows = page.items.filter { $0.turtleID == nil && !$0.isDraft }
+            if loadMore {
+                let ids = Set(mobileReviewRows.map(\.id))
+                mobileReviewRows.append(contentsOf: rows.filter { !ids.contains($0.id) })
+            } else { mobileReviewRows = rows }
+            mobileReviewOffset = page.offset + page.items.count
+            hasMoreMobileReviews = !page.items.isEmpty && mobileReviewOffset < page.total
+            mobileReviewLoaded = true
+        } catch {
+            if generation == sessionGeneration, !(error is CancellationError), !Task.isCancelled {
+                notSureQueueError = "Could not load pending sightings. " + error.localizedDescription
+            }
         }
     }
 
@@ -581,10 +645,159 @@ final class AppStore: ObservableObject {
         return data
     }
 
+    func prepareMobileReview(_ logID: UUID, inputs: [ReviewQueryInput]? = nil) async throws {
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        let sighting = try await repository.reviewSighting(id: logID)
+        try checkReviewContext(generation, scope: scope)
+        guard sighting.turtleID == nil, !sighting.isDraft else {
+            removeMobileReviewRow(logID)
+            throw APIError.conflict("This sighting has already changed. Return to the queue and refresh.")
+        }
+        if let index = mobileReviewRows.firstIndex(where: { $0.id == logID }) { mobileReviewRows[index] = sighting }
+        if isDemoBypassActive {
+            try await prepareDemoReview(sighting, generation: generation, scope: scope)
+            return
+        }
+        var result: ReviewMatchResult
+        var usedAttemptID: UUID?
+        if let pending = pendingReviewAttempts[logID], inputs.map({ $0 == pending.command.inputs }) ?? true {
+            usedAttemptID = pending.command.attemptID
+            result = try await repository.rematchReview(logID: logID, command: pending.command, crop: pending.crop)
+            try checkReviewContext(generation, scope: scope)
+        } else if inputs == nil, sighting.matchResult != nil, let saved = try await repository.reviewMatchResults(logID: logID).first {
+            result = saved
+        } else {
+            guard let selected = inputs ?? sighting.defaultInputs else { throw ReviewInputSelectionRequired(sighting: sighting) }
+            let pending = PendingReviewAttempt(command: ReviewRematchCommand(attemptID: UUID(), inputs: selected), crop: nil)
+            pendingReviewAttempts[logID] = pending
+            usedAttemptID = pending.command.attemptID
+            result = try await repository.rematchReview(logID: logID, command: pending.command, crop: nil)
+            try checkReviewContext(generation, scope: scope)
+        }
+        try checkReviewContext(generation, scope: scope)
+        if result.queries == nil { result.queries = try await repository.reviewQueries(logID: logID, attemptID: result.id) }
+        try await hydrateMobileReview(sighting, result: result, generation: generation, scope: scope)
+        try checkReviewContext(generation, scope: scope)
+        if let usedAttemptID, pendingReviewAttempts[logID]?.command.attemptID == usedAttemptID {
+            pendingReviewAttempts.removeValue(forKey: logID)
+        }
+    }
+
+    private func checkReviewContext(_ generation: UUID, scope: String?) throws {
+        try Task.checkCancellation()
+        guard generation == sessionGeneration, scope == notSureReviewScope else { throw CancellationError() }
+    }
+
+    private func hydrateMobileReview(_ sighting: MobileReviewSighting, result: ReviewMatchResult, generation: UUID, scope: String?, recordDeltas: Bool = false) async throws {
+        let evidence = result.queries ?? []
+        let selected: [(TurtlePhotoSide, String, UUID?)]
+        if !evidence.isEmpty { selected = evidence.map { ($0.side, $0.url, $0.photoID) } }
+        else {
+            // Older snapshots retain query sides but no photo IDs. Only unambiguous same-side sources are usable.
+            guard !result.querySides.isEmpty, sighting.headPhotos.allSatisfy({ $0.side != nil }) else {
+                throw ReviewInputSelectionRequired(sighting: sighting)
+            }
+            selected = try result.querySides.map { side in
+                let photos = sighting.headPhotos.filter { $0.side == side }
+                guard photos.count == 1, let photo = photos.first else { throw ReviewInputSelectionRequired(sighting: sighting) }
+                return (side, photo.fetchPath, Optional(photo.id))
+            }
+        }
+        guard let primary = selected.first else { throw NotSureReviewError.invalidPhoto }
+        let bytes = try await repository.fetchPhotoData(pathOrURL: primary.1)
+        try checkReviewContext(generation, scope: scope)
+        guard NSImage(data: bytes) != nil else { throw NotSureReviewError.invalidPhoto }
+        var companion: NotSureReviewPhoto?
+        if let other = selected.dropFirst().first {
+            let data = try await repository.fetchPhotoData(pathOrURL: other.1)
+            try checkReviewContext(generation, scope: scope)
+            guard NSImage(data: data) != nil else { throw NotSureReviewError.invalidPhoto }
+            companion = NotSureReviewPhoto(data: data)
+        }
+        let references = result.candidates.map { candidate in
+            let side: TurtlePhotoSide = primary.0
+            let path = side == .left ? candidate.turtle.identityPhotos?.left?.url : candidate.turtle.identityPhotos?.right?.url
+            return EscalatedNotSureCandidate(id: candidate.turtle.id.uuidString, rank: candidate.rank,
+                name: candidate.turtle.name, profileCode: candidate.turtle.profileCode, side: side, sideMatches: true,
+                dateText: "", location: "", confidencePercent: Int((candidate.confidence * 100).rounded()), photo: nil,
+                photoPath: path ?? (candidate.turtle.identityPhotos == nil ? "/api/v2/individuals/\(candidate.turtle.id.uuidString.lowercased())/photos/\(side.rawValue)" : nil), sampleImageName: nil, fingerprint: nil, isBundledExample: false)
+        }
+        var item = escalatedNotSureCases.first(where: { $0.sourceLogID == sighting.id }) ?? EscalatedNotSureCase(
+            id: sighting.id, title: sighting.location.name, side: primary.0, photo: NotSureReviewPhoto(data: bytes),
+            companion: companion, queryFingerprint: nil, queryROI: [], candidates: [], submittedBy: "Mobile Patrol",
+            isExample: false, sourceLogID: sighting.id, createdAt: sighting.observedAt)
+        if recordDeltas {
+            let previous = Dictionary(uniqueKeysWithValues: item.candidates.map { ($0.id, $0) })
+            item.reMatchDeltasByCandidateID = Dictionary(uniqueKeysWithValues: references.map { reference in
+                (reference.id, CandidateReMatchDelta(previousRank: previous[reference.id]?.rank, newRank: reference.rank,
+                    previousConfidence: previous[reference.id]?.confidencePercent, newConfidence: reference.confidencePercent))
+            })
+        }
+        // Preserve notes, verdict and annotations on ordinary revisits of the same attempt.
+        if item.matchAttemptID != result.id {
+            item.candidates = references
+        } else {
+            item.candidates = references.map { fresh in
+                var candidate = fresh
+                candidate.photo = item.candidates.first(where: { $0.id == fresh.id && $0.side == fresh.side })?.photo
+                return candidate
+            }
+        }
+        item.replaceQueryEvidence(side: primary.0, photo: NotSureReviewPhoto(data: bytes), companion: companion)
+        item.matchAttemptID = result.id
+        item.reviewInputs = selected.map { ReviewQueryInput(photoID: $0.2, side: $0.0, file: nil) }
+        if item.note.isEmpty, let note = sighting.notes, !note.isEmpty { try item.apply(.saveNote(note)) }
+        try checkReviewContext(generation, scope: scope)
+        try saveNotSureCase(item)
+    }
+
+    func loadNotSureCandidatePhoto(caseID: UUID, candidateID: String) async throws {
+        guard let item = escalatedNotSureCases.first(where: { $0.id == caseID }),
+              let candidate = item.candidates.first(where: { $0.id == candidateID }), candidate.photo == nil,
+              let path = candidate.photoPath else { return }
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        let attempt = item.matchAttemptID
+        let bytes = try await repository.fetchPhotoData(pathOrURL: path)
+        try checkReviewContext(generation, scope: scope)
+        guard NSImage(data: bytes) != nil else { throw NotSureReviewError.invalidPhoto }
+        guard var current = escalatedNotSureCases.first(where: { $0.id == caseID }), current.matchAttemptID == attempt,
+              let index = current.candidates.firstIndex(where: { $0.id == candidateID && $0.photoPath == path }) else { return }
+        current.candidates[index].photo = NotSureReviewPhoto(data: bytes)
+        try saveNotSureCase(current)
+    }
+
+    private func prepareDemoReview(_ sighting: MobileReviewSighting, generation: UUID, scope: String?) async throws {
+        if escalatedNotSureCases.contains(where: { $0.sourceLogID == sighting.id }) { return }
+        guard let inputs = sighting.defaultInputs, let first = inputs.first,
+              let photo = sighting.headPhotos.first(where: { $0.id == first.photoID }) else { throw ReviewInputSelectionRequired(sighting: sighting) }
+        let data = try await repository.fetchPhotoData(pathOrURL: photo.fetchPath)
+        var companion: Data?
+        if let other = inputs.dropFirst().first, let source = sighting.headPhotos.first(where: { $0.id == other.photoID }) {
+            companion = try await repository.fetchPhotoData(pathOrURL: source.fetchPath)
+        }
+        let outcome = try await repository.matchPhoto(imageData: data, side: first.side, limit: 6)
+        let references = outcome.candidates.map { candidate in
+            EscalatedNotSureCandidate(id: candidate.id.uuidString, rank: candidate.rank, name: candidate.name,
+                profileCode: candidate.profileCode ?? "", side: candidate.matchedPhotoSide, sideMatches: candidate.matchedPhotoSide == first.side,
+                dateText: candidate.lastSeenDate ?? "", location: candidate.lastSeenLocation ?? "", confidencePercent: candidate.confidencePercent,
+                photo: nil, photoPath: candidate.photoURL, sampleImageName: candidate.photoURL, fingerprint: nil, isBundledExample: true)
+        }
+        var item = EscalatedNotSureCase(id: sighting.id, title: sighting.location.name, side: first.side,
+            photo: NotSureReviewPhoto(data: data), companion: companion.map { NotSureReviewPhoto(data: $0) },
+            queryFingerprint: nil, queryROI: [], candidates: references, submittedBy: "Mobile Patrol", isExample: true,
+            sourceLogID: sighting.id, createdAt: sighting.observedAt)
+        if let note = sighting.notes, !note.isEmpty { try item.apply(.saveNote(note)) }
+        try checkReviewContext(generation, scope: scope)
+        try saveNotSureCase(item)
+    }
+
     func findNotSureCandidates(
         for id: UUID,
         overridePhotoData: Data? = nil,
-        usePairedSide: Bool = false
+        usePairedSide: Bool = false,
+        retryPreviousAttempt: Bool = false
     ) async throws {
         guard let item = escalatedNotSureCases.first(where: { $0.id == id }) else {
             throw NotSureReviewError.caseUnavailable
@@ -595,6 +808,35 @@ final class AppStore: ObservableObject {
         guard item.decision == .pending else { throw NotSureReviewError.alreadyReviewed }
         let generation = sessionGeneration
         let scope = notSureReviewScope
+        if let logID = item.sourceLogID {
+            let sighting = try await repository.reviewSighting(id: logID)
+            try checkReviewContext(generation, scope: scope)
+            let pending: PendingReviewAttempt
+            if retryPreviousAttempt {
+                guard let retry = pendingReviewAttempts[logID] else { throw APIError.validation("There is no failed match to retry.") }
+                pending = retry
+            } else {
+                guard let sources = (usePairedSide ? sighting.defaultInputs : nil) ?? item.reviewInputs ?? sighting.defaultInputs,
+                      let primary = sources.first(where: { $0.side == item.side }) else {
+                    throw ReviewInputSelectionRequired(sighting: sighting)
+                }
+                var inputs = usePairedSide ? sources : [primary]
+                if overridePhotoData != nil, let index = inputs.firstIndex(where: { $0.side == item.side }) {
+                    inputs[index] = ReviewQueryInput(photoID: primary.photoID, side: primary.side, file: "query_1")
+                }
+                pending = PendingReviewAttempt(command: ReviewRematchCommand(attemptID: UUID(), inputs: inputs), crop: overridePhotoData)
+                pendingReviewAttempts[logID] = pending
+            }
+            var result = try await repository.rematchReview(logID: logID, command: pending.command, crop: pending.crop)
+            try checkReviewContext(generation, scope: scope)
+            if result.queries == nil { result.queries = try await repository.reviewQueries(logID: logID, attemptID: result.id) }
+            try await hydrateMobileReview(sighting, result: result, generation: generation, scope: scope, recordDeltas: true)
+            try checkReviewContext(generation, scope: scope)
+            if pendingReviewAttempts[logID]?.command.attemptID == pending.command.attemptID {
+                pendingReviewAttempts.removeValue(forKey: logID)
+            }
+            return
+        }
         let isHumanGuidedReMatch = overridePhotoData != nil || usePairedSide
 
         let result: MatchSearchOutcome
@@ -816,6 +1058,11 @@ final class AppStore: ObservableObject {
         escalatedNotSureCases.removeAll()
         waitingLogs = []
         isOpeningWaitingLog = false
+        mobileReviewRows.removeAll()
+        hasMoreMobileReviews = false
+        mobileReviewOffset = 0
+        mobileReviewLoaded = false
+        pendingReviewAttempts.removeAll()
         requestedEscalatedCaseID = nil
         loadedReviewScope = nil
         notSureQueueError = nil
