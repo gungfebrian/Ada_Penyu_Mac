@@ -314,6 +314,12 @@ protocol TurtleRepository: AnyObject {
     func matchPhotoPair(leftData: Data, rightData: Data, limit: Int) async throws -> MatchSearchOutcome
     func fetchOverlayAnnotations(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> [OverlayAnnotationItem]
     func fetchOverlayPNG(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> Data
+    func reviewQueue(limit: Int, offset: Int) async throws -> V2Page<MobileReviewSighting>
+    func reviewSighting(id: UUID) async throws -> MobileReviewSighting
+    func reviewMatchResults(logID: UUID) async throws -> [ReviewMatchResult]
+    func reviewQueries(logID: UUID, attemptID: UUID) async throws -> [ReviewQueryEvidence]
+    func rematchReview(logID: UUID, command: ReviewRematchCommand, crop: Data?) async throws -> ReviewMatchResult
+    func confirmReview(logID: UUID, attemptID: UUID, turtleID: UUID) async throws
     func listPendingSightings(limit: Int) async throws -> [PendingMobileSighting]
     func resolvePendingSighting(logID: UUID, turtleID: UUID, method: String, confidence: Double?, notes: String?) async throws
     func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String
@@ -322,6 +328,25 @@ protocol TurtleRepository: AnyObject {
 }
 
 extension TurtleRepository {
+    func reviewQueue(limit: Int, offset: Int) async throws -> V2Page<MobileReviewSighting> {
+        let rows = try await listPendingSightings(limit: limit)
+        let items = rows.map { row in
+            MobileReviewSighting(id: row.id, turtleID: nil, isDraft: false, observedAt: row.observedAt,
+                location: V2Location(name: row.locationName, coordinates: nil), notes: row.notes,
+                photos: row.photoPaths.map { path in MobileReviewPhoto(id: UUID(), url: path, downloadURL: nil,
+                    side: path.contains("_R") ? .right : path.contains("_L") ? .left : nil, markingID: nil, bodySpotID: nil) }, matchResult: nil)
+        }
+        return V2Page(items: offset == 0 ? items : [], total: items.count, limit: limit, offset: offset)
+    }
+    func reviewSighting(id: UUID) async throws -> MobileReviewSighting {
+        guard let row = try await reviewQueue(limit: 50, offset: 0).items.first(where: { $0.id == id }) else { throw APIError.notFound("Sighting not found") }
+        return row
+    }
+    func reviewMatchResults(logID: UUID) async throws -> [ReviewMatchResult] { [] }
+    func reviewQueries(logID: UUID, attemptID: UUID) async throws -> [ReviewQueryEvidence] { [] }
+    func rematchReview(logID: UUID, command: ReviewRematchCommand, crop: Data?) async throws -> ReviewMatchResult { throw NotSureReviewError.searchUnavailable }
+    func confirmReview(logID: UUID, attemptID: UUID, turtleID: UUID) async throws { throw NotSureReviewError.searchUnavailable }
+
     func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
         MatchSearchOutcome(querySide: side, gallerySize: 0, matchState: "no_match", candidates: [], isDualPair: false, pairAgreed: nil)
     }
@@ -991,7 +1016,7 @@ final class RemoteTurtleRepository: TurtleRepository {
 
     func listPendingSightings(limit: Int = 50) async throws -> [PendingMobileSighting] {
         let queryItems = [
-            URLQueryItem(name: "identified_only", value: "false"),
+            URLQueryItem(name: "unidentified_only", value: "true"),
             URLQueryItem(name: "limit", value: String(min(200, max(1, limit)))),
             URLQueryItem(name: "offset", value: "0"),
         ]
@@ -2138,3 +2163,34 @@ private struct V1ResolveLogPatch: Encodable {
     }
 }
 
+
+
+extension RemoteTurtleRepository {
+    func reviewQueue(limit: Int, offset: Int) async throws -> V2Page<MobileReviewSighting> {
+        try await client.get("api/v2/logs", queryItems: [
+            URLQueryItem(name: "unidentified_only", value: "true"),
+            URLQueryItem(name: "limit", value: String(min(200, max(1, limit)))),
+            URLQueryItem(name: "offset", value: String(max(0, offset)))])
+    }
+    func reviewSighting(id: UUID) async throws -> MobileReviewSighting {
+        try await client.get("api/v2/logs/\(id.uuidString.lowercased())")
+    }
+    func reviewMatchResults(logID: UUID) async throws -> [ReviewMatchResult] {
+        let page: V2Page<ReviewMatchResult> = try await client.get("api/v2/logs/\(logID.uuidString.lowercased())/match-results",
+            queryItems: [URLQueryItem(name: "limit", value: "1"), URLQueryItem(name: "offset", value: "0")])
+        return page.items
+    }
+    func reviewQueries(logID: UUID, attemptID: UUID) async throws -> [ReviewQueryEvidence] {
+        try await client.get("api/v2/logs/\(logID.uuidString.lowercased())/match-results/\(attemptID.uuidString.lowercased())/queries")
+    }
+    func rematchReview(logID: UUID, command: ReviewRematchCommand, crop: Data?) async throws -> ReviewMatchResult {
+        var parts = [MultipartPart(name: "manifest", filename: nil, contentType: "application/json", data: try JSONEncoder().encode(command))]
+        if let crop { parts.append(MultipartPart(name: "query_1", filename: "query.jpg", contentType: "image/jpeg", data: crop)) }
+        return try await client.requestMultipart(path: "api/v2/logs/\(logID.uuidString.lowercased())/rematch", parts: parts)
+    }
+    func confirmReview(logID: UUID, attemptID: UUID, turtleID: UUID) async throws {
+        struct Confirmation: Encodable { let attempt_id: UUID; let turtle_id: UUID }
+        _ = try await client.requestData(path: "api/v2/logs/\(logID.uuidString.lowercased())/identification", method: "PUT",
+            body: try JSONEncoder().encode(Confirmation(attempt_id: attemptID, turtle_id: turtleID)))
+    }
+}

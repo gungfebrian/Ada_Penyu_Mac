@@ -246,13 +246,16 @@ final class HumanAssistedMatchingTests: XCTestCase {
         // Swap back to mockRepo via test helper: create a fresh store wired directly to mockRepo in authenticated live-like state
         let liveStore = AppStore(repository: mockRepo, reviewJournal: NotSureReviewJournal(directory: tempDir))
         // Sync works whenever repository is injected & canLoadRecords is true — test via DemoTurtleRepository first:
-        let demoSynced = await store.syncMobilePendingSightings()
-        XCTAssertEqual(demoSynced, 1, "Demo repo should sync 1 mobile 'Waiting to Match' sighting")
-        XCTAssertEqual(store.pendingNotSureCases.first?.sourceLogID, UUID(uuidString: "00000000-0000-4000-8999-000000000001"))
-
-        // Re-syncing must deduplicate by sourceLogID
-        let secondSync = await store.syncMobilePendingSightings()
-        XCTAssertEqual(secondSync, 0, "Re-syncing must not duplicate already synced mobile sightings")
+        await store.loadMobileReviewQueue()
+        XCTAssertEqual(store.mobileReviewRows.count, 1)
+        XCTAssertTrue(store.pendingNotSureCases.isEmpty, "The inbox must not prepare images or candidates")
+        let demoID = try XCTUnwrap(store.mobileReviewRows.first?.id)
+        await store.loadMobileReviewQueue()
+        XCTAssertEqual(store.mobileReviewRows.map(\.id), [demoID], "Refresh must not duplicate rows")
+        try await store.prepareMobileReview(demoID)
+        let prepared = try XCTUnwrap(store.pendingNotSureCases.first)
+        let candidateID = try XCTUnwrap(prepared.candidates.first?.id)
+        try await store.loadNotSureCandidatePhoto(caseID: prepared.id, candidateID: candidateID)
 
         // Verify persistence of manual pins, excluded scales, and custom scale landmarks
         let syncedCase = try XCTUnwrap(store.pendingNotSureCases.first)
