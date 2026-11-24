@@ -243,19 +243,40 @@ final class HumanAssistedMatchingTests: XCTestCase {
 
         let store = AppStore(repository: mockRepo, reviewJournal: NotSureReviewJournal(directory: tempDir))
         store.enterDemoWorkspace(persona: .demoResearcher)
-        // Swap back to mockRepo via test helper: create a fresh store wired directly to mockRepo in authenticated live-like state
-        let liveStore = AppStore(repository: mockRepo, reviewJournal: NotSureReviewJournal(directory: tempDir))
-        // Sync works whenever repository is injected & canLoadRecords is true — test via DemoTurtleRepository first:
         let demoSynced = await store.syncMobilePendingSightings()
-        XCTAssertEqual(demoSynced, 1, "Demo repo should sync 1 mobile 'Waiting to Match' sighting")
-        XCTAssertEqual(store.pendingNotSureCases.first?.sourceLogID, UUID(uuidString: "00000000-0000-4000-8999-000000000001"))
+        XCTAssertEqual(demoSynced, 1, "Demo repo should list 1 mobile 'Waiting to Match' sighting")
+        XCTAssertTrue(store.escalatedNotSureCases.isEmpty, "Sync refreshes the log list and does not create a local case")
+        XCTAssertEqual(store.waitingLogs.first?.id, UUID(uuidString: "00000000-0000-4000-8999-000000000001"))
 
-        // Re-syncing must deduplicate by sourceLogID
         let secondSync = await store.syncMobilePendingSightings()
-        XCTAssertEqual(secondSync, 0, "Re-syncing must not duplicate already synced mobile sightings")
+        XCTAssertEqual(secondSync, 1, "Refreshing the same logs keeps the one waiting sighting")
+        XCTAssertTrue(store.escalatedNotSureCases.isEmpty)
 
-        // Verify persistence of manual pins, excluded scales, and custom scale landmarks
-        let syncedCase = try XCTUnwrap(store.pendingNotSureCases.first)
+        await store.openWaitingLog(UUID(uuidString: "00000000-0000-4000-8999-000000000001")!)
+        let opened = try XCTUnwrap(store.escalatedNotSureCases.first)
+        XCTAssertEqual(opened.sourceLogID, UUID(uuidString: "00000000-0000-4000-8999-000000000001"))
+        try await store.confirmWaitingLog(opened.sourceLogID!, turtleID: turtleID)
+        XCTAssertTrue(store.waitingLogs.isEmpty)
+
+        let jpeg = try makeSyntheticJPEG(width: 32, height: 32)
+        let photo = NotSureReviewPhoto(data: jpeg)
+        let pinned = EscalatedNotSureCase(
+            title: "Pinned",
+            side: .left,
+            photo: photo,
+            companion: nil,
+            queryFingerprint: nil,
+            queryROI: [],
+            candidates: [EscalatedNotSureCandidate(
+                id: turtleID.uuidString, rank: 1, name: "Amina", profileCode: "000001",
+                side: .left, sideMatches: true, dateText: "", location: "", confidencePercent: 80,
+                photo: photo, sampleImageName: nil, fingerprint: nil, isBundledExample: false
+            )],
+            submittedBy: "Tester",
+            isExample: false
+        )
+        try store.escalateToNotSureReview(pinned)
+        let syncedCase = try XCTUnwrap(store.escalatedNotSureCases.first { $0.id == pinned.id })
         let firstCand = try XCTUnwrap(syncedCase.candidates.first)
         let anchor = ManualAnchorPair(
             label: "A",
@@ -273,7 +294,6 @@ final class HumanAssistedMatchingTests: XCTestCase {
         XCTAssertEqual(reloaded.excludedQueryScaleNumbers, [2])
         XCTAssertEqual(reloaded.customQueryLandmarks?.first?.label, "M1")
 
-        // Confirming same turtle on synced mobile case resolves cleanly
         try await store.resolveNotSureCaseAndSyncBackend(
             syncedCase.id,
             action: .recommend(firstCand.id, note: "Warped scales lock")
@@ -281,8 +301,6 @@ final class HumanAssistedMatchingTests: XCTestCase {
         let afterConfirm = try XCTUnwrap(store.escalatedNotSureCases.first(where: { $0.id == syncedCase.id }))
         XCTAssertEqual(afterConfirm.decision, .recommendedMatch)
 
-        // Verify mock repository contract directly for resolvePendingSighting
-        _ = liveStore
         let mockPending = try await mockRepo.listPendingSightings(limit: 10)
         XCTAssertEqual(mockPending.first?.id, logID)
         try await mockRepo.resolvePendingSighting(

@@ -26,7 +26,7 @@ struct NotSureWorkspaceView: View {
     @State private var sessionCaseIDs: [UUID] = []
     @State private var showsReviewed = false
 
-    private var pendingCount: Int { store.pendingNotSureCases.count }
+    private var pendingCount: Int { store.waitingLogs.count }
     private var reviewedCount: Int { store.escalatedNotSureCases.count - pendingCount }
 
     private var visibleCases: [EscalatedNotSureCase] {
@@ -138,11 +138,20 @@ struct NotSureWorkspaceView: View {
                 .adaCard(padding: 14, radius: 18)
             }
 
-            if visibleCases.isEmpty {
+            if showsReviewed {
+                if visibleCases.isEmpty {
+                    emptyQueue
+                } else {
+                    ScrollView {
+                        caseList
+                            .padding(.bottom, 24)
+                    }
+                }
+            } else if store.waitingLogs.isEmpty {
                 emptyQueue
             } else {
                 ScrollView {
-                    caseList
+                    waitingLogList
                         .padding(.bottom, 24)
                 }
             }
@@ -196,6 +205,62 @@ struct NotSureWorkspaceView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 220)
         .adaCard(padding: 24, radius: AdaLayout.cardRadius)
+    }
+
+    private var waitingLogList: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(store.waitingLogs) { log in
+                Button {
+                    Task { await store.openWaitingLog(log.id) }
+                } label: {
+                    HStack(spacing: 16) {
+                        WaitingLogThumbnail(store: store, log: log)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(log.locationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Mobile sighting" : log.locationName)
+                                .font(.system(size: 15, weight: .semibold))
+                                .lineLimit(1)
+                            HStack(spacing: 6) {
+                                NotSureMetaTag(title: "Mobile", tint: AdaColors.accent, background: AdaColors.accentSoft)
+                                NotSureMetaTag(
+                                    title: waitingSideLabel(log),
+                                    tint: AdaColors.navy,
+                                    background: AdaColors.navy.opacity(0.08)
+                                )
+                                Text(log.observedAt.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(AdaColors.secondaryInk)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        if store.isOpeningWaitingLog {
+                            ProgressView().controlSize(.small)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(store.isOpeningWaitingLog)
+                .accessibilityLabel("\(log.locationName), \(waitingSideLabel(log))")
+                if log.id != store.waitingLogs.last?.id {
+                    Divider().padding(.horizontal, 20)
+                }
+            }
+        }
+        .adaCard(padding: 0, radius: AdaLayout.cardRadius)
+    }
+
+    private func waitingSideLabel(_ log: OrganizationLog) -> String {
+        let sides = log.facePhotos.compactMap(\.side)
+        if sides.contains(.left) && sides.contains(.right) { return "Left + Right" }
+        if sides.contains(.right) { return "Right" }
+        if sides.contains(.left) { return "Left" }
+        return "Side needed"
     }
 
     private var caseList: some View {
@@ -735,6 +800,10 @@ private struct NotSureCaseDetail: View {
         }
         .task(id: searchRequest) {
             guard searchRequest != nil else { return }
+            await runLiveSearch(overridePhotoData: nil, usePairedSide: false)
+        }
+        .task(id: item.id) {
+            guard liveSearchAvailable, item.candidates.isEmpty else { return }
             await runLiveSearch(overridePhotoData: nil, usePairedSide: false)
         }
         .task(id: isBlinking) {
@@ -2097,13 +2166,20 @@ private struct NotSureCaseDetail: View {
             if displayedCandidates.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
-                    Image(systemName: showsRejected ? "arrow.uturn.backward.circle" : "person.crop.circle.badge.questionmark")
-                        .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                    Text(showsRejected ? "No rejected candidates" : "All candidates ruled out")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                        .multilineTextAlignment(.center)
+                    if isSearching {
+                        ProgressView()
+                        Text("Searching the gallery")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                    } else {
+                        Image(systemName: showsRejected ? "arrow.uturn.backward.circle" : "person.crop.circle.badge.questionmark")
+                            .font(.system(size: 22, weight: .light))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                        Text(showsRejected ? "No rejected candidates" : (item.candidates.isEmpty ? "No candidates" : "All candidates ruled out"))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                            .multilineTextAlignment(.center)
+                    }
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2234,7 +2310,7 @@ private struct NotSureCaseDetail: View {
                         }
                     }
                 } else {
-                    Text("No matching candidate left")
+                    Text(isSearching ? "Searching the gallery" : "No matching candidate left")
                         .font(.system(size: 12.5))
                         .foregroundStyle(AdaColors.secondaryInk)
                 }
@@ -3293,6 +3369,28 @@ private struct NotSureHeadCropSheet: View {
 }
 
 // MARK: - Shared FigCraft Primitives
+
+private struct WaitingLogThumbnail: View {
+    let store: AppStore
+    let log: OrganizationLog
+    @State private var image: NSImage?
+
+    private var path: String {
+        let faces = log.facePhotos
+        return (faces.first { $0.side == .left } ?? faces.first)?.fetchPath ?? ""
+    }
+
+    var body: some View {
+        NotSureThumbnail(image: image, size: 68, radius: 12)
+            .task(id: path) {
+                image = nil
+                guard !path.isEmpty else { return }
+                let loaded = await store.loadPhoto(for: path)
+                guard !Task.isCancelled else { return }
+                image = loaded
+            }
+    }
+}
 
 private struct NotSureThumbnail: View {
     let image: NSImage?

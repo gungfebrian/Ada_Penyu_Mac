@@ -84,7 +84,7 @@ struct ContentView: View {
                     isDemoWorkspace: store.isDemoBypassActive,
                     onSignOut: signOutAction,
                     isCollapsed: isSidebarCollapsed,
-                    notSurePendingCount: store.pendingNotSureCases.count,
+                    notSurePendingCount: store.notSureAttentionCount,
                     isNavigationLocked: store.organizationKeySettings.isChanging,
                     localization: store.localization,
                     onToggleSidebar: toggleSidebar,
@@ -442,7 +442,7 @@ struct ContentView: View {
                 catalogTab(
                     "Not Sure",
                     icon: "questionmark.circle",
-                    count: store.pendingNotSureCases.count,
+                    count: store.notSureAttentionCount,
                     selected: store.activeSection == .scientistReview
                 ) {
                     store.openNotSureReview()

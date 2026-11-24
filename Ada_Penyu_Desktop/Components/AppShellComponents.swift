@@ -204,7 +204,6 @@ struct SidebarView: View {
                     Text(LocalizedStringKey(section.title))
                         .font(.system(size: 14))
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
                         .transition(.opacity)
                     Spacer(minLength: 0)
                     if section == .scientistReview && notSurePendingCount > 0 {
@@ -214,6 +213,7 @@ struct SidebarView: View {
                             .padding(.horizontal, 7)
                             .frame(height: 18)
                             .background(.white.opacity(0.92), in: Capsule())
+                            .layoutPriority(1)
                             .transition(.opacity)
                     }
                 }
@@ -229,7 +229,9 @@ struct SidebarView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 12)
         .help(section.title)
-        .accessibilityLabel(section.title)
+        .accessibilityLabel(section == .scientistReview && notSurePendingCount > 0
+            ? "\(section.title), \(notSurePendingCount) unidentified"
+            : section.title)
         .accessibilityAddTraits(selection == section ? .isSelected : [])
     }
 

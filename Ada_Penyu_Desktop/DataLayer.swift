@@ -302,6 +302,45 @@ nonisolated struct PendingMobileSighting: Identifiable, Hashable, Sendable {
     let photoPaths: [String]
 }
 
+/// One photo on an organization sighting log. Face photos have neither a marking nor a body spot.
+nonisolated struct OrganizationLogPhoto: Identifiable, Hashable, Sendable {
+    let id: UUID
+    let url: String
+    var downloadURL: String? = nil
+    let side: TurtlePhotoSide?
+    let markingID: UUID?
+    let bodySpotID: UUID?
+
+    var isFacePhoto: Bool { markingID == nil && bodySpotID == nil }
+
+    /// Bytes the queue can fetch. A signed download URL wins over the stable log photo URL.
+    var fetchPath: String {
+        if let downloadURL {
+            let trimmed = downloadURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return url.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// A sighting returned by `GET /api/v2/logs`. The Not Sure queue keeps the same rows iOS shows.
+nonisolated struct OrganizationLog: Identifiable, Hashable, Sendable {
+    let id: UUID
+    let observedAt: Date
+    let locationName: String
+    let notes: String?
+    let turtleID: UUID?
+    let photos: [OrganizationLogPhoto]
+
+    var facePhotos: [OrganizationLogPhoto] { photos.filter(\.isFacePhoto) }
+
+    /// iOS `PendingReviewLogs.isWaiting`: no turtle, and either a face photo or a Match later mark on this Mac.
+    static func isWaiting(_ log: OrganizationLog, markedOnThisMac: Set<UUID> = []) -> Bool {
+        guard log.turtleID == nil else { return false }
+        return !log.facePhotos.isEmpty || markedOnThisMac.contains(log.id)
+    }
+}
+
 protocol TurtleRepository: AnyObject {
     func listIndividuals(query: IndividualQuery) async throws -> Page<Turtle>
     func listFavorites() async throws -> [Turtle]
@@ -315,6 +354,11 @@ protocol TurtleRepository: AnyObject {
     func fetchOverlayAnnotations(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> [OverlayAnnotationItem]
     func fetchOverlayPNG(imageData: Data, side: TurtlePhotoSide, candidateID: UUID, candidateSide: TurtlePhotoSide, maxThreads: Int) async throws -> Data
     func listPendingSightings(limit: Int) async throws -> [PendingMobileSighting]
+    func listLogs(identifiedOnly: Bool, limit: Int, offset: Int) async throws -> Page<OrganizationLog>
+    func fetchLog(id: UUID) async throws -> OrganizationLog
+    func matchLoggedPhoto(logID: UUID, attemptID: UUID, imageData: Data, side: TurtlePhotoSide, limit: Int) async throws -> MatchSearchOutcome
+    func matchLoggedPhotoPair(logID: UUID, attemptID: UUID, leftData: Data, rightData: Data, limit: Int) async throws -> MatchSearchOutcome
+    func unidentifiedSightingCount() async throws -> Int
     func resolvePendingSighting(logID: UUID, turtleID: UUID, method: String, confidence: Double?, notes: String?) async throws
     func uploadIndividualPhoto(individualID: UUID, side: TurtlePhotoSide, imageData: Data) async throws -> String
     func createIndividual(_ draft: IndividualDraft) async throws -> Turtle
@@ -341,6 +385,24 @@ extension TurtleRepository {
     func listPendingSightings(limit: Int = 50) async throws -> [PendingMobileSighting] {
         []
     }
+
+    func listLogs(identifiedOnly: Bool, limit: Int, offset: Int) async throws -> Page<OrganizationLog> {
+        Page(items: [], total: 0, request: PageRequest(limit: limit, offset: offset))
+    }
+
+    func fetchLog(id: UUID) async throws -> OrganizationLog {
+        throw APIError.notFound("Sighting not found")
+    }
+
+    func matchLoggedPhoto(logID: UUID, attemptID: UUID, imageData: Data, side: TurtlePhotoSide, limit: Int) async throws -> MatchSearchOutcome {
+        throw APIError.notConfigured("Matching a saved sighting needs the organization API.")
+    }
+
+    func matchLoggedPhotoPair(logID: UUID, attemptID: UUID, leftData: Data, rightData: Data, limit: Int) async throws -> MatchSearchOutcome {
+        throw APIError.notConfigured("Matching a saved sighting needs the organization API.")
+    }
+
+    func unidentifiedSightingCount() async throws -> Int { 0 }
 
     func resolvePendingSighting(logID: UUID, turtleID: UUID, method: String = "manual", confidence: Double? = nil, notes: String? = nil) async throws {}
 
@@ -989,10 +1051,78 @@ final class RemoteTurtleRepository: TurtleRepository {
         return data
     }
 
-    func listPendingSightings(limit: Int = 50) async throws -> [PendingMobileSighting] {
+    func listLogs(identifiedOnly: Bool, limit: Int, offset: Int) async throws -> Page<OrganizationLog> {
+        let bounded = min(200, max(1, limit))
+        let safeOffset = max(0, offset)
         let queryItems = [
-            URLQueryItem(name: "identified_only", value: "false"),
-            URLQueryItem(name: "limit", value: String(min(200, max(1, limit)))),
+            URLQueryItem(name: "identified_only", value: identifiedOnly ? "true" : "false"),
+            URLQueryItem(name: "limit", value: String(bounded)),
+            URLQueryItem(name: "offset", value: String(safeOffset)),
+        ]
+        let page: V2Page<OrganizationLogDTO> = try await client.get("api/v2/logs", queryItems: queryItems)
+        return Page(
+            items: page.items.map(\.log),
+            total: page.total,
+            request: PageRequest(limit: bounded, offset: safeOffset)
+        )
+    }
+
+    func fetchLog(id: UUID) async throws -> OrganizationLog {
+        let dto: OrganizationLogDTO = try await client.get("api/v2/logs/\(id.uuidString.lowercased())")
+        return dto.log
+    }
+
+    func matchLoggedPhoto(logID: UUID, attemptID: UUID, imageData: Data, side: TurtlePhotoSide, limit: Int) async throws -> MatchSearchOutcome {
+        let queryItems = [
+            URLQueryItem(name: "log_id", value: logID.uuidString.lowercased()),
+            URLQueryItem(name: "attempt_id", value: attemptID.uuidString.lowercased()),
+            URLQueryItem(name: "side", value: side.rawValue),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        let part = MultipartPart(name: "file", filename: "query.jpg", contentType: "image/jpeg", data: imageData)
+        let dto: RecordedMatchDTO = try await client.requestMultipart(
+            path: "api/v2/match",
+            method: "POST",
+            queryItems: queryItems,
+            parts: [part]
+        )
+        return dto.outcome(fallbackSide: side)
+    }
+
+    func matchLoggedPhotoPair(logID: UUID, attemptID: UUID, leftData: Data, rightData: Data, limit: Int) async throws -> MatchSearchOutcome {
+        let queryItems = [
+            URLQueryItem(name: "log_id", value: logID.uuidString.lowercased()),
+            URLQueryItem(name: "attempt_id", value: attemptID.uuidString.lowercased()),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        let parts = [
+            MultipartPart(name: "left_file", filename: "left.jpg", contentType: "image/jpeg", data: leftData),
+            MultipartPart(name: "right_file", filename: "right.jpg", contentType: "image/jpeg", data: rightData),
+        ]
+        let dto: RecordedMatchDTO = try await client.requestMultipart(
+            path: "api/v2/match/pair",
+            method: "POST",
+            queryItems: queryItems,
+            parts: parts
+        )
+        return dto.outcome(fallbackSide: .left, isPair: true)
+    }
+
+    func unidentifiedSightingCount() async throws -> Int {
+        let queryItems = [
+            URLQueryItem(name: "unidentified_only", value: "true"),
+            URLQueryItem(name: "limit", value: "1"),
+            URLQueryItem(name: "offset", value: "0"),
+        ]
+        let page: SightingCountPage = try await client.get("api/v2/logs", queryItems: queryItems)
+        return page.total
+    }
+
+    func listPendingSightings(limit: Int = 50) async throws -> [PendingMobileSighting] {
+        let boundedLimit = String(min(200, max(1, limit)))
+        let queryItems = [
+            URLQueryItem(name: "unidentified_only", value: "true"),
+            URLQueryItem(name: "limit", value: boundedLimit),
             URLQueryItem(name: "offset", value: "0"),
         ]
         do {
@@ -1012,7 +1142,11 @@ final class RemoteTurtleRepository: TurtleRepository {
                 )
             }
         } catch APIError.notFound {
-            let page: V1LogListDTO = try await client.get("api/v1/logs", queryItems: queryItems)
+            let page: V1LogListDTO = try await client.get("api/v1/logs", queryItems: [
+                URLQueryItem(name: "identified_only", value: "false"),
+                URLQueryItem(name: "limit", value: boundedLimit),
+                URLQueryItem(name: "offset", value: "0"),
+            ])
             return page.items.compactMap { item -> PendingMobileSighting? in
                 guard item.turtleID == nil else { return nil }
                 let paths = item.photos
@@ -1528,6 +1662,30 @@ final class DemoTurtleRepository: TurtleRepository {
         )
     }
 
+    private static let demoPendingLogID = UUID(uuidString: "00000000-0000-4000-8999-000000000001")!
+    private static let demoWaitingLog = OrganizationLog(
+        id: demoPendingLogID,
+        observedAt: Date(timeIntervalSince1970: 1_700_000_000),
+        locationName: "Nusa Penida North Reef (Mobile)",
+        notes: "Marked 'Match later' from field patrol iPhone — strong glare near cheek.",
+        turtleID: nil,
+        photos: [
+            OrganizationLogPhoto(
+                id: UUID(uuidString: "00000000-0000-4000-8999-000000000011")!,
+                url: "Amina3_L.jpg",
+                side: .left,
+                markingID: nil,
+                bodySpotID: nil
+            ),
+            OrganizationLogPhoto(
+                id: UUID(uuidString: "00000000-0000-4000-8999-000000000012")!,
+                url: "Zizo1_R.jpg",
+                side: .right,
+                markingID: nil,
+                bodySpotID: nil
+            ),
+        ]
+    )
     private var resolvedPendingLogIDs: Set<UUID> = []
 
     func fetchOverlayAnnotations(
@@ -1631,12 +1789,45 @@ final class DemoTurtleRepository: TurtleRepository {
         }
     }
 
+    func listLogs(identifiedOnly: Bool, limit: Int, offset: Int) async throws -> Page<OrganizationLog> {
+        let waiting = resolvedPendingLogIDs.contains(Self.demoPendingLogID) ? [] : [Self.demoWaitingLog]
+        let visible = identifiedOnly ? waiting.filter { $0.turtleID != nil } : waiting
+        let bounded = min(200, max(1, limit))
+        let safeOffset = max(0, offset)
+        return Page(
+            items: Array(visible.dropFirst(safeOffset).prefix(bounded)),
+            total: visible.count,
+            request: PageRequest(limit: bounded, offset: safeOffset)
+        )
+    }
+
+    func fetchLog(id: UUID) async throws -> OrganizationLog {
+        let page = try await listLogs(identifiedOnly: false, limit: 50, offset: 0)
+        guard let log = page.items.first(where: { $0.id == id }) else {
+            throw APIError.notFound("Sighting not found")
+        }
+        return log
+    }
+
+    func matchLoggedPhoto(logID: UUID, attemptID: UUID, imageData: Data, side: TurtlePhotoSide, limit: Int) async throws -> MatchSearchOutcome {
+        _ = (logID, attemptID)
+        return try await matchPhoto(imageData: imageData, side: side, limit: limit)
+    }
+
+    func matchLoggedPhotoPair(logID: UUID, attemptID: UUID, leftData: Data, rightData: Data, limit: Int) async throws -> MatchSearchOutcome {
+        _ = (logID, attemptID)
+        return try await matchPhotoPair(leftData: leftData, rightData: rightData, limit: limit)
+    }
+
+    func unidentifiedSightingCount() async throws -> Int {
+        resolvedPendingLogIDs.contains(Self.demoPendingLogID) ? 0 : 1
+    }
+
     func listPendingSightings(limit: Int = 50) async throws -> [PendingMobileSighting] {
-        let demoID = UUID(uuidString: "00000000-0000-4000-8999-000000000001")!
-        guard !resolvedPendingLogIDs.contains(demoID) else { return [] }
+        guard !resolvedPendingLogIDs.contains(Self.demoPendingLogID) else { return [] }
         return [
             PendingMobileSighting(
-                id: demoID,
+                id: Self.demoPendingLogID,
                 observedAt: Date().addingTimeInterval(-3600 * 5),
                 locationName: "Nusa Penida North Reef (Mobile)",
                 notes: "Marked 'Match later' from field patrol iPhone — strong glare near cheek.",
@@ -2030,6 +2221,148 @@ enum DemoFixtures {
 }
 
 // MARK: - Pending Mobile Sighting Sync DTOs (v2 primary + v1 fallback)
+
+private struct SightingCountPage: Decodable {
+    let total: Int
+}
+
+private struct OrganizationLogDTO: Decodable {
+    let id: UUID
+    let turtleID: UUID?
+    let observedAt: Date
+    let location: V2Location
+    let notes: String?
+    let photos: [OrganizationLogPhotoDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case id, location, notes, photos
+        case turtleID = "turtle_id"
+        case observedAt = "observed_at"
+    }
+
+    var log: OrganizationLog {
+        OrganizationLog(
+            id: id,
+            observedAt: observedAt,
+            locationName: location.name,
+            notes: notes,
+            turtleID: turtleID,
+            photos: photos.map(\.photo)
+        )
+    }
+}
+
+private struct OrganizationLogPhotoDTO: Decodable {
+    let id: UUID
+    let url: String
+    let downloadURL: String?
+    let side: String?
+    let markingID: UUID?
+    let bodySpotID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case id, url, side
+        case downloadURL = "download_url"
+        case markingID = "marking_id"
+        case bodySpotID = "body_spot_id"
+    }
+
+    var photo: OrganizationLogPhoto {
+        OrganizationLogPhoto(
+            id: id,
+            url: url,
+            downloadURL: downloadURL,
+            side: side.flatMap(TurtlePhotoSide.init(rawValue:)),
+            markingID: markingID,
+            bodySpotID: bodySpotID
+        )
+    }
+}
+
+private struct RecordedMatchDTO: Decodable {
+    let querySides: [String]
+    let matchState: String
+    let agreed: Bool?
+    let gallerySize: Int
+    let candidates: [RecordedMatchCandidateDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case agreed, candidates
+        case querySides = "query_sides"
+        case matchState = "match_state"
+        case gallerySize = "gallery_size"
+    }
+
+    func outcome(fallbackSide: TurtlePhotoSide, isPair: Bool = false) -> MatchSearchOutcome {
+        let querySide = querySides.compactMap(TurtlePhotoSide.init(rawValue:)).first ?? fallbackSide
+        return MatchSearchOutcome(
+            querySide: querySide,
+            gallerySize: gallerySize,
+            matchState: matchState,
+            candidates: candidates.map { $0.item(side: querySide) },
+            isDualPair: isPair,
+            pairAgreed: agreed
+        )
+    }
+}
+
+private struct RecordedMatchCandidateDTO: Decodable {
+    let rank: Int
+    let confidence: Double
+    let aboveThreshold: Bool
+    let turtle: RecordedMatchTurtleDTO
+
+    enum CodingKeys: String, CodingKey {
+        case rank, confidence, turtle
+        case aboveThreshold = "above_threshold"
+    }
+
+    func item(side: TurtlePhotoSide) -> MatchCandidateItem {
+        let percent = Int((confidence * 100).rounded())
+        let photoURL = side == .right ? (turtle.identityPhotos.right?.url ?? turtle.identityPhotos.left?.url) : (turtle.identityPhotos.left?.url ?? turtle.identityPhotos.right?.url)
+        return MatchCandidateItem(
+            individualID: turtle.id,
+            name: turtle.name,
+            profileCode: turtle.profileCode,
+            species: TurtleSpecies(apiValue: turtle.species),
+            rank: rank,
+            fusedScore: confidence,
+            confidence: confidence,
+            confidencePercent: percent,
+            globalScore: confidence,
+            localMatch: 0,
+            matchedPhotoSide: side,
+            photoURL: photoURL,
+            aboveThreshold: aboveThreshold,
+            lastSeenDate: nil,
+            lastSeenLocation: nil,
+            condition: nil
+        )
+    }
+}
+
+private struct RecordedMatchTurtleDTO: Decodable {
+    let id: UUID
+    let name: String
+    let profileCode: String
+    let species: String
+    let identityPhotos: RecordedIdentityPhotosDTO
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, species
+        case profileCode = "profile_code"
+        case identityPhotos = "identity_photos"
+    }
+}
+
+private struct RecordedIdentityPhotosDTO: Decodable {
+    let left: RecordedIdentityPhotoDTO?
+    let right: RecordedIdentityPhotoDTO?
+}
+
+private struct RecordedIdentityPhotoDTO: Decodable {
+    let url: String
+}
 
 private struct V2PendingLogDTO: Decodable {
     let id: UUID

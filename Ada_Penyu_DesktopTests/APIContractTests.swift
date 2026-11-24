@@ -291,6 +291,83 @@ final class APIContractTests: XCTestCase {
         _ = try await repo.uploadIndividualPhoto(individualID: UUID(uuidString: APIFixtures.turtleID)!, side: .left, imageData: Data([0, 255, 1]))
     }
 
+    func testNotSureQueueReadsIdentifiedOnlyFalseWithoutPhotoBytes() async throws {
+        let waitingID = UUID()
+        let faceID = UUID()
+        let spotID = UUID()
+        let spotPhotoID = UUID()
+        var photoPaths: [String] = []
+        BackendStub.handler = { request in
+            if let auth = APIFixtures.auth(request) { return auth }
+            let path = request.url!.path
+            if path.contains("/photos/") {
+                photoPaths.append(path)
+                return (200, Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")!)
+            }
+            if path == "/api/v2/logs" {
+                let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                XCTAssertEqual(items.first { $0.name == "identified_only" }?.value, "false")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Accept")?.contains("image/*") == true ? true : nil)
+                let waiting = Self.logJSON(id: waitingID, turtleID: nil, faceID: faceID, spotPhotoID: spotPhotoID, spotID: spotID)
+                let named = Self.logJSON(id: UUID(), turtleID: UUID(), faceID: UUID(), spotPhotoID: nil, spotID: nil)
+                let spotOnly = Self.logJSON(id: UUID(), turtleID: nil, faceID: nil, spotPhotoID: UUID(), spotID: UUID())
+                return (200, APIFixtures.page("\(waiting),\(named),\(spotOnly)", total: 3))
+            }
+            if path == "/api/v2/logs/\(waitingID.uuidString.lowercased())" {
+                return (200, APIFixtures.data(Self.logJSON(id: waitingID, turtleID: nil, faceID: faceID, spotPhotoID: spotPhotoID, spotID: spotID)))
+            }
+            return (200, APIFixtures.page(APIFixtures.profile))
+        }
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(client: client(), reviewJournal: NotSureReviewJournal(directory: directory))
+        try await store.signIn(email: "person@example.test", password: "test-only-password", rememberMe: false)
+        XCTAssertEqual(store.waitingLogs.map(\.id), [waitingID])
+        XCTAssertTrue(photoPaths.isEmpty)
+        await store.openWaitingLog(waitingID)
+        XCTAssertEqual(photoPaths, ["/api/v2/logs/\(waitingID.uuidString.lowercased())/photos/\(faceID.uuidString.lowercased())"])
+        XCTAssertEqual(store.escalatedNotSureCases.map(\.sourceLogID), [waitingID])
+    }
+
+    func testConfirmWaitingLogPatchesTurtleID() async throws {
+        let logID = UUID()
+        let turtleID = UUID(uuidString: APIFixtures.turtleID)!
+        var patched: [String: Any] = [:]
+        BackendStub.handler = { request in
+            if let auth = APIFixtures.auth(request) { return auth }
+            if request.url?.path == "/api/v2/logs/\(logID.uuidString.lowercased())", request.httpMethod == "PATCH" {
+                patched = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any] ?? [:]
+                return (200, APIFixtures.data(Self.logJSON(id: logID, turtleID: turtleID, faceID: UUID(), spotPhotoID: nil, spotID: nil)))
+            }
+            if request.url?.path == "/api/v2/logs" {
+                return (200, APIFixtures.page("", total: 0))
+            }
+            return (200, APIFixtures.page(APIFixtures.profile))
+        }
+        let store = AppStore(client: client())
+        try await store.signIn(email: "person@example.test", password: "test-only-password", rememberMe: false)
+        try await store.confirmWaitingLog(logID, turtleID: turtleID)
+        XCTAssertEqual(patched["turtle_id"] as? String, turtleID.uuidString.lowercased())
+    }
+
+    private static func logJSON(id: UUID, turtleID: UUID?, faceID: UUID?, spotPhotoID: UUID?, spotID: UUID?) -> String {
+        var photos: [String] = []
+        if let faceID {
+            photos.append("""
+            {"id":"\(faceID.uuidString.lowercased())","url":"/face","side":"left","marking_id":null,"body_spot_id":null}
+            """)
+        }
+        if let spotPhotoID, let spotID {
+            photos.append("""
+            {"id":"\(spotPhotoID.uuidString.lowercased())","url":"/spot","side":null,"marking_id":null,"body_spot_id":"\(spotID.uuidString.lowercased())"}
+            """)
+        }
+        let turtle = turtleID.map { "\"\($0.uuidString.lowercased())\"" } ?? "null"
+        return """
+        {"id":"\(id.uuidString.lowercased())","turtle_id":\(turtle),"observed_at":"2026-01-01T00:00:00Z","location":{"name":"Reef","coordinates":null},"notes":null,"photos":[\(photos.joined(separator: ","))]}
+        """
+    }
+
     func testPhotoNamedLikeBundledSampleDoesNotUseBundledImage() async throws {
         BackendStub.handler = { APIFixtures.auth($0) ?? (404, APIFixtures.data("{}")) }
         let store = AppStore(client: client())

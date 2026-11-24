@@ -104,6 +104,9 @@ final class AppStore: ObservableObject {
     @Published var requestedReviewLayoutMode: ScientistComparisonLayoutMode = .contours
     @Published var requestedEscalatedCaseID: UUID? = nil
     @Published private(set) var escalatedNotSureCases: [EscalatedNotSureCase] = []
+    /// Waiting sightings from `GET /api/v2/logs?identified_only=false`, using the iOS waiting rule.
+    @Published private(set) var waitingLogs: [OrganizationLog] = []
+    @Published private(set) var isOpeningWaitingLog = false
     @Published private(set) var notSureQueueError: String?
     @Published private(set) var isSyncingMobileQueue = false
     @Published var isReviewPracticePresented = false
@@ -365,6 +368,9 @@ final class AppStore: ObservableObject {
         escalatedNotSureCases.filter { $0.decision == .pending }
     }
 
+    /// Sidebar and catalog count. Same waiting set iOS shows on the list.
+    var notSureAttentionCount: Int { waitingLogs.count }
+
     private var notSureReviewScope: String? {
         if isDemoBypassActive { return demoPersona.accountStorageKey }
         guard let account = client.account, let organization = account.organisationID else { return nil }
@@ -448,110 +454,131 @@ final class AppStore: ObservableObject {
                 confidence: confidence,
                 notes: note.isEmpty ? nil : note
             )
+            await loadWaitingLogs()
             statusMessage = "Confirmed match synced to sighting log"
         }
     }
 
-    /// Pulls unidentified Mobile "Waiting to Match / Match later" sightings (`identified_only=false`)
-    /// directly into the Desktop Not Sure review queue, deduplicating by `sourceLogID`.
+    /// Reloads the same organization log page iOS uses. Does not download photos or create local cases.
     @discardableResult
     func syncMobilePendingSightings() async -> Int {
         guard canLoadRecords, !isSyncingMobileQueue else { return 0 }
         let generation = sessionGeneration
-        let scope = notSureReviewScope
         isSyncingMobileQueue = true
         notSureQueueError = nil
         defer {
             if sessionGeneration == generation { isSyncingMobileQueue = false }
         }
-
-        do {
-            let pending = try await repository.listPendingSightings(limit: 50)
-            guard sessionGeneration == generation, notSureReviewScope == scope else { return 0 }
-            let existingLogIDs = Set(escalatedNotSureCases.compactMap(\.sourceLogID))
-            var addedCount = 0
-
-            for sighting in pending where !existingLogIDs.contains(sighting.id) {
-                guard sessionGeneration == generation, !Task.isCancelled else { break }
-                guard let primaryPath = sighting.photoPaths.first else { continue }
-                guard let primaryData = try? await repository.fetchPhotoData(pathOrURL: primaryPath),
-                      NSImage(data: primaryData) != nil else {
-                    continue
-                }
-                var companionData: Data? = nil
-                if sighting.photoPaths.count >= 2,
-                   let secondData = try? await repository.fetchPhotoData(pathOrURL: sighting.photoPaths[1]),
-                   NSImage(data: secondData) != nil {
-                    companionData = secondData
-                }
-
-                let outcome: MatchSearchOutcome?
-                if let rightData = companionData {
-                    outcome = try? await matchPhotoPair(leftData: primaryData, rightData: rightData, limit: 6)
-                } else {
-                    outcome = try? await matchPhoto(imageData: primaryData, side: .left, limit: 6)
-                }
-                guard sessionGeneration == generation else { break }
-
-                var references: [EscalatedNotSureCandidate] = []
-                if let outcome {
-                    for cand in outcome.candidates {
-                        let path = cand.photoURL ?? "/api/v1/individuals/\(cand.id.uuidString)/photos/\(cand.matchedPhotoSide.rawValue)"
-                        let img = await loadPhoto(for: path)
-                        references.append(EscalatedNotSureCandidate(
-                            id: cand.id.uuidString,
-                            rank: cand.rank,
-                            name: cand.name,
-                            profileCode: cand.profileCode ?? "",
-                            side: cand.matchedPhotoSide,
-                            sideMatches: cand.matchedPhotoSide == .left || companionData != nil,
-                            dateText: cand.lastSeenDate ?? "",
-                            location: cand.lastSeenLocation ?? "",
-                            confidencePercent: cand.confidencePercent,
-                            photo: NotSureReviewPhoto(snapshot: img),
-                            sampleImageName: isDemoBypassActive ? (path as NSString).lastPathComponent : nil,
-                            fingerprint: nil,
-                            isBundledExample: isDemoBypassActive
-                        ))
-                    }
-                }
-
-                let titleLocation = sighting.locationName.trimmingCharacters(in: .whitespacesAndNewlines)
-                let title = titleLocation.isEmpty ? "Mobile sighting" : titleLocation
-                var reviewCase = EscalatedNotSureCase(
-                    title: title,
-                    side: .left,
-                    photo: NotSureReviewPhoto(data: primaryData),
-                    companion: companionData.map { NotSureReviewPhoto(data: $0) },
-                    queryFingerprint: nil,
-                    queryROI: [],
-                    candidates: references,
-                    submittedBy: "Mobile Patrol",
-                    isExample: isDemoBypassActive,
-                    sourceLogID: sighting.id,
-                    createdAt: sighting.observedAt
-                )
-                if let note = sighting.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
-                    try? reviewCase.apply(.saveNote(note))
-                }
-                try saveNotSureCase(reviewCase)
-                addedCount += 1
-            }
-
-            if sessionGeneration == generation {
-                if addedCount > 0 {
-                    statusMessage = "Synced \(addedCount) mobile sighting\(addedCount == 1 ? "" : "s") waiting to match"
-                } else {
-                    statusMessage = "Mobile queue is up to date"
-                }
-            }
-            return addedCount
-        } catch {
-            if sessionGeneration == generation, !(error is CancellationError) {
-                notSureQueueError = "Could not sync mobile pending sightings. \(error.localizedDescription)"
-            }
-            return 0
+        await loadWaitingLogs()
+        guard sessionGeneration == generation else { return 0 }
+        if notSureQueueError == nil {
+            let count = waitingLogs.count
+            statusMessage = "\(count) unidentified sighting\(count == 1 ? "" : "s")"
         }
+        return waitingLogs.count
+    }
+
+    /// Opens one waiting log: loads its detail and face photos, then the existing review screen.
+    func openWaitingLog(_ id: UUID) async {
+        guard !isOpeningWaitingLog else { return }
+        let generation = sessionGeneration
+        isOpeningWaitingLog = true
+        notSureQueueError = nil
+        defer { if sessionGeneration == generation { isOpeningWaitingLog = false } }
+        do {
+            let log = try await repository.fetchLog(id: id)
+            guard sessionGeneration == generation else { return }
+            if let existing = escalatedNotSureCases.first(where: { $0.sourceLogID == id }) {
+                openNotSureReview(caseID: existing.id)
+                return
+            }
+            let reviewCase = try await makeReviewCase(from: log)
+            guard sessionGeneration == generation else { return }
+            try saveNotSureCase(reviewCase)
+            openNotSureReview(caseID: reviewCase.id)
+        } catch {
+            guard sessionGeneration == generation, !(error is CancellationError) else { return }
+            notSureQueueError = error.localizedDescription
+        }
+    }
+
+    /// Assigns a turtle on the saved sighting (`PATCH /api/v2/logs/{id}`) and refreshes the waiting list.
+    func confirmWaitingLog(_ id: UUID, turtleID: UUID) async throws {
+        try await repository.resolvePendingSighting(
+            logID: id,
+            turtleID: turtleID,
+            method: "manual",
+            confidence: nil,
+            notes: nil
+        )
+        await loadWaitingLogs()
+    }
+
+    private func loadWaitingLogs() async {
+        let generation = sessionGeneration
+        do {
+            let logs = try await fetchWaitingLogs(generation: generation)
+            guard sessionGeneration == generation else { return }
+            waitingLogs = logs
+        } catch {
+            guard sessionGeneration == generation, !(error is CancellationError) else { return }
+            notSureQueueError = "Could not load unidentified sightings. \(error.localizedDescription)"
+        }
+    }
+
+    private func fetchWaitingLogs(generation: UUID) async throws -> [OrganizationLog] {
+        var collected: [OrganizationLog] = []
+        var offset = 0
+        var total = Int.max
+        while offset < total {
+            let page = try await repository.listLogs(identifiedOnly: false, limit: 50, offset: offset)
+            guard sessionGeneration == generation else { throw CancellationError() }
+            collected.append(contentsOf: page.items)
+            total = page.total
+            offset += page.items.count
+            if page.items.isEmpty { break }
+        }
+        return collected.filter { OrganizationLog.isWaiting($0) }
+    }
+
+    private func makeReviewCase(from log: OrganizationLog) async throws -> EscalatedNotSureCase {
+        let faces = log.facePhotos
+        guard let primary = faces.first(where: { $0.side == .left }) ?? faces.first else {
+            throw NotSureReviewError.invalidPhoto
+        }
+        let primaryData = try await facePhotoData(logID: log.id, photo: primary)
+        let companionPhoto = faces.first { $0.id != primary.id && ($0.side == .right || primary.side == nil) }
+        let companionData: Data?
+        if let companionPhoto {
+            companionData = try await facePhotoData(logID: log.id, photo: companionPhoto)
+        } else {
+            companionData = nil
+        }
+        let title = log.locationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        var reviewCase = EscalatedNotSureCase(
+            title: title.isEmpty ? "Mobile sighting" : title,
+            side: primary.side ?? .left,
+            photo: NotSureReviewPhoto(data: primaryData),
+            companion: companionData.map { NotSureReviewPhoto(data: $0) },
+            queryFingerprint: nil,
+            queryROI: [],
+            candidates: [],
+            submittedBy: "Mobile Patrol",
+            isExample: isDemoBypassActive,
+            sourceLogID: log.id,
+            createdAt: log.observedAt
+        )
+        if let note = log.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            try reviewCase.apply(.saveNote(note))
+        }
+        return reviewCase
+    }
+
+    private func facePhotoData(logID: UUID, photo: OrganizationLogPhoto) async throws -> Data {
+        let path = "api/v2/logs/\(logID.uuidString.lowercased())/photos/\(photo.id.uuidString.lowercased())"
+        let data = try await repository.fetchPhotoData(pathOrURL: path)
+        guard NSImage(data: data) != nil else { throw NotSureReviewError.invalidPhoto }
+        return data
     }
 
     func findNotSureCandidates(
@@ -571,7 +598,24 @@ final class AppStore: ObservableObject {
         let isHumanGuidedReMatch = overridePhotoData != nil || usePairedSide
 
         let result: MatchSearchOutcome
-        if usePairedSide, let companionData = item.companion?.data {
+        if let logID = item.sourceLogID {
+            let attemptID = UUID()
+            if usePairedSide, let companionData = item.companion?.data {
+                let leftBytes = item.side == .left ? (overridePhotoData ?? item.queryPhotoData) : companionData
+                let rightBytes = item.side == .right ? (overridePhotoData ?? item.queryPhotoData) : companionData
+                result = try await repository.matchLoggedPhotoPair(
+                    logID: logID, attemptID: attemptID, leftData: leftBytes, rightData: rightBytes, limit: 8
+                )
+            } else {
+                result = try await repository.matchLoggedPhoto(
+                    logID: logID,
+                    attemptID: attemptID,
+                    imageData: overridePhotoData ?? item.queryPhotoData,
+                    side: item.side,
+                    limit: 8
+                )
+            }
+        } else if usePairedSide, let companionData = item.companion?.data {
             let leftBytes = item.side == .left ? (overridePhotoData ?? item.queryPhotoData) : companionData
             let rightBytes = item.side == .right ? (overridePhotoData ?? item.queryPhotoData) : companionData
             result = try await matchPhotoPair(leftData: leftBytes, rightData: rightBytes, limit: 8)
@@ -770,6 +814,8 @@ final class AppStore: ObservableObject {
         individualRequest += 1
         dismissDetail()
         escalatedNotSureCases.removeAll()
+        waitingLogs = []
+        isOpeningWaitingLog = false
         requestedEscalatedCaseID = nil
         loadedReviewScope = nil
         notSureQueueError = nil
@@ -801,6 +847,7 @@ final class AppStore: ObservableObject {
 
     func reloadAll() async {
         guard canLoadRecords else { return }
+        await loadWaitingLogs()
         let generation = sessionGeneration
         allRequest += 1
         let allRevision = allRequest
