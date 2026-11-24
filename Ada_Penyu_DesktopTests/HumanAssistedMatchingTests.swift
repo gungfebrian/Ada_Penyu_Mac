@@ -276,7 +276,6 @@ final class HumanAssistedMatchingTests: XCTestCase {
         XCTAssertEqual(reloaded.excludedQueryScaleNumbers, [2])
         XCTAssertEqual(reloaded.customQueryLandmarks?.first?.label, "M1")
 
-        // Confirming same turtle on synced mobile case resolves cleanly
         try await store.resolveNotSureCaseAndSyncBackend(
             syncedCase.id,
             action: .recommend(firstCand.id, note: "Warped scales lock")
@@ -284,7 +283,6 @@ final class HumanAssistedMatchingTests: XCTestCase {
         let afterConfirm = try XCTUnwrap(store.escalatedNotSureCases.first(where: { $0.id == syncedCase.id }))
         XCTAssertEqual(afterConfirm.decision, .recommendedMatch)
 
-        // Verify mock repository contract directly for resolvePendingSighting
         _ = liveStore
         let mockPending = try await mockRepo.listPendingSightings(limit: 10)
         XCTAssertEqual(mockPending.first?.id, logID)

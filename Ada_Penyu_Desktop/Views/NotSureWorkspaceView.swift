@@ -928,6 +928,10 @@ private struct NotSureCaseDetail: View {
             guard searchRequest != nil else { return }
             await runLiveSearch(overridePhotoData: nil, usePairedSide: false)
         }
+        .task(id: item.id) {
+            guard liveSearchAvailable, item.candidates.isEmpty else { return }
+            await runLiveSearch(overridePhotoData: nil, usePairedSide: false)
+        }
         .task(id: isBlinking) {
             guard isBlinking else { return }
             while !Task.isCancelled {
@@ -2288,13 +2292,20 @@ private struct NotSureCaseDetail: View {
             if displayedCandidates.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
-                    Image(systemName: showsRejected ? "arrow.uturn.backward.circle" : "person.crop.circle.badge.questionmark")
-                        .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                    Text(showsRejected ? "No rejected candidates" : "All candidates ruled out")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                        .multilineTextAlignment(.center)
+                    if isSearching {
+                        ProgressView()
+                        Text("Searching the gallery")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                    } else {
+                        Image(systemName: showsRejected ? "arrow.uturn.backward.circle" : "person.crop.circle.badge.questionmark")
+                            .font(.system(size: 22, weight: .light))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                        Text(showsRejected ? "No rejected candidates" : (item.candidates.isEmpty ? "No candidates" : "All candidates ruled out"))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AdaColors.secondaryInk)
+                            .multilineTextAlignment(.center)
+                    }
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2425,7 +2436,7 @@ private struct NotSureCaseDetail: View {
                         }
                     }
                 } else {
-                    Text("No matching candidate left")
+                    Text(isSearching ? "Searching the gallery" : "No matching candidate left")
                         .font(.system(size: 12.5))
                         .foregroundStyle(AdaColors.secondaryInk)
                 }
