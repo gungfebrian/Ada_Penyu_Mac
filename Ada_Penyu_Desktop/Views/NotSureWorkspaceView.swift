@@ -280,10 +280,8 @@ struct NotSureWorkspaceView: View {
                     selectedCaseID = row.id
                 } label: {
                     HStack(spacing: 16) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 24))
+                        ReviewQueueThumbnail(store: store, sightingID: row.id, photo: row.headPhotos.first)
                             .frame(width: 68, height: 68)
-                            .background(AdaColors.surfaceMuted, in: RoundedRectangle(cornerRadius: 12))
                         VStack(alignment: .leading, spacing: 6) {
                             Text(row.location.name).font(.system(size: 15, weight: .semibold))
                             Text("Mobile · \(row.headPhotos.count) photos · \(row.matchResult == nil ? "Waiting to match" : "Saved results")")
@@ -910,7 +908,7 @@ private struct NotSureCaseDetail: View {
         .task(id: "\(item.matchAttemptID?.uuidString ?? "")-\(selectedCandidate?.id ?? "")") {
             guard let candidate = selectedCandidate else { return }
             candidatePhotoError = nil
-            do { try await store.loadNotSureCandidatePhoto(caseID: item.id, candidateID: candidate.id) }
+            do { try await store.prefetchNotSureCandidatePhotos(caseID: item.id, priorityCandidateID: candidate.id) }
             catch { if !Task.isCancelled { candidatePhotoError = error.localizedDescription } }
         }
         .task(id: contourExtractionTrigger) {
@@ -2347,12 +2345,18 @@ private struct NotSureCaseDetail: View {
                 selectedCandidateID = candidate.id
             } label: {
                 HStack(spacing: 10) {
-                    NotSureThumbnail(image: candidate.image, size: 46, radius: 10)
+                    NotSureThumbnail(image: candidate.photoRevision == nil ? candidate.image : store.reviewThumbnails[item.id.uuidString + ":" + candidate.id], size: 46, radius: 10)
+                        .task(id: "\(item.matchAttemptID?.uuidString ?? "")-\(candidate.id)") {
+                            await store.loadNotSureThumbnail(caseID: item.id, candidateID: candidate.id)
+                        }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(candidate.name)
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(AdaColors.ink)
                             .lineLimit(1)
+                        if candidate.photoAvailability == "unknown_legacy" || candidate.photoAvailability == "unavailable" {
+                            Text("Historical photo unavailable").font(.caption2).foregroundStyle(AdaColors.secondaryInk)
+                        }
                         HStack(spacing: 4) {
                             NotSureMetaTag(
                                 title: candidate.evidenceLabel,
@@ -3673,3 +3677,24 @@ private extension TurtlePhotoSide {
     .preferredColorScheme(.light)
 }
 #endif
+
+
+private struct ReviewQueueThumbnail: View {
+    @ObservedObject var store: AppStore
+    let sightingID: UUID
+    let photo: MobileReviewPhoto?
+    @State private var image: NSImage?
+    var body: some View {
+        Group {
+            if let image { Image(nsImage: image).resizable().scaledToFill() }
+            else { Image(systemName: "photo").font(.system(size: 24)).frame(maxWidth: .infinity, maxHeight: .infinity) }
+        }
+        .frame(width: 68, height: 68).clipped()
+        .background(AdaColors.surfaceMuted, in: RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .task(id: "\(photo?.id.uuidString ?? "")-\(photo?.revision ?? "legacy")") {
+            image = nil
+            if let photo { image = await store.loadQueueThumbnail(sightingID: sightingID, photo: photo) }
+        }
+    }
+}

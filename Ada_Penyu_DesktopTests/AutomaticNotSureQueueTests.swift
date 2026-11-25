@@ -66,6 +66,7 @@ final class AutomaticNotSureQueueTests: XCTestCase {
         BackendStub.handler = { request in
             if let auth = APIFixtures.auth(request) { return auth }
             let path = request.url!.path
+            if path.contains("/match-results/") && path.hasSuffix("/photos") { return (404, APIFixtures.data("{}")) }
             calls.append("\(request.httpMethod!) \(path)")
             if path.hasSuffix("/identification") {
                 XCTAssertEqual(request.httpMethod, "PUT")
@@ -115,6 +116,7 @@ final class AutomaticNotSureQueueTests: XCTestCase {
         BackendStub.handler = { request in
             if let auth = APIFixtures.auth(request) { return auth }
             let path = request.url!.path
+            if path.contains("/match-results/") && path.hasSuffix("/photos") { return (404, APIFixtures.data("{}")) }
             if path.hasSuffix("/rematch") {
                 matches += 1
                 return (200, APIFixtures.data(Self.match))
@@ -146,6 +148,7 @@ final class AutomaticNotSureQueueTests: XCTestCase {
         BackendStub.handler = { request in
             if let auth = APIFixtures.auth(request) { return auth }
             let path = request.url!.path
+            if path.contains("/match-results/") && path.hasSuffix("/photos") { return (404, APIFixtures.data("{}")) }
             if path.hasSuffix("/rematch") {
                 let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
                 manifests.append(body.components(separatedBy: "\r\n\r\n").dropFirst().first?.components(separatedBy: "\r\n--").first ?? "")
@@ -268,6 +271,7 @@ final class AutomaticNotSureQueueTests: XCTestCase {
         BackendStub.handler = { request in
             if let auth = APIFixtures.auth(request) { return auth }
             let path = request.url!.path
+            if path.contains("/match-results/") && path.hasSuffix("/photos") { return (404, APIFixtures.data("{}")) }
             if path.hasSuffix("/rematch") {
                 let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
                 let json = body.components(separatedBy: "\r\n\r\n").dropFirst().first?.components(separatedBy: "\r\n--").first ?? ""

@@ -31,10 +31,16 @@ struct MobileReviewPhoto: Decodable, Identifiable {
     let side: TurtlePhotoSide?
     let markingID: UUID?
     let bodySpotID: UUID?
+    var revision: String? = nil
+    var thumbnail: PhotoThumbnail? = nil
+    var expiresAt: Date? = nil
     enum CodingKeys: String, CodingKey {
-        case id, url, side, downloadURL = "download_url", markingID = "marking_id", bodySpotID = "body_spot_id"
+        case id, url, side, revision, thumbnail, expiresAt = "expires_at", downloadURL = "download_url", markingID = "marking_id", bodySpotID = "body_spot_id"
     }
     var fetchPath: String { downloadURL.flatMap { $0.isEmpty ? nil : $0 } ?? url }
+    var reference: PhotoReference {
+        PhotoReference(url: url, id: id, revision: revision, downloadURL: downloadURL, expiresAt: expiresAt, thumbnail: thumbnail)
+    }
 }
 
 struct ReviewQueryInput: Codable, Equatable {
