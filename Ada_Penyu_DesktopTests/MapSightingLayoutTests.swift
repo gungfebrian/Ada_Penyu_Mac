@@ -55,6 +55,102 @@ final class MapSightingLayoutTests: XCTestCase {
         XCTAssertLessThan(region.span.longitudeDelta, 2)
     }
 
+    func testZoomedOutBaliReefPinsMergeIntoSingleNumberedCluster() {
+        let items = [
+            sighting("kuta", turtle: "T1", location: "Kuta Beach", latitude: -8.7180, longitude: 115.1690),
+            sighting("sanur-1", turtle: "T2", location: "Sanur Reef", latitude: -8.6870, longitude: 115.2620),
+            sighting("sanur-2", turtle: "T3", location: "Sanur Reef", latitude: -8.6870, longitude: 115.2620),
+            sighting("penida", turtle: "T4", location: "Nusa Penida", latitude: -8.7280, longitude: 115.5440),
+        ]
+        let zoomedOutRegion = MKCoordinateRegion(
+            center: .init(latitude: -8.71, longitude: 115.30),
+            span: .init(latitudeDelta: 2.5, longitudeDelta: 2.5)
+        )
+
+        let clusters = MapSightingLayout.clusters(for: items, in: zoomedOutRegion)
+        XCTAssertEqual(clusters.count, 1)
+        XCTAssertEqual(clusters.first?.count, 4)
+        XCTAssertEqual(clusters.first?.uniqueTurtleCount, 4)
+        XCTAssertEqual(clusters.first?.distinctLocationCount, 3)
+        XCTAssertEqual(clusters.first?.isMerged, true)
+        XCTAssertEqual(clusters.first?.canSplit, true)
+    }
+
+    func testZoomedInBaliReefPinsSplitIntoSeparateClusters() {
+        let items = [
+            sighting("kuta", turtle: "T1", location: "Kuta Beach", latitude: -8.7180, longitude: 115.1690),
+            sighting("sanur-1", turtle: "T2", location: "Sanur Reef", latitude: -8.6870, longitude: 115.2620),
+            sighting("sanur-2", turtle: "T3", location: "Sanur Reef", latitude: -8.6870, longitude: 115.2620),
+            sighting("penida", turtle: "T4", location: "Nusa Penida", latitude: -8.7280, longitude: 115.5440),
+        ]
+        let zoomedInRegion = MKCoordinateRegion(
+            center: .init(latitude: -8.71, longitude: 115.30),
+            span: .init(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        )
+
+        let clusters = MapSightingLayout.clusters(for: items, in: zoomedInRegion)
+        XCTAssertEqual(clusters.count, 3)
+        XCTAssertTrue(clusters.allSatisfy { !$0.isMerged })
+        XCTAssertEqual(clusters.map(\.count), [1, 2, 1])
+    }
+
+    func testExactSameCoordinateSightingsStayGroupedAtMaxZoom() {
+        let items = [
+            sighting("first", turtle: "X", location: "Sanur Reef", latitude: -8.6870, longitude: 115.2620),
+            sighting("second", turtle: "Y", location: "Sanur Reef", latitude: -8.6870, longitude: 115.2620),
+            sighting("repeat", turtle: "X", location: "Sanur Reef", latitude: -8.6870, longitude: 115.2620),
+        ]
+        let maxZoomRegion = MKCoordinateRegion(
+            center: .init(latitude: -8.6870, longitude: 115.2620),
+            span: .init(latitudeDelta: 0.0002, longitudeDelta: 0.0002)
+        )
+
+        let clusters = MapSightingLayout.clusters(for: items, in: maxZoomRegion)
+        XCTAssertEqual(clusters.count, 1)
+        XCTAssertEqual(clusters.first?.count, 3)
+        XCTAssertEqual(clusters.first?.distinctLocationCount, 1)
+        XCTAssertEqual(clusters.first?.isMerged, false)
+        XCTAssertEqual(clusters.first?.canSplit, false)
+    }
+
+    func testClusteringIgnoresInvalidCoordinatesSafely() {
+        let items = [
+            sighting("valid-1", location: "Kuta", latitude: -8.7180, longitude: 115.1690),
+            sighting("nan", location: "Broken NaN", latitude: .nan, longitude: 115.2),
+            sighting("inf", location: "Broken Inf", latitude: -8.7, longitude: .infinity),
+            sighting("out-of-range", location: "Out of bounds", latitude: 95.0, longitude: 115.2),
+            sighting("valid-2", location: "Sanur", latitude: -8.6870, longitude: 115.2620),
+        ]
+        let region = MKCoordinateRegion(
+            center: .init(latitude: -8.70, longitude: 115.21),
+            span: .init(latitudeDelta: 2.5, longitudeDelta: 2.5)
+        )
+
+        let clusters = MapSightingLayout.clusters(for: items, in: region)
+        XCTAssertEqual(clusters.count, 1)
+        XCTAssertEqual(clusters.first?.sightings.map(\.id), ["valid-1", "valid-2"])
+        XCTAssertTrue(clusters.first?.coordinate.latitude.isFinite == true)
+        XCTAssertTrue(clusters.first?.coordinate.longitude.isFinite == true)
+        XCTAssertTrue(MapSightingLayout.clusters(for: [], in: region).isEmpty)
+    }
+
+    func testClusteringAcrossDateLineMergesWithWrappedCentroid() {
+        let items = [
+            sighting("east", location: "East station", latitude: -16.0, longitude: 179.5),
+            sighting("west", location: "West station", latitude: -16.0, longitude: -179.5),
+        ]
+        let wideRegion = MKCoordinateRegion(
+            center: .init(latitude: -16.0, longitude: 180.0),
+            span: .init(latitudeDelta: 25.0, longitudeDelta: 25.0)
+        )
+
+        let clusters = MapSightingLayout.clusters(for: items, in: wideRegion)
+        XCTAssertEqual(clusters.count, 1)
+        XCTAssertEqual(clusters.first?.count, 2)
+        XCTAssertEqual(clusters.first?.canSplit, true)
+        XCTAssertEqual(abs(clusters.first?.coordinate.longitude ?? 0), 180, accuracy: 0.001)
+    }
+
     private func sighting(
         _ id: String, turtle: String? = nil, location: String,
         latitude: Double = -8.69, longitude: Double = 115.27

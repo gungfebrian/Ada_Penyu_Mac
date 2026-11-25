@@ -40,8 +40,16 @@ struct SidebarView: View {
     @State private var conditionsExpanded = true
     @State private var isAccountPopupPresented = false
 
-    private var isSecondaryWorkspaceSelected: Bool {
-        selection == .sightings || selection == .favorites || selection == .identification
+    static let primarySections: [AppSection] = [
+        .dashboard,
+        .map,
+        .individuals,
+        .favorites,
+        .scientistReview
+    ]
+
+    static func isSectionHighlighted(_ section: AppSection, for activeSelection: AppSection) -> Bool {
+        activeSelection == section || (section == .dashboard && activeSelection == .sightings)
     }
 
     private func localized(_ key: String) -> String {
@@ -53,12 +61,34 @@ struct SidebarView: View {
         (onExpandSidebar ?? onToggleSidebar)()
     }
 
+    private func badgeCount(for section: AppSection) -> Int {
+        switch section {
+        case .favorites:
+            favoriteCount
+        case .scientistReview:
+            notSurePendingCount
+        default:
+            0
+        }
+    }
+
+    private func accessibilityLabel(for section: AppSection) -> String {
+        switch section {
+        case .scientistReview where notSurePendingCount > 0:
+            "\(section.title), \(notSurePendingCount) unidentified"
+        case .favorites where favoriteCount > 0:
+            "\(section.title), \(favoriteCount) saved"
+        default:
+            section.title
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             windowChrome
             brandRow
             VStack(spacing: 6) {
-                ForEach([AppSection.dashboard, .map, .individuals, .scientistReview]) { section in
+                ForEach(Self.primarySections) { section in
                     navigationRow(section)
                 }
             }
@@ -75,16 +105,13 @@ struct SidebarView: View {
                 }
                 .accessibilityHidden(true)
 
-            // Bottom utility rail: cleanly separates secondary tools & Settings from main research workspaces.
+            // Bottom utility rail: cleanly separates Settings from main research workspaces.
             VStack(spacing: 4) {
                 Rectangle()
                     .fill(.white.opacity(0.08))
                     .frame(height: 1)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 6)
-
-                moreWorkspacesControl
-                    .padding(.horizontal, 12)
 
                 navigationRow(.settings)
             }
@@ -99,87 +126,11 @@ struct SidebarView: View {
         .animation(AdaSidebarStyle.animation, value: isCollapsed)
     }
 
-    private var moreWorkspacesControl: some View {
-        ActionDropdown(
-            items: secondaryWorkspaceActions,
-            header: localized("More workspaces"),
-            placement: .aboveLeading,
-            minWidth: 248
-        ) {
-            HStack(spacing: 14) {
-                Image(systemName: "square.stack.3d.up")
-                    .font(.system(size: 16, weight: .medium))
-                    .frame(width: 24)
-                    .overlay(alignment: .topTrailing) {
-                        if isCollapsed && isSecondaryWorkspaceSelected {
-                            Circle()
-                                .fill(.white)
-                                .frame(width: 6, height: 6)
-                                .offset(x: 3, y: -2)
-                        }
-                    }
-                if !isCollapsed {
-                    Text(LocalizedStringKey("More workspaces"))
-                        .font(.system(size: 13.5, weight: isSecondaryWorkspaceSelected ? .semibold : .regular))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .transition(.opacity)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .transition(.opacity)
-                }
-            }
-            .foregroundStyle(.white.opacity(isSecondaryWorkspaceSelected ? 1.0 : 0.85))
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-            .background(isSecondaryWorkspaceSelected ? .white.opacity(0.11) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .clipped()
-        }
-        .help("Sightings, watchlist, and I3S identification")
-        .accessibilityLabel("More workspaces")
-    }
-
-    private var secondaryWorkspaceActions: [DropdownAction] {
-        [
-            DropdownAction(
-                title: localized("Sightings"),
-                subtitle: localized("Encounter log & timeline"),
-                icon: AppSection.sightings.icon,
-                selected: selection == .sightings,
-                action: {
-                    selection = .sightings
-                    expandIfCollapsed()
-                }
-            ),
-            DropdownAction(
-                title: localized("Watchlist"),
-                subtitle: localized("Tracked sea turtles"),
-                icon: AppSection.favorites.icon,
-                badge: favoriteCount > 0 ? "\(favoriteCount)" : nil,
-                selected: selection == .favorites,
-                action: {
-                    selection = .favorites
-                    expandIfCollapsed()
-                }
-            ),
-            DropdownAction(
-                title: localized("I3S Pattern ID"),
-                subtitle: localized("Spot-matching workbench"),
-                icon: AppSection.identification.icon,
-                selected: selection == .identification,
-                action: {
-                    selection = .identification
-                    expandIfCollapsed()
-                }
-            )
-        ]
-    }
-
     private func navigationRow(_ section: AppSection) -> some View {
-        Button {
+        let count = badgeCount(for: section)
+        let isSelected = Self.isSectionHighlighted(section, for: selection)
+
+        return Button {
             if section == .settings, let onOpenProductSettings {
                 onOpenProductSettings()
             } else {
@@ -192,7 +143,7 @@ struct SidebarView: View {
                     .font(.system(size: 17))
                     .frame(width: 24)
                     .overlay(alignment: .topTrailing) {
-                        if section == .scientistReview && isCollapsed && notSurePendingCount > 0 {
+                        if isCollapsed && count > 0 {
                             Circle()
                                 .fill(.white)
                                 .frame(width: 7, height: 7)
@@ -206,9 +157,9 @@ struct SidebarView: View {
                         .lineLimit(1)
                         .transition(.opacity)
                     Spacer(minLength: 0)
-                    if section == .scientistReview && notSurePendingCount > 0 {
-                        Text("\(notSurePendingCount)")
-                            .font(.system(size: 10, weight: .bold))
+                    if count > 0 {
+                        Text("\(count)")
+                            .font(.system(size: 10, weight: .bold).monospacedDigit())
                             .foregroundStyle(AdaColors.navy)
                             .padding(.horizontal, 7)
                             .frame(height: 18)
@@ -221,7 +172,7 @@ struct SidebarView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .background(selection == section || (section == .individuals && (selection == .sightings || selection == .favorites)) ? .white.opacity(0.1) : .clear)
+            .background(isSelected ? .white.opacity(0.1) : .clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .clipped()
             .contentShape(Rectangle())
@@ -229,10 +180,8 @@ struct SidebarView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 12)
         .help(section.title)
-        .accessibilityLabel(section == .scientistReview && notSurePendingCount > 0
-            ? "\(section.title), \(notSurePendingCount) unidentified"
-            : section.title)
-        .accessibilityAddTraits(selection == section ? .isSelected : [])
+        .accessibilityLabel(accessibilityLabel(for: section))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     // The sidebar highlights a species only while the user is on the

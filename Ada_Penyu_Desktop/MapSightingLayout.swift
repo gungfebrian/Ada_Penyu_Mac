@@ -20,10 +20,49 @@ enum MapSightingLayout {
         var turtleCount: Int { Set(sightings.map(\.turtleID)).count }
     }
 
+    struct Cluster: Identifiable {
+        let id: String
+        let coordinate: CLLocationCoordinate2D
+        let sightings: [Sighting]
+        let distinctLocationCount: Int
+
+        var count: Int { sightings.count }
+        var uniqueTurtleCount: Int { Set(sightings.map(\.turtleID)).count }
+        var primarySighting: Sighting { sightings[0] }
+        var isMerged: Bool { distinctLocationCount > 1 }
+
+        var coordinateSpan: MKCoordinateSpan {
+            let latitudes = sightings.map(\.coordinate.latitude)
+            let longitudes = sightings.map(\.coordinate.longitude)
+            guard let minLat = latitudes.min(), let maxLat = latitudes.max(),
+                  let minLon = longitudes.min(), let maxLon = longitudes.max() else {
+                return .init(latitudeDelta: 0, longitudeDelta: 0)
+            }
+            let rawLonDelta = maxLon - minLon
+            let wrappedLonDelta: Double
+            if rawLonDelta > 180 {
+                let shifted = longitudes.map { $0 < 0 ? $0 + 360 : $0 }
+                wrappedLonDelta = (shifted.max() ?? maxLon) - (shifted.min() ?? minLon)
+            } else {
+                wrappedLonDelta = rawLonDelta
+            }
+            return .init(latitudeDelta: maxLat - minLat, longitudeDelta: wrappedLonDelta)
+        }
+
+        /// True when sightings span distinct coordinates far enough apart to split on zoom-in.
+        var canSplit: Bool {
+            let span = coordinateSpan
+            return span.latitudeDelta > 0.0005 || span.longitudeDelta > 0.0005
+        }
+    }
+
     static let defaultRegion = MKCoordinateRegion(
         center: .init(latitude: -8.72, longitude: 115.20),
         span: .init(latitudeDelta: 0.25, longitudeDelta: 0.32)
     )
+
+    /// Screen-space center-to-center distance (pt) below which pins merge at the current zoom.
+    static let clusterDistancePoints: Double = 76.0
 
     static func showsCountryMarkers(in region: MKCoordinateRegion) -> Bool {
         let latitudeScale = cos(region.center.latitude * .pi / 180)
@@ -38,6 +77,108 @@ enum MapSightingLayout {
             let coordinate = sighting.coordinate
             guard seen.insert(coordinate).inserted, let records = groups[coordinate] else { return nil }
             return Location(coordinate: coordinate, sightings: records)
+        }
+    }
+
+    static func clusters(
+        for sightings: [Sighting],
+        in region: MKCoordinateRegion,
+        mapSize: CGSize = CGSize(width: 900, height: 640)
+    ) -> [Cluster] {
+        let atomicLocations = locations(for: sightings)
+        guard !atomicLocations.isEmpty else { return [] }
+
+        let safeSize: CGSize = (mapSize.width > 0 && mapSize.height > 0 && mapSize.width.isFinite && mapSize.height.isFinite)
+            ? mapSize
+            : CGSize(width: 900, height: 640)
+        let aspect = Double(safeSize.width) / Double(safeSize.height)
+        let clampedLat = min(85.0, max(-85.0, region.center.latitude))
+        let cosLat = max(cos(clampedLat * .pi / 180), 0.1)
+        let rawLatDelta = region.span.latitudeDelta.isFinite && region.span.latitudeDelta > 0 ? region.span.latitudeDelta : 0.25
+        let rawLonDelta = region.span.longitudeDelta.isFinite && region.span.longitudeDelta > 0 ? region.span.longitudeDelta : 0.32
+
+        // Match MapKit's aspect-ratio fit so square test spans and live camera regions scale consistently.
+        let effectiveLonDelta = min(360.0, max(rawLonDelta, rawLatDelta * aspect / cosLat))
+        let effectiveLatDelta = min(170.0, max(rawLatDelta, rawLonDelta / aspect * cosLat))
+
+        let pointsPerDegreeLat = Double(safeSize.height) / effectiveLatDelta
+        let pointsPerDegreeLon = Double(safeSize.width) / effectiveLonDelta
+        let threshold = clusterDistancePoints
+
+        var parents = Array(atomicLocations.indices)
+        func root(_ index: Int) -> Int {
+            var current = index
+            while parents[current] != current {
+                parents[current] = parents[parents[current]]
+                current = parents[current]
+            }
+            return current
+        }
+
+        struct Cell: Hashable { let x: Int; let y: Int }
+        let gridColumns = max(1, Int(ceil((360.0 * pointsPerDegreeLon) / threshold)))
+        func wrappedColumn(_ raw: Int) -> Int {
+            let mod = raw % gridColumns
+            return mod < 0 ? mod + gridColumns : mod
+        }
+
+        var grid: [Cell: [Int]] = [:]
+        grid.reserveCapacity(atomicLocations.count)
+
+        for index in atomicLocations.indices {
+            let coord = atomicLocations[index].coordinate
+            let cellX = Int(floor(((coord.longitude + 180.0) * pointsPerDegreeLon) / threshold))
+            let cellY = Int(floor(((coord.latitude + 90.0) * pointsPerDegreeLat) / threshold))
+            let neighborColumns = gridColumns <= 3
+                ? Array(0..<gridColumns)
+                : [wrappedColumn(cellX - 1), wrappedColumn(cellX), wrappedColumn(cellX + 1)]
+
+            for wrappedX in neighborColumns {
+                for dy in -1...1 {
+                    let neighborCell = Cell(x: wrappedX, y: cellY + dy)
+                    for other in grid[neighborCell] ?? [] {
+                        let otherCoord = atomicLocations[other].coordinate
+                        let dLat = abs(coord.latitude - otherCoord.latitude) * pointsPerDegreeLat
+                        let rawDLon = abs(coord.longitude - otherCoord.longitude)
+                        let dLon = min(rawDLon, 360.0 - rawDLon) * pointsPerDegreeLon
+                        if hypot(dLat, dLon) <= threshold {
+                            let a = root(index)
+                            let b = root(other)
+                            if a != b { parents[max(a, b)] = min(a, b) }
+                        }
+                    }
+                }
+            }
+
+            let ownCell = Cell(x: wrappedColumn(cellX), y: cellY)
+            grid[ownCell, default: []].append(index)
+        }
+
+        let groupedIndices = Dictionary(grouping: atomicLocations.indices, by: root)
+            .values
+            .map { $0.sorted() }
+            .sorted { $0[0] < $1[0] }
+
+        return groupedIndices.map { indices in
+            let members = indices.map { atomicLocations[$0] }
+            let mergedSightings = members.flatMap(\.sightings)
+            if members.count == 1, let only = members.first {
+                return Cluster(
+                    id: "loc-\(only.coordinate.latitude)-\(only.coordinate.longitude)",
+                    coordinate: only.mapCoordinate,
+                    sightings: mergedSightings,
+                    distinctLocationCount: 1
+                )
+            }
+
+            let centroid = weightedCentroid(for: members)
+            let sortedIDs = mergedSightings.map(\.id).sorted()
+            return Cluster(
+                id: "cluster-\(mergedSightings.count)-\(stableHashHex(sortedIDs))",
+                coordinate: centroid,
+                sightings: mergedSightings,
+                distinctLocationCount: members.count
+            )
         }
     }
 
@@ -60,7 +201,7 @@ enum MapSightingLayout {
         }.sorted { $0.label < $1.label }
     }
 
-    static func region(containing sightings: [Sighting]) -> MKCoordinateRegion {
+    static func region(containing sightings: [Sighting], minimumSpan: Double = 0.08) -> MKCoordinateRegion {
         let coordinates = sightings.map(\.coordinate).filter { isValid($0) }
         guard let south = coordinates.map(\.latitude).min(), let north = coordinates.map(\.latitude).max() else {
             return defaultRegion
@@ -84,8 +225,8 @@ enum MapSightingLayout {
         let longitudeCenter = (first + longitudeWidth / 2).truncatingRemainder(dividingBy: 360)
         return MKCoordinateRegion(
             center: .init(latitude: (south + north) / 2, longitude: longitudeCenter > 180 ? longitudeCenter - 360 : longitudeCenter),
-            span: .init(latitudeDelta: min(170, max((north - south) * 1.42, 0.08)),
-                        longitudeDelta: min(360, max(longitudeWidth * 1.42, 0.08)))
+            span: .init(latitudeDelta: min(170, max((north - south) * 1.42, minimumSpan)),
+                        longitudeDelta: min(360, max(longitudeWidth * 1.42, minimumSpan)))
         )
     }
 
@@ -126,7 +267,47 @@ enum MapSightingLayout {
     }
 
     private static func isValid(_ coordinate: TurtleCoordinate) -> Bool {
-        CLLocationCoordinate2DIsValid(.init(latitude: coordinate.latitude, longitude: coordinate.longitude))
+        coordinate.latitude.isFinite
+            && coordinate.longitude.isFinite
+            && CLLocationCoordinate2DIsValid(.init(latitude: coordinate.latitude, longitude: coordinate.longitude))
+    }
+
+    private static func weightedCentroid(for locations: [Location]) -> CLLocationCoordinate2D {
+        var totalWeight = 0.0
+        var weightedLat = 0.0
+        var weightedSinLon = 0.0
+        var weightedCosLon = 0.0
+
+        for location in locations {
+            let weight = Double(max(1, location.sightings.count))
+            totalWeight += weight
+            weightedLat += location.coordinate.latitude * weight
+            let radLon = location.coordinate.longitude * .pi / 180.0
+            weightedSinLon += sin(radLon) * weight
+            weightedCosLon += cos(radLon) * weight
+        }
+
+        let avgLat = weightedLat / max(1.0, totalWeight)
+        let avgLon: Double
+        if weightedSinLon == 0 && weightedCosLon == 0 {
+            avgLon = locations[0].coordinate.longitude
+        } else {
+            avgLon = atan2(weightedSinLon, weightedCosLon) * 180.0 / .pi
+        }
+        return CLLocationCoordinate2D(latitude: avgLat, longitude: avgLon)
+    }
+
+    private static func stableHashHex(_ ids: [String]) -> String {
+        var hash: UInt64 = 14695981039346656037
+        for id in ids {
+            for byte in id.utf8 {
+                hash ^= UInt64(byte)
+                hash = hash &* 1099511628211
+            }
+            hash ^= 0xFF
+            hash = hash &* 1099511628211
+        }
+        return String(hash, radix: 16)
     }
 
     private static func distance(from center: CLLocationCoordinate2D, to coordinate: TurtleCoordinate) -> Double {

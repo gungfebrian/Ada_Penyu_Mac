@@ -3,8 +3,8 @@ import SwiftUI
 
 struct MapPageView: View {
     enum DisplayMode: String, CaseIterable, Identifiable {
-        case h3Grid = "H3 Grid"
         case pins = "Pins"
+        case h3Grid = "H3 Grid"
         var id: String { rawValue }
     }
 
@@ -19,17 +19,17 @@ struct MapPageView: View {
     var onFocusConsumed: (() -> Void)? = nil
     var onOpenSighting: ((Sighting) -> Void)? = nil
 
-    @State private var displayMode: DisplayMode = .h3Grid
+    @State private var displayMode: DisplayMode = .pins
     @State private var selectedSightingID: String?
+    @State private var selectedClusterSightings: [Sighting] = []
     @State private var selectedH3Index: UInt64?
     @State private var consumedFocusID: String?
     @State private var hasFittedInitial = false
     @State private var cameraPosition: MapCameraPosition = .region(MapSightingLayout.defaultRegion)
     @State private var visibleRegion = MapSightingLayout.defaultRegion
     @State private var debouncedRegion = MapSightingLayout.defaultRegion
+    @State private var mapSize = CGSize(width: 900, height: 640)
     @State private var cameraDebounceTask: Task<Void, Never>?
-    @State private var drilledCountryID: String?
-    @State private var drilledRegion: MKCoordinateRegion?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
 
@@ -70,20 +70,16 @@ struct MapPageView: View {
             .count
     }
 
-    private var countryGroups: [MapSightingLayout.Country] { MapSightingLayout.countries(for: sightings) }
-    private var drilledCountry: MapSightingLayout.Country? { countryGroups.first { $0.id == drilledCountryID } }
-    private var showsCountries: Bool {
-        displayMode == .pins && drilledCountry == nil && MapSightingLayout.showsCountryMarkers(in: debouncedRegion)
+    private var pinClusters: [MapSightingLayout.Cluster] {
+        guard !showsH3HexGrid else { return [] }
+        let computed = MapSightingLayout.clusters(for: sightings, in: debouncedRegion, mapSize: mapSize)
+        guard let selectedSightingID else { return computed }
+        return computed.filter { !$0.sightings.contains(where: { $0.id == selectedSightingID }) }
+            + computed.filter { $0.sightings.contains(where: { $0.id == selectedSightingID }) }
     }
 
-    private var pinLocations: [MapSightingLayout.Location] {
-        guard !showsH3HexGrid else { return [] }
-        if let drilledCountry { return MapSightingLayout.locations(for: drilledCountry.sightings) }
-        if showsCountries {
-            let groupedIDs = Set(countryGroups.flatMap { $0.sightings.map(\.id) })
-            return MapSightingLayout.locations(for: sightings.filter { !groupedIDs.contains($0.id) })
-        }
-        return MapSightingLayout.locations(for: sightings)
+    private var hasMergedClusters: Bool {
+        pinClusters.contains(where: \.isMerged)
     }
 
     private var related: [Sighting] {
@@ -101,108 +97,143 @@ struct MapPageView: View {
     }
 
     var body: some View {
-        MapReader { mapProxy in
-            Map(position: $cameraPosition) {
-                if showsH3HexGrid {
-                    ForEach(h3Cells) { cell in
-                        let isSelected = cell.index == selectedH3Index
-                        MapPolygon(coordinates: cell.boundary)
-                            .foregroundStyle(h3FillColor(for: cell, selected: isSelected))
-                            .stroke(
-                                isSelected ? Color.white : Color.white.opacity(0.68),
-                                lineWidth: isSelected ? 2.6 : 1.15
-                            )
-
-                        Annotation(cell.countryDisplayName(for: activeLanguage), coordinate: cell.center, anchor: .center) {
-                            Button {
-                                if selectedH3Index == cell.index {
-                                    zoomIntoCell(cell)
-                                } else {
-                                    selectedH3Index = cell.index
-                                    selectedSightingID = nil
-                                }
-                            } label: {
-                                H3CellBadge(
-                                    cell: cell,
-                                    countryLabel: cell.resolution <= 3 ? cell.countryDisplayName(for: activeLanguage) : nil,
-                                    isSelected: isSelected
+        GeometryReader { geometry in
+            MapReader { mapProxy in
+                Map(position: $cameraPosition) {
+                    if showsH3HexGrid {
+                        ForEach(h3Cells) { cell in
+                            let isSelected = cell.index == selectedH3Index
+                            MapPolygon(coordinates: cell.boundary)
+                                .foregroundStyle(h3FillColor(for: cell, selected: isSelected))
+                                .stroke(
+                                    isSelected ? Color.white : Color.white.opacity(0.68),
+                                    lineWidth: isSelected ? 2.6 : 1.15
                                 )
-                            }
-                            .buttonStyle(.plain)
-                            .help("\(cell.countryDisplayName(for: activeLanguage)) · \(cell.uniqueTurtleCount) unique turtles · \(cell.sightingCount) sightings (H3 Res \(cell.resolution))")
-                            .accessibilityLabel("\(cell.countryDisplayName(for: activeLanguage)), \(cell.uniqueTurtleCount) unique turtles, \(cell.sightingCount) sightings")
-                            .accessibilityHint("Inspect this H3 cell or click again to zoom in")
-                        }
-                        .annotationTitles(.hidden)
-                    }
-                } else {
-                    if !showsCountries, selectedTurtleTrack.count >= 2 {
-                        MapPolyline(coordinates: selectedTurtleTrack)
-                            .stroke(AdaColors.navy.opacity(0.65), style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [6, 5]))
-                    }
 
-                    if showsCountries {
-                        ForEach(countryGroups) { country in
-                            Annotation(country.label, coordinate: country.anchor, anchor: .bottom) {
-                                Button { zoomToCountry(country) } label: {
-                                    MapCountryMarker(label: country.label, sightings: country.sightings.count)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Show \(country.turtleCount) turtles observed in \(country.label)")
-                                .accessibilityLabel("\(country.label), \(country.sightings.count) loaded sightings")
-                                .accessibilityHint("Zoom into this country")
-                            }
-                            .annotationTitles(.hidden)
-                        }
-                    }
-
-                    ForEach(pinLocations) { location in
-                        if let sighting = representative(for: location) {
-                            Annotation(sighting.location, coordinate: location.mapCoordinate, anchor: .bottom) {
+                            Annotation(cell.countryDisplayName(for: activeLanguage), coordinate: cell.center, anchor: .center) {
                                 Button {
-                                    selectedH3Index = nil
-                                    selectedSightingID = sighting.id
+                                    if selectedH3Index == cell.index {
+                                        zoomIntoCell(cell)
+                                    } else {
+                                        selectedH3Index = cell.index
+                                        selectedSightingID = nil
+                                        selectedClusterSightings = []
+                                    }
                                 } label: {
-                                    TurtleMapPin(
-                                        state: pinState(for: sighting),
-                                        count: Set(location.sightings.map(\.turtleID)).count
+                                    H3CellBadge(
+                                        cell: cell,
+                                        countryLabel: cell.resolution <= 3 ? cell.countryDisplayName(for: activeLanguage) : nil,
+                                        isSelected: isSelected
                                     )
                                 }
                                 .buttonStyle(.plain)
-                                .help("\(sighting.displayName) · \(sighting.location)")
-                                .accessibilityLabel("\(sighting.displayName), \(sighting.date), \(sighting.location)")
-                                .accessibilityHint(location.sightings.count > 1 ? "Open sightings at this location" : "Open sighting overview")
+                                .help("\(cell.countryDisplayName(for: activeLanguage)) · \(cell.uniqueTurtleCount) unique turtles · \(cell.sightingCount) sightings (H3 Res \(cell.resolution))")
+                                .accessibilityLabel("\(cell.countryDisplayName(for: activeLanguage)), \(cell.uniqueTurtleCount) unique turtles, \(cell.sightingCount) sightings")
+                                .accessibilityHint("Inspect this H3 cell or click again to zoom in")
                             }
                             .annotationTitles(.hidden)
                         }
+                    } else {
+                        if selectedTurtleTrack.count >= 2 {
+                            MapPolyline(coordinates: selectedTurtleTrack)
+                                .stroke(AdaColors.navy.opacity(0.65), style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [6, 5]))
+                        }
+
+                        ForEach(pinClusters) { cluster in
+                            if cluster.isMerged {
+                                Annotation("\(cluster.count) sightings", coordinate: cluster.coordinate, anchor: .center) {
+                                    Button {
+                                        handleClusterTap(cluster)
+                                    } label: {
+                                        ClusterMapPin(
+                                            count: cluster.count,
+                                            isSelected: isClusterSelected(cluster)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(clusterHelpText(for: cluster))
+                                    .accessibilityLabel("\(cluster.count) sightings across \(cluster.distinctLocationCount) locations")
+                                    .accessibilityHint(canZoomToSplit(cluster) ? "Zoom in to expand cluster" : "Open sightings at this location")
+                                }
+                                .annotationTitles(.hidden)
+                            } else if let sighting = representative(for: cluster) {
+                                Annotation(sighting.location, coordinate: cluster.coordinate, anchor: .bottom) {
+                                    Button {
+                                        selectSingleLocationCluster(cluster, sighting: sighting)
+                                    } label: {
+                                        TurtleMapPin(
+                                            state: pinState(for: sighting),
+                                            count: cluster.count
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("\(sighting.displayName) · \(sighting.location)")
+                                    .accessibilityLabel("\(sighting.displayName), \(sighting.date), \(sighting.location)")
+                                    .accessibilityHint(cluster.count > 1 ? "Open sightings at this location" : "Open sighting overview")
+                                }
+                                .annotationTitles(.hidden)
+                            }
+                        }
+                    }
+                }
+                .onTapGesture { screenPoint in
+                    guard showsH3HexGrid,
+                          let res = activeH3Resolution,
+                          let coord = mapProxy.convert(screenPoint, from: .local),
+                          let tappedIndex = H3SpatialIndex.cell(for: coord, resolution: res) else {
+                        return
+                    }
+                    if h3Cells.contains(where: { $0.index == tappedIndex }) {
+                        selectedH3Index = tappedIndex
+                        selectedSightingID = nil
+                        selectedClusterSightings = []
+                    } else {
+                        selectedH3Index = nil
                     }
                 }
             }
-            .onTapGesture { screenPoint in
-                guard showsH3HexGrid,
-                      let res = activeH3Resolution,
-                      let coord = mapProxy.convert(screenPoint, from: .local),
-                      let tappedIndex = H3SpatialIndex.cell(for: coord, resolution: res) else {
-                    return
+            .onAppear {
+                if geometry.size.width > 0 && geometry.size.height > 0 {
+                    mapSize = geometry.size
                 }
-                if h3Cells.contains(where: { $0.index == tappedIndex }) {
-                    selectedH3Index = tappedIndex
-                    selectedSightingID = nil
-                } else {
-                    selectedH3Index = nil
+            }
+            .onChange(of: geometry.size) { _, newSize in
+                if newSize.width > 0 && newSize.height > 0 {
+                    mapSize = newSize
                 }
             }
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
         .mapControls { MapCompass() }
+        .onMapCameraChange(frequency: .continuous) { context in
+            let nextRegion = context.region
+            visibleRegion = nextRegion
+            if !showsH3HexGrid {
+                let latRatio = max(
+                    nextRegion.span.latitudeDelta / max(debouncedRegion.span.latitudeDelta, 1e-6),
+                    debouncedRegion.span.latitudeDelta / max(nextRegion.span.latitudeDelta, 1e-6)
+                )
+                let lonRatio = max(
+                    nextRegion.span.longitudeDelta / max(debouncedRegion.span.longitudeDelta, 1e-6),
+                    debouncedRegion.span.longitudeDelta / max(nextRegion.span.longitudeDelta, 1e-6)
+                )
+                if max(latRatio, lonRatio) >= 1.18 {
+                    debouncedRegion = nextRegion
+                }
+            }
+        }
         .onMapCameraChange(frequency: .onEnd) { context in
             let nextRegion = context.region
             let byUser = cameraPosition.positionedByUser
             visibleRegion = nextRegion
             cameraDebounceTask?.cancel()
-            cameraDebounceTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(110))
-                guard !Task.isCancelled else { return }
+            if showsH3HexGrid {
+                cameraDebounceTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(70))
+                    guard !Task.isCancelled else { return }
+                    applySettledRegion(nextRegion, positionedByUser: byUser)
+                }
+            } else {
                 applySettledRegion(nextRegion, positionedByUser: byUser)
             }
         }
@@ -254,6 +285,7 @@ struct MapPageView: View {
             } else {
                 if activeH3Resolution != nil {
                     selectedSightingID = nil
+                    selectedClusterSightings = []
                 }
             }
         }
@@ -261,7 +293,6 @@ struct MapPageView: View {
 
     private func applySettledRegion(_ region: MKCoordinateRegion, positionedByUser: Bool) {
         let previousResolution = activeH3Resolution
-        let previouslyShowingCountries = showsCountries
         debouncedRegion = region
 
         if activeH3Resolution != previousResolution {
@@ -269,17 +300,13 @@ struct MapPageView: View {
         }
         if activeH3Resolution != nil {
             selectedSightingID = nil
-        }
-
-        if positionedByUser {
-            returnToCountriesIfZoomedOut(region)
-            if !previouslyShowingCountries, showsCountries { selectedSightingID = nil }
-        } else if drilledCountry != nil {
-            drilledRegion = drilledRegion.map {
-                MKCoordinateRegion(center: $0.center, span: .init(
-                    latitudeDelta: max($0.span.latitudeDelta, region.span.latitudeDelta),
-                    longitudeDelta: max($0.span.longitudeDelta, region.span.longitudeDelta)
-                ))
+            selectedClusterSightings = []
+        } else if positionedByUser, let selectedSightingID {
+            let updatedClusters = MapSightingLayout.clusters(for: sightings, in: region, mapSize: mapSize)
+            if let containing = updatedClusters.first(where: { $0.sightings.contains(where: { $0.id == selectedSightingID }) }),
+               containing.isMerged {
+                self.selectedSightingID = nil
+                selectedClusterSightings = []
             }
         }
     }
@@ -368,6 +395,7 @@ struct MapPageView: View {
                                 action: {
                                     selectedH3Index = nil
                                     selectedSightingID = nil
+                                    selectedClusterSightings = []
                                     if preset.id == "world" {
                                         fitAll()
                                     } else {
@@ -389,11 +417,9 @@ struct MapPageView: View {
                     Button("Clear") {
                         selectedH3Index = nil
                         selectedSightingID = nil
+                        selectedClusterSightings = []
                     }
                     .buttonStyle(AdaPillButtonStyle())
-                } else if drilledCountry != nil {
-                    Button("All countries", action: fitAll)
-                        .buttonStyle(AdaPillButtonStyle())
                 }
 
                 ConditionPicker(selection: $selectedCondition)
@@ -439,8 +465,10 @@ struct MapPageView: View {
         if let res = activeH3Resolution {
             return "H3 hex aggregation (Res \(res)) · Tap any hexagon to inspect or zoom in."
         }
-        if let drilledCountry { return "\(drilledCountry.label) · \(drilledCountry.sightings.count) loaded sightings" }
-        return showsCountries ? "Select a country to see individual sightings." : "Detailed reef markers · Select a penyu pin to trace resightings."
+        if hasMergedClusters {
+            return "Pin clusters · Click a numbered cluster to zoom in, or a penyu pin to inspect."
+        }
+        return "Detailed reef markers · Select a penyu pin to trace resightings."
     }
 
     // MARK: - Bottom-Right Zoom Controls
@@ -654,7 +682,10 @@ struct MapPageView: View {
 
     private func inspector(for sighting: Sighting) -> some View {
         let turtle = turtles.first { $0.id == sighting.turtleID } ?? sighting.turtleReference
-        let otherTurtlesHere = sightings.filter { $0.coordinate == sighting.coordinate && $0.turtleID != sighting.turtleID }
+        let clusterPool = selectedClusterSightings.isEmpty
+            ? sightings.filter { $0.coordinate == sighting.coordinate }
+            : selectedClusterSightings
+        let otherTurtlesHere = clusterPool.filter { $0.id != sighting.id && $0.turtleID != sighting.turtleID }
         let resolvedCountry = FrontendCountryResolver.shared.resolve(
             latitude: sighting.coordinate.latitude,
             longitude: sighting.coordinate.longitude
@@ -664,7 +695,10 @@ struct MapPageView: View {
             HStack {
                 Text("Sighting Overview").font(.system(size: 16, weight: .semibold))
                 Spacer()
-                Button { selectedSightingID = nil } label: {
+                Button {
+                    selectedSightingID = nil
+                    selectedClusterSightings = []
+                } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 28, height: 28)
@@ -788,10 +822,11 @@ struct MapPageView: View {
                         Text("High").font(.system(size: 9.5)).foregroundStyle(AdaColors.secondaryInk)
                     }
                 }
-            } else if showsCountries {
-                legendItem("Country · loaded sightings", fill: AdaColors.navy)
             } else {
-                HStack(spacing: 18) {
+                HStack(spacing: 16) {
+                    if hasMergedClusters {
+                        clusterLegendItem("Cluster")
+                    }
                     legendItem("Selected sighting", fill: AdaColors.navy)
                     legendItem("Same turtle", fill: AdaColors.secondaryInk)
                     legendItem("Other turtles", fill: .white)
@@ -811,6 +846,18 @@ struct MapPageView: View {
         .shadow(color: AdaColors.navy.opacity(0.06), radius: 8, y: 2)
     }
 
+    private func clusterLegendItem(_ title: String) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(AdaColors.navy)
+                .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+                .overlay(Circle().strokeBorder(AdaColors.navy.opacity(0.25), lineWidth: 0.5))
+                .frame(width: 11, height: 11)
+            Text(title).font(.system(size: 10.5))
+        }
+        .foregroundStyle(AdaColors.secondaryInk)
+    }
+
     private func legendItem(_ title: String, fill: Color) -> some View {
         HStack(spacing: 6) {
             Circle().fill(fill)
@@ -823,10 +870,51 @@ struct MapPageView: View {
 
     // MARK: - Helpers & Camera Navigation
 
-    private func representative(for location: MapSightingLayout.Location) -> Sighting? {
-        location.sightings.first { $0.id == selectedSightingID }
-            ?? location.sightings.first { $0.turtleID == selected?.turtleID }
-            ?? location.sightings.first
+    private func representative(for cluster: MapSightingLayout.Cluster) -> Sighting? {
+        cluster.sightings.first { $0.id == selectedSightingID }
+            ?? cluster.sightings.first { $0.turtleID == selected?.turtleID }
+            ?? cluster.sightings.first
+    }
+
+    private func isClusterSelected(_ cluster: MapSightingLayout.Cluster) -> Bool {
+        guard let selectedSightingID else { return false }
+        return cluster.sightings.contains(where: { $0.id == selectedSightingID })
+    }
+
+    private func clusterHelpText(for cluster: MapSightingLayout.Cluster) -> String {
+        let turtleLabel = cluster.uniqueTurtleCount == 1 ? "1 turtle" : "\(cluster.uniqueTurtleCount) turtles"
+        return "\(cluster.count) sightings · \(turtleLabel)"
+    }
+
+    private func canZoomToSplit(_ cluster: MapSightingLayout.Cluster) -> Bool {
+        guard cluster.canSplit else { return false }
+        let atStreetLevel = visibleRegion.span.latitudeDelta <= 0.0012 && visibleRegion.span.longitudeDelta <= 0.0012
+        return !atStreetLevel
+    }
+
+    private func handleClusterTap(_ cluster: MapSightingLayout.Cluster) {
+        selectedH3Index = nil
+        if canZoomToSplit(cluster) {
+            selectedSightingID = nil
+            selectedClusterSightings = []
+            var target = MapSightingLayout.region(containing: cluster.sightings, minimumSpan: 0.003)
+            if target.span.latitudeDelta >= visibleRegion.span.latitudeDelta * 0.7
+                && target.span.longitudeDelta >= visibleRegion.span.longitudeDelta * 0.7 {
+                target.span = MKCoordinateSpan(
+                    latitudeDelta: max(0.003, visibleRegion.span.latitudeDelta * 0.45),
+                    longitudeDelta: max(0.003, visibleRegion.span.longitudeDelta * 0.45)
+                )
+            }
+            move(to: target)
+        } else if let sighting = representative(for: cluster) {
+            selectSingleLocationCluster(cluster, sighting: sighting)
+        }
+    }
+
+    private func selectSingleLocationCluster(_ cluster: MapSightingLayout.Cluster, sighting: Sighting) {
+        selectedH3Index = nil
+        selectedSightingID = sighting.id
+        selectedClusterSightings = cluster.sightings
     }
 
     private func pinState(for sighting: Sighting) -> TurtleMapPin.PinState {
@@ -835,8 +923,10 @@ struct MapPageView: View {
     }
 
     private func updateSightings() {
-        if selected == nil { selectedSightingID = nil }
-        if drilledCountry == nil { clearDrillDown() }
+        if selected == nil {
+            selectedSightingID = nil
+            selectedClusterSightings = []
+        }
         if let focusTurtleID, consumedFocusID != focusTurtleID {
             let latestMatch = sightings
                 .filter { $0.turtleID == focusTurtleID }
@@ -863,8 +953,8 @@ struct MapPageView: View {
     private func focus(_ sighting: Sighting) {
         selectedH3Index = nil
         selectedSightingID = sighting.id
-        if let drilledCountry, !drilledCountry.sightings.contains(where: { $0.id == sighting.id }) {
-            clearDrillDown()
+        if !selectedClusterSightings.contains(where: { $0.id == sighting.id }) {
+            selectedClusterSightings = []
         }
         move(to: MKCoordinateRegion(
             center: .init(latitude: sighting.coordinate.latitude, longitude: sighting.coordinate.longitude),
@@ -876,50 +966,23 @@ struct MapPageView: View {
     private func zoomIntoCell(_ cell: H3CellAggregate) {
         selectedH3Index = nil
         selectedSightingID = nil
+        selectedClusterSightings = []
         move(to: cell.drillInRegion)
-    }
-
-    private func zoomToCountry(_ country: MapSightingLayout.Country) {
-        selectedSightingID = nil
-        selectedH3Index = nil
-        drilledCountryID = country.id
-        drilledRegion = country.region
-        move(to: country.region)
     }
 
     private func zoom(by factor: Double) {
         let span = visibleRegion.span
         let target = MKCoordinateRegion(
             center: visibleRegion.center,
-            span: .init(latitudeDelta: min(170, max(0.005, span.latitudeDelta * factor)),
-                        longitudeDelta: min(360, max(0.005, span.longitudeDelta * factor)))
+            span: .init(latitudeDelta: min(170, max(0.003, span.latitudeDelta * factor)),
+                        longitudeDelta: min(360, max(0.003, span.longitudeDelta * factor)))
         )
-        if factor > 1 {
-            returnToCountriesIfZoomedOut(target)
-            if drilledCountry == nil, MapSightingLayout.showsCountryMarkers(in: target) {
-                selectedSightingID = nil
-            }
-        }
         move(to: target)
     }
 
-    private func returnToCountriesIfZoomedOut(_ region: MKCoordinateRegion) {
-        guard let drilledRegion, MapSightingLayout.showsCountryMarkers(in: region) else { return }
-        if region.span.latitudeDelta > drilledRegion.span.latitudeDelta * 1.30
-            || region.span.longitudeDelta > drilledRegion.span.longitudeDelta * 1.30 {
-            clearDrillDown()
-            selectedSightingID = nil
-        }
-    }
-
-    private func clearDrillDown() {
-        drilledCountryID = nil
-        drilledRegion = nil
-    }
-
     private func fitAll() {
-        clearDrillDown()
         selectedSightingID = nil
+        selectedClusterSightings = []
         selectedH3Index = nil
         move(to: MapSightingLayout.region(containing: sightings))
     }
@@ -931,6 +994,52 @@ struct MapPageView: View {
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
             cameraPosition = .region(region)
         }
+    }
+}
+
+struct ClusterMapPin: View {
+    let count: Int
+    var isSelected: Bool = false
+
+    private var diameter: CGFloat {
+        switch count {
+        case ..<10: 34
+        case ..<100: 40
+        case ..<1000: 46
+        default: 52
+        }
+    }
+
+    private var fontSize: CGFloat {
+        switch count {
+        case ..<10: 13.5
+        case ..<100: 14
+        case ..<1000: 14.5
+        default: 13
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(isSelected ? AdaColors.brandBlue : AdaColors.navy)
+                .overlay {
+                    Circle().strokeBorder(.white, lineWidth: 2.5)
+                }
+                .overlay {
+                    Circle().strokeBorder(AdaColors.navy.opacity(0.18), lineWidth: 0.75)
+                }
+
+            Text("\(count)")
+                .font(.system(size: fontSize, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .padding(.horizontal, 4)
+        }
+        .frame(width: diameter, height: diameter)
+        .shadow(color: AdaColors.navy.opacity(0.26), radius: 6, y: 2.5)
+        .contentShape(Circle())
     }
 }
 
@@ -975,31 +1084,8 @@ private struct H3CellBadge: View {
     }
 }
 
-private struct MapCountryMarker: View {
-    let label: String
-    let sightings: Int
-
-    var body: some View {
-        VStack(spacing: 4) {
-            TurtleMapPin(state: .selected, count: sightings)
-                .scaleEffect(0.88, anchor: .bottom)
-
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(AdaColors.navy)
-                .lineLimit(1)
-                .padding(.horizontal, 9)
-                .frame(height: 22)
-                .background(AdaColors.card, in: Capsule())
-                .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-                .shadow(color: .black.opacity(0.16), radius: 4, y: 1.5)
-        }
-        .contentShape(Rectangle())
-    }
-}
-
 #if DEBUG
-#Preview("Map · World H3 Hex Grid") {
+#Preview("Map · World Pins") {
     @Previewable @State var period: MapPeriod = .allTime
     @Previewable @State var species: TurtleSpecies? = nil
     @Previewable @State var condition: TurtleCondition? = nil

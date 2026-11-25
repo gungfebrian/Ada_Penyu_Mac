@@ -44,12 +44,7 @@ struct WorkspaceHeader: View {
     }
 
     private var headerIcon: String {
-        switch store.activeSection {
-        case .individuals, .favorites, .scientistReview:
-            AppSection.individuals.icon
-        default:
-            store.activeSection.icon
-        }
+        store.activeSection.icon
     }
 
     private var heading: some View {
