@@ -145,6 +145,7 @@ final class AppStore: ObservableObject {
     private var photoDelivery: PhotoDelivery?
     private var reviewContexts: [UUID: ReviewPhotoContext] = [:]
     private var reviewReferences: [UUID: [String: PhotoReference]] = [:]
+    private var reviewReferenceEpoch: [UUID: Int] = [:]
     private lazy var reviewPhotoMetadata = ReviewPhotoMetadataStore { [weak self] context in
         guard let self else { throw CancellationError() }
         return try await self.repository.reviewPhotoMetadata(logID: context.logID, attemptID: context.attemptID)
@@ -804,6 +805,7 @@ final class AppStore: ObservableObject {
         item.reviewInputs = selected.map { ReviewQueryInput(photoID: $0.2, side: $0.0, file: nil) }
         reviewContexts[item.id] = context
         reviewReferences[item.id] = freshReferences
+        reviewReferenceEpoch[item.id] = observedEpoch
         reviewThumbnails = reviewThumbnails.filter { $0.key.hasPrefix(item.id.uuidString + ":") }
 
         if item.note.isEmpty, let note = sighting.notes, !note.isEmpty { try item.apply(.saveNote(note)) }
@@ -813,14 +815,25 @@ final class AppStore: ObservableObject {
 
     private func candidateRenewal(caseID: UUID, candidateID: String, side: TurtlePhotoSide) -> PhotoDelivery.Renewal? {
         guard let context = reviewContexts[caseID] else { return nil }
-        let epoch = reviewPhotoMetadata.epoch(context)
+        let issuedEpoch = reviewReferenceEpoch[caseID] ?? 0
         return { [weak self] in
             guard let self else { throw CancellationError() }
-            let metadata = try await self.reviewPhotoMetadata.load(context, after: epoch)
-            let ref = metadata?.candidates.first { $0.turtleID.uuidString == candidateID && $0.side == side }?.photo
-            if let ref { self.reviewReferences[caseID]?[candidateID] = ref }
-            return ref
+            let metadata = try await self.reviewPhotoMetadata.load(context, after: issuedEpoch)
+            self.adoptReviewPhotos(caseID: caseID, metadata: metadata, context: context)
+            return metadata?.candidates.first { $0.turtleID.uuidString == candidateID && $0.side == side }?.photo
         }
+    }
+
+    private func adoptReviewPhotos(caseID: UUID, metadata: ReviewPhotoDelivery?, context: ReviewPhotoContext) {
+        guard let metadata else { return }
+        var refs = reviewReferences[caseID] ?? [:]
+        for candidate in metadata.candidates {
+            if let photo = candidate.photo {
+                refs[candidate.turtleID.uuidString] = photo
+            }
+        }
+        reviewReferences[caseID] = refs
+        reviewReferenceEpoch[caseID] = reviewPhotoMetadata.epoch(context)
     }
 
     func loadNotSureCandidatePhoto(caseID: UUID, candidateID: String) async throws {
@@ -1180,7 +1193,7 @@ final class AppStore: ObservableObject {
         photoCache.removeAll()
         photoDelivery?.clear(); photoDelivery = nil
         reviewPhotoMetadata.clear()
-        reviewContexts.removeAll(); reviewReferences.removeAll(); reviewThumbnails.removeAll()
+        reviewContexts.removeAll(); reviewReferences.removeAll(); reviewReferenceEpoch.removeAll(); reviewThumbnails.removeAll()
         queueRenewal?.cancel(); queueRenewal = nil; queuePhotoEpoch += 1
 
         turtles = []

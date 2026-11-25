@@ -132,4 +132,61 @@ extension PhotoDeliveryTests {
             XCTAssertFalse(journal.contains("objects.test"))
         }
     }
+
+    func testExpiredCandidateThumbnailsShareOneReviewRefresh() async throws {
+        let logID = AutomaticNotSureQueueTests.logID
+        let attemptID = AutomaticNotSureQueueTests.attemptID
+        let photoID = AutomaticNotSureQueueTests.photoID
+        let first = APIFixtures.turtleID
+        let second = "30000000-0000-4000-8000-000000000099"
+        let sample = try XCTUnwrap(I3SSampleLibrary.sample(forFilenameOrID: "Amina1_L"))
+        let original = try XCTUnwrap(I3SSampleLibrary.loadImage(for: sample)?.tiffRepresentation)
+        func metadata(signature: String) -> String {
+            func card(_ id: String, _ name: String) -> String {
+                """
+                {"turtle_id":"\(id)","side":"right","availability":"available","photo":{"id":"\(id)","revision":"source-v1","url":"/original-proxy","download_url":"https://objects.test/original?sig=query","uploaded_at":"2026-11-25T00:00:00Z","thumbnail":{"revision":"jpeg-v1","url":"/thumb-proxy","download_url":"https://objects.test/\(name)?sig=\(signature)","width":384,"height":256}}}
+                """
+            }
+            return """
+            {"attempt_id":"\(attemptID)","queries":[{"side":"right","photo_id":"\(photoID)","photo":{"id":"\(photoID)","revision":"query-v1","url":"/query-proxy","download_url":"https://objects.test/query?sig=query","uploaded_at":"2026-11-25T00:00:00Z"}}],
+            "candidates":[\(card(first, "amina")),\(card(second, "bima"))]}
+            """
+        }
+        let saved = """
+        {"id":"\(attemptID)","created_at":"2026-11-01T00:00:00Z","query_sides":["right"],"match_state":"review","agreed":null,"gallery_size":2,
+        "candidates":[{"turtle_id":"\(first)","name":"Amina","profile_code":"000123","rank":1,"confidence":0.85,"above_threshold":true},{"turtle_id":"\(second)","name":"Bima","profile_code":"000124","rank":2,"confidence":0.4,"above_threshold":false}]}
+        """
+        var metadataRequests = 0
+        BackendStub.handler = { request in
+            if let auth = APIFixtures.auth(request) { return auth }
+            let path = request.url!.path
+            if request.url?.host == "objects.test" {
+                return (request.url?.query?.contains("sig=old") == true ? 403 : 200, original)
+            }
+            if path.hasSuffix("/photos") {
+                metadataRequests += 1
+                return (200, Data(metadata(signature: metadataRequests == 1 ? "old" : "new").utf8))
+            }
+            if path.hasSuffix("/match-results") { return (200, APIFixtures.page(saved)) }
+            return (200, Data(AutomaticNotSureQueueTests.sighting.utf8))
+        }
+        defer { BackendStub.handler = nil }
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = APIClient(baseURL: URL(string: "https://example.test")!, session: BackendStub.session(), credentialStore: MemoryCredentials())
+        _ = try await client.login(email: "person@example.test", password: "test-only")
+        let store = AppStore(client: client, reviewJournal: NotSureReviewJournal(directory: directory))
+        try await store.prepareMobileReview(UUID(uuidString: logID)!)
+        let item = try XCTUnwrap(store.escalatedNotSureCases.first)
+        for candidate in item.candidates {
+            await store.loadNotSureThumbnail(caseID: item.id, candidateID: candidate.id)
+            XCTAssertNotNil(store.reviewThumbnails[item.id.uuidString + ":" + candidate.id])
+        }
+        XCTAssertEqual(metadataRequests, 2)
+        for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where file.pathExtension == "json" {
+            let journal = try String(contentsOf: file, encoding: .utf8)
+            XCTAssertFalse(journal.contains("sig=private"))
+            XCTAssertFalse(journal.contains("objects.test"))
+        }
+    }
 }
