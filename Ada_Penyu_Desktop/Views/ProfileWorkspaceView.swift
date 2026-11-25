@@ -29,7 +29,7 @@ struct ProfileWorkspaceView: View {
                     Spacer()
                     if let onToggleFavorite {
                         Button(action: onToggleFavorite) {
-                            Label(isFavorite ? "On Watchlist" : "Watchlist", systemImage: isFavorite ? "bookmark.fill" : "bookmark")
+                            Label(isFavorite ? "Saved" : "Save", systemImage: isFavorite ? "bookmark.fill" : "bookmark")
                                 .font(.system(size: 12, weight: isFavorite ? .semibold : .medium))
                                 .foregroundStyle(isFavorite ? .white : AdaColors.ink)
                                 .padding(.horizontal, 12)
@@ -38,7 +38,8 @@ struct ProfileWorkspaceView: View {
                                 .overlay(Capsule().stroke(isFavorite ? AdaColors.navy : AdaColors.line, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(isFavorite ? "Remove from watchlist" : "Add to watchlist")
+                        .help(isFavorite ? "Remove from Saved" : "Save sea turtle")
+                        .accessibilityLabel(isFavorite ? "Remove from Saved" : "Save sea turtle")
                     }
                     Button(action: onExport) {
                         Label("Export", systemImage: "arrow.down.doc")

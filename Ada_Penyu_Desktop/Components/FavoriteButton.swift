@@ -1,36 +1,37 @@
 import SwiftUI
 
-/// Toggles whether an individual sea turtle is tracked on the account's watchlist.
+/// Toggles whether an individual sea turtle is saved for quick follow-up.
 struct FavoriteButton: View {
     let isFavorite: Bool
     var isVisible: Bool = true
     let action: () -> Void
     @State private var isHovered = false
 
+    private var iconOpacity: Double {
+        if isFavorite || isHovered { return 1.0 }
+        return isVisible ? 0.85 : 0.32
+    }
+
     var body: some View {
         Button(action: action) {
             Image(systemName: isFavorite ? "bookmark.fill" : "bookmark")
-                .font(.system(size: 12.5, weight: .semibold))
+                .font(.system(size: 12.5, weight: isFavorite ? .semibold : .medium))
                 .foregroundStyle(isFavorite ? AdaColors.navy : (isHovered ? AdaColors.ink : AdaColors.secondaryInk))
                 .frame(width: 30, height: 30)
                 .background(
                     isFavorite
                         ? AdaColors.navy.opacity(isHovered ? 0.14 : 0.09)
-                        : (isHovered ? Color.black.opacity(0.06) : Color.clear),
+                        : (isHovered ? AdaColors.navy.opacity(0.06) : Color.clear),
                     in: Circle()
-                )
-                .overlay(
-                    Circle()
-                        .stroke(isFavorite ? AdaColors.navy.opacity(0.16) : (isHovered ? AdaColors.line : .clear), lineWidth: 1)
                 )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .opacity(isFavorite || isVisible || isHovered ? 1 : 0.35)
+        .opacity(iconOpacity)
         .onHover { isHovered = $0 }
         .animation(.easeInOut(duration: 0.14), value: isFavorite)
         .animation(.easeInOut(duration: 0.14), value: isHovered)
-        .help(isFavorite ? "Remove from watchlist" : "Add to watchlist")
-        .accessibilityLabel(isFavorite ? "Remove from watchlist" : "Add to watchlist")
+        .help(isFavorite ? "Remove from Saved" : "Save sea turtle")
+        .accessibilityLabel(isFavorite ? "Remove from Saved" : "Save sea turtle")
     }
 }

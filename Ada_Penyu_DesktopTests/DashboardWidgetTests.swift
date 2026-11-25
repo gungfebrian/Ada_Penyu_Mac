@@ -200,10 +200,20 @@ final class DashboardWidgetTests: XCTestCase {
         // Anchored at Now (offset = 0) with 6M span
         let atNow = SightingsTimelineWindow(allMonths: snapshot24.months, span: .sixMonths, endOffsetFromNow: 0)
         XCTAssertTrue(atNow.isAtNow)
+        XCTAssertTrue(atNow.canScrub)
         XCTAssertEqual(atNow.visibleMonths.count, 6)
         XCTAssertEqual(atNow.maxOffset, 18)
         XCTAssertEqual(atNow.visibleMonths.last?.month, snapshot24.months.last?.month)
-        XCTAssertTrue(atNow.rangeLabel.contains("Now"))
+        XCTAssertFalse(atNow.rangeLabel.contains("Now"), "Header subtitle should stay clean without '· Now' clutter")
+        XCTAssertEqual(
+            atNow.rangeLabel,
+            "\(SightingsTimelineWindow.shortMonthYear(atNow.visibleMonths.first!.month)) – \(SightingsTimelineWindow.shortMonthYear(atNow.visibleMonths.last!.month))"
+        )
+
+        // Full 2Y view on 24 months has nothing to scrub
+        let fullSpan = SightingsTimelineWindow(allMonths: snapshot24.months, span: .twoYears, endOffsetFromNow: 0)
+        XCTAssertFalse(fullSpan.canScrub)
+        XCTAssertEqual(fullSpan.maxOffset, 0)
 
         // Slide 10 months into the past
         let earlier = SightingsTimelineWindow(allMonths: snapshot24.months, span: .sixMonths, endOffsetFromNow: 10)
@@ -217,5 +227,89 @@ final class DashboardWidgetTests: XCTestCase {
         XCTAssertEqual(clamped.clampedOffset, 12)
         XCTAssertEqual(clamped.visibleMonths.first?.month, snapshot24.months.first?.month)
         XCTAssertEqual(clamped.visibleMonths.count, 12)
+    }
+
+    func testSightingsTimelineXAxisTicksNeverCollideAndFormatShortMonth() {
+        XCTAssertEqual(SightingsTimelineWindow.xAxisTickIndices(count: 0), [])
+        XCTAssertEqual(SightingsTimelineWindow.xAxisTickIndices(count: 1), [0])
+        XCTAssertEqual(SightingsTimelineWindow.xAxisTickIndices(count: 6), [0, 1, 2, 3, 4, 5])
+
+        for count in [7, 8, 9, 10, 11, 12, 24] {
+            let ticks = SightingsTimelineWindow.xAxisTickIndices(count: count)
+            XCTAssertEqual(ticks.first, 0)
+            XCTAssertEqual(ticks.last, count - 1)
+            XCTAssertLessThanOrEqual(ticks.count, 6)
+            for idx in 1..<ticks.count {
+                XCTAssertGreaterThanOrEqual(
+                    ticks[idx] - ticks[idx - 1],
+                    2,
+                    "Adjacent X-axis labels must stay separated for count=\(count): \(ticks)"
+                )
+            }
+        }
+
+        // 12M window must never render index 10 ("Oct") right next to index 11 ("Nov")
+        let ticks12 = SightingsTimelineWindow.xAxisTickIndices(count: 12)
+        XCTAssertEqual(ticks12.count, 6)
+        XCTAssertFalse(ticks12.contains(10))
+        XCTAssertEqual(SightingsTimelineWindow.shortMonth("2026-11"), "Nov")
+    }
+
+    func testSightingsTimelineScrubberViewportPillAndDragMath() async throws {
+        let repo = DemoTurtleRepository(dataset: .panAsiaSuperAccount)
+        let snapshot24 = try await repo.dashboard(query: .lastMonths(24))
+
+        // 1Y inside 24M => proportional 50% viewport pill anchored to right edge at Now
+        let atNow = SightingsTimelineWindow(allMonths: snapshot24.months, span: .oneYear, endOffsetFromNow: 0)
+        let nowFrame = atNow.scrubberPillFrame(trackWidth: 300, minimumPillWidth: 44)
+        XCTAssertEqual(nowFrame.width, 150, accuracy: 0.01)
+        XCTAssertEqual(nowFrame.leading + nowFrame.width, 300, accuracy: 0.01)
+
+        // Minimum pill width enforced on narrow tracks
+        let narrowFrame = atNow.scrubberPillFrame(trackWidth: 60, minimumPillWidth: 44)
+        XCTAssertEqual(narrowFrame.width, 44, accuracy: 0.01)
+        XCTAssertEqual(narrowFrame.leading + narrowFrame.width, 60, accuracy: 0.01)
+
+        // Oldest offset reaches leading == 0
+        let oldest = SightingsTimelineWindow(allMonths: snapshot24.months, span: .oneYear, endOffsetFromNow: atNow.maxOffset)
+        let oldestFrame = oldest.scrubberPillFrame(trackWidth: 300, minimumPillWidth: 44)
+        XCTAssertEqual(oldestFrame.leading, 0, accuracy: 0.01)
+
+        // Click/drag mapping along track and relative drag deltas
+        XCTAssertEqual(atNow.offset(forTrackCenterX: 0, trackWidth: 300), atNow.maxOffset)
+        XCTAssertEqual(atNow.offset(forTrackCenterX: 300, trackWidth: 300), 0)
+        XCTAssertEqual(atNow.offset(fromStartingOffset: 0, dragDeltaX: -150, trackWidth: 300), atNow.maxOffset)
+        XCTAssertEqual(oldest.offset(fromStartingOffset: atNow.maxOffset, dragDeltaX: 150, trackWidth: 300), 0)
+    }
+
+    func testMonotoneCubicControlPointsKeepFlatZeroRunsFlatWithoutUndershoot() {
+        let baselineY: CGFloat = 140
+        let topY: CGFloat = 10
+        let values: [CGFloat] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 57]
+        let points: [CGPoint] = values.enumerated().map { idx, v in
+            let x = CGFloat(idx) * 40
+            let y = baselineY - (baselineY - topY) * (v / 57.0)
+            return CGPoint(x: x, y: y)
+        }
+
+        let controls = SightingsTimelineWindow.monotoneCubicControlPoints(for: points)
+        XCTAssertEqual(controls.count, points.count - 1)
+
+        // Flat zero run (0...9) stays strictly on baselineY with zero dip below 0
+        for i in 0..<9 {
+            XCTAssertEqual(controls[i].cp1.y, baselineY, accuracy: 0.001)
+            XCTAssertEqual(controls[i].cp2.y, baselineY, accuracy: 0.001)
+        }
+
+        // Transition out of flat 0 leaves horizontally and never dips below baselineY or overshoots next point
+        XCTAssertEqual(controls[9].cp1.y, baselineY, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(controls[9].cp2.y, baselineY + 0.001)
+        XCTAssertGreaterThanOrEqual(controls[9].cp2.y, points[10].y - 0.001)
+
+        // Rising segment 14 -> 57 stays strictly within [y11, y10] with zero overshoot above peak
+        XCTAssertLessThanOrEqual(controls[10].cp1.y, points[10].y + 0.001)
+        XCTAssertGreaterThanOrEqual(controls[10].cp1.y, points[11].y - 0.001)
+        XCTAssertLessThanOrEqual(controls[10].cp2.y, points[10].y + 0.001)
+        XCTAssertGreaterThanOrEqual(controls[10].cp2.y, points[11].y - 0.001)
     }
 }

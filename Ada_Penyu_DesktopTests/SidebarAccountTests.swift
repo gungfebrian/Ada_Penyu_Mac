@@ -81,6 +81,20 @@ final class SidebarAccountTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(account[0].frame.height, 44, viewTree(host))
     }
 
+    func testPrimarySidebarIncludesSavedAndHighlightsSightingsUnderOverview() {
+        XCTAssertEqual(AppSection.favorites.title, "Saved")
+        XCTAssertEqual(AppSection.favorites.icon, "bookmark")
+        XCTAssertEqual(
+            SidebarView.primarySections,
+            [.dashboard, .map, .individuals, .favorites, .scientistReview]
+        )
+
+        XCTAssertTrue(SidebarView.isSectionHighlighted(.favorites, for: .favorites))
+        XCTAssertFalse(SidebarView.isSectionHighlighted(.individuals, for: .favorites))
+        XCTAssertTrue(SidebarView.isSectionHighlighted(.dashboard, for: .sightings))
+        XCTAssertFalse(SidebarView.isSectionHighlighted(.individuals, for: .sightings))
+    }
+
     @MainActor
     private var accountSidebar: some View {
         SidebarView(

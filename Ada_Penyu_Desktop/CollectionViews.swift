@@ -14,6 +14,9 @@ struct IndividualsView: View {
     var isLoading = false
     var onPage: (Int) -> Void = { _ in }
     var sort: Binding<IndividualSort> = .constant(.lastSeenDescending)
+    var savedTurtles: [Turtle] = []
+
+    @State private var showSavedOnly = false
 
     private var currentPage: Int { offset / max(1, pageSize.wrappedValue) }
     private var pageCount: Int { max(1, Int(ceil(Double(total) / Double(max(1, pageSize.wrappedValue))))) }
@@ -22,52 +25,82 @@ struct IndividualsView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || selectedSpecies.wrappedValue != nil
             || selectedCondition != nil
+            || showSavedOnly
+    }
+
+    private var displayedTurtles: [Turtle] {
+        guard showSavedOnly else { return turtles }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pool = !savedTurtles.isEmpty
+            ? savedTurtles.filter { favoriteIDs.contains($0.id) }
+            : turtles.filter { favoriteIDs.contains($0.id) }
+        let filtered = pool.filter { turtle in
+            let matchesSearch = query.isEmpty
+                || turtle.displayName.localizedCaseInsensitiveContains(query)
+                || turtle.id.localizedCaseInsensitiveContains(query)
+                || (turtle.profileCode?.localizedCaseInsensitiveContains(query) ?? false)
+                || turtle.location.localizedCaseInsensitiveContains(query)
+            let matchesSpecies = selectedSpecies.wrappedValue == nil || selectedSpecies.wrappedValue == turtle.species
+            let matchesCondition = selectedCondition == nil || selectedCondition == turtle.condition
+            return matchesSearch && matchesSpecies && matchesCondition
+        }
+        switch sort.wrappedValue {
+        case .name:
+            return filtered.sorted {
+                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            }
+        case .lastSeenDescending:
+            return filtered
+        }
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 TurtleCatalogFilterBar(
-                    searchPlaceholder: "Search name, code, or Turtle ID",
+                    searchPlaceholder: showSavedOnly ? "Search saved sea turtles" : "Search name, code, or Turtle ID",
                     searchText: $searchText,
                     selectedSpecies: selectedSpecies,
                     selectedCondition: $selectedCondition,
                     sort: sort,
+                    showSavedOnly: $showSavedOnly,
+                    savedCount: favoriteIDs.count,
                     hasActiveFilters: hasActiveFilters,
                     onClearFilters: {
                         searchText = ""
                         selectedSpecies.wrappedValue = nil
                         selectedCondition = nil
+                        showSavedOnly = false
                     }
                 )
 
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(countSummary)
-                        .font(.system(size: 12.5, weight: .medium).monospacedDigit())
-                        .foregroundStyle(AdaColors.ink)
-                    Spacer(minLength: 0)
-                    Text("Select an individual to inspect sightings and body condition")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                }
+                Text(countSummary)
+                    .font(.system(size: 12.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(AdaColors.secondaryInk)
 
                 VStack(spacing: 0) {
                     TurtleTableView(
-                        turtles: turtles,
+                        turtles: displayedTurtles,
                         favoriteIDs: favoriteIDs,
-                        emptyTitle: "No sea turtles found",
-                        emptySymbol: "tortoise",
-                        emptyDescription: "Try another search term or clear an active filter.",
+                        emptyTitle: showSavedOnly
+                            ? (favoriteIDs.isEmpty ? "No saved sea turtles" : "No matching saved turtles")
+                            : "No sea turtles found",
+                        emptySymbol: showSavedOnly ? "bookmark" : "tortoise",
+                        emptyDescription: showSavedOnly && favoriteIDs.isEmpty
+                            ? "Bookmark a sea turtle to keep it in your saved list."
+                            : "Try another search term or clear an active filter.",
                         onToggleFavorite: onToggleFavorite,
                         onSelect: onSelect
                     )
-                    Divider()
-                        .overlay(AdaColors.line)
-                        .padding(.horizontal, 20)
-                    pagination
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 14)
-                        .disabled(isLoading)
+                    if !showSavedOnly {
+                        Divider()
+                            .overlay(AdaColors.line)
+                            .padding(.horizontal, 20)
+                        pagination
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 14)
+                            .disabled(isLoading)
+                    }
                 }
                 .background(AdaColors.card, in: RoundedRectangle(cornerRadius: AdaLayout.cardRadius, style: .continuous))
                 .overlay(
@@ -83,6 +116,10 @@ struct IndividualsView: View {
     }
 
     private var countSummary: String {
+        if showSavedOnly {
+            let count = displayedTurtles.count
+            return "\(count.formatted()) \(count == 1 ? "saved individual" : "saved individuals")"
+        }
         if total == 0 { return "0 individuals" }
         if turtles.count < total {
             let start = offset + 1
@@ -211,7 +248,7 @@ struct FavoritesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 TurtleCatalogFilterBar(
-                    searchPlaceholder: "Search tracked individuals",
+                    searchPlaceholder: "Search saved sea turtles",
                     searchText: $searchText,
                     selectedSpecies: selectedSpecies,
                     selectedCondition: $selectedCondition,
@@ -224,15 +261,9 @@ struct FavoritesView: View {
                     }
                 )
 
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text("\(filtered.count.formatted()) \(filtered.count == 1 ? "tracked individual" : "tracked individuals")")
-                        .font(.system(size: 12.5, weight: .medium).monospacedDigit())
-                        .foregroundStyle(AdaColors.ink)
-                    Spacer(minLength: 0)
-                    Text("Bookmarked for priority follow-up and encounter monitoring")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(AdaColors.secondaryInk)
-                }
+                Text("\(filtered.count.formatted()) \(filtered.count == 1 ? "saved individual" : "saved individuals")")
+                    .font(.system(size: 12.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(AdaColors.secondaryInk)
 
                 if turtles.isEmpty {
                     VStack(spacing: 14) {
@@ -243,10 +274,10 @@ struct FavoritesView: View {
                             .background(AdaColors.surfaceMuted, in: Circle())
 
                         VStack(spacing: 5) {
-                            Text("No individuals on your watchlist")
+                            Text("No saved sea turtles")
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(AdaColors.ink)
-                            Text("Bookmark a sea turtle from the Individuals table or its profile to track its encounters and body condition here.")
+                            Text("Bookmark a sea turtle from Sea Turtles or its profile to keep it here for quick follow-up.")
                                 .font(.system(size: 12.5))
                                 .foregroundStyle(AdaColors.secondaryInk)
                                 .multilineTextAlignment(.center)
@@ -268,7 +299,7 @@ struct FavoritesView: View {
                     TurtleTableView(
                         turtles: filtered,
                         favoriteIDs: favoriteIDs,
-                        emptyTitle: "No matching tracked individuals",
+                        emptyTitle: "No matching saved turtles",
                         emptySymbol: "bookmark",
                         emptyDescription: "Try another search term or clear an active filter.",
                         onToggleFavorite: onToggleFavorite,
@@ -295,6 +326,8 @@ private struct TurtleCatalogFilterBar: View {
     var selectedSpecies: Binding<TurtleSpecies?>
     @Binding var selectedCondition: TurtleCondition?
     var sort: Binding<IndividualSort>?
+    var showSavedOnly: Binding<Bool>? = nil
+    var savedCount: Int = 0
     let hasActiveFilters: Bool
     let onClearFilters: () -> Void
 
@@ -342,6 +375,9 @@ private struct TurtleCatalogFilterBar: View {
 
     private var filterPills: some View {
         HStack(spacing: 8) {
+            if let showSavedOnly {
+                savedTogglePill(isSelected: showSavedOnly)
+            }
             SpeciesPicker(selection: selectedSpecies)
             ConditionPicker(selection: $selectedCondition)
             if let sort {
@@ -387,6 +423,41 @@ private struct TurtleCatalogFilterBar: View {
         }
         .fixedSize()
     }
+
+    private func savedTogglePill(isSelected: Binding<Bool>) -> some View {
+        let active = isSelected.wrappedValue
+        return Button {
+            withAnimation(.easeOut(duration: 0.14)) {
+                isSelected.wrappedValue.toggle()
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: active ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 11, weight: active ? .semibold : .medium))
+                Text("Saved")
+                    .font(.system(size: 12, weight: active ? .semibold : .regular))
+                    .lineLimit(1)
+                if savedCount > 0 {
+                    Text(savedCount.formatted())
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(active ? .white.opacity(0.92) : AdaColors.navy)
+                        .padding(.horizontal, 6.5)
+                        .frame(height: 18)
+                        .background(active ? .white.opacity(0.2) : AdaColors.navy.opacity(0.09), in: Capsule())
+                }
+            }
+            .foregroundStyle(active ? .white : AdaColors.ink)
+            .padding(.horizontal, 13)
+            .frame(height: 36)
+            .background(active ? AdaColors.navy : AdaColors.card, in: Capsule())
+            .overlay(Capsule().stroke(active ? AdaColors.navy : AdaColors.line, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityLabel(savedCount > 0 ? "Saved, \(savedCount)" : "Saved")
+        .accessibilityAddTraits(active ? .isSelected : [])
+    }
 }
 
 private struct TurtleTableView: View {
@@ -413,7 +484,7 @@ private struct TurtleTableView: View {
                             .frame(width: 140, alignment: .leading)
                         Text("Latest location")
                             .frame(minWidth: 160, maxWidth: 210, alignment: .leading)
-                        Text("Observation history")
+                        Text("Last seen")
                             .frame(width: 155, alignment: .leading)
                         Text("Sightings")
                             .frame(width: 72, alignment: .trailing)
@@ -470,7 +541,19 @@ private struct TurtleTableRow: View {
     let onSelect: () -> Void
     @State private var isHovered = false
 
+    private func recordedValue(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.caseInsensitiveCompare("Not recorded") != .orderedSame else {
+            return nil
+        }
+        return trimmed
+    }
+
     var body: some View {
+        let recordedLocation = recordedValue(turtle.location)
+        let recordedLastSeen = recordedValue(turtle.lastSeen)
+        let recordedFirst = recordedValue(turtle.firstRecorded)
+
         HStack(spacing: 16) {
             Button(action: onSelect) {
                 HStack(spacing: 16) {
@@ -493,31 +576,69 @@ private struct TurtleTableRow: View {
                         .font(.system(size: 12.5))
                         .frame(width: 140, alignment: .leading)
 
-                    Text(turtle.location)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(AdaColors.ink)
-                        .lineLimit(2)
-                        .frame(minWidth: 160, maxWidth: 210, alignment: .leading)
+                    Group {
+                        if let recordedLocation {
+                            Text(recordedLocation)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(AdaColors.ink)
+                                .lineLimit(2)
+                        } else {
+                            Text("—")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(AdaColors.secondaryInk.opacity(0.45))
+                        }
+                    }
+                    .frame(minWidth: 160, maxWidth: 210, alignment: .leading)
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Last: \(turtle.lastSeen)")
-                            .font(.system(size: 12).monospacedDigit())
-                            .foregroundStyle(AdaColors.ink)
-                            .lineLimit(1)
-                        Text("First: \(turtle.firstRecorded)")
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundStyle(AdaColors.secondaryInk)
-                            .lineLimit(1)
+                        if let recordedLastSeen {
+                            Text(recordedLastSeen)
+                                .font(.system(size: 12.5).monospacedDigit())
+                                .foregroundStyle(AdaColors.ink)
+                                .lineLimit(1)
+                            if let recordedFirst, recordedFirst != recordedLastSeen {
+                                Text("First \(recordedFirst)")
+                                    .font(.system(size: 11).monospacedDigit())
+                                    .foregroundStyle(AdaColors.secondaryInk)
+                                    .lineLimit(1)
+                            }
+                        } else {
+                            Text("—")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(AdaColors.secondaryInk.opacity(0.45))
+                            if let recordedFirst {
+                                Text("Added \(recordedFirst)")
+                                    .font(.system(size: 11).monospacedDigit())
+                                    .foregroundStyle(AdaColors.secondaryInk)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
                     .frame(width: 155, alignment: .leading)
 
-                    Text(turtle.sightings.formatted())
-                        .font(.system(size: 13.5, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(AdaColors.ink)
-                        .frame(width: 72, alignment: .trailing)
+                    Group {
+                        if turtle.sightings > 0 {
+                            Text(turtle.sightings.formatted())
+                                .font(.system(size: 13.5, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(AdaColors.ink)
+                        } else {
+                            Text("—")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(AdaColors.secondaryInk.opacity(0.45))
+                        }
+                    }
+                    .frame(width: 72, alignment: .trailing)
 
-                    ConditionPill(condition: turtle.condition)
-                        .frame(width: 108, alignment: .leading)
+                    Group {
+                        if turtle.condition == .unknown {
+                            Text("—")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(AdaColors.secondaryInk.opacity(0.45))
+                        } else {
+                            ConditionPill(condition: turtle.condition)
+                        }
+                    }
+                    .frame(width: 108, alignment: .leading)
                 }
                 .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight)
                 .contentShape(Rectangle())
