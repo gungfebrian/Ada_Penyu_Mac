@@ -317,14 +317,7 @@ struct ContentView: View {
         if store.selectedTurtle != nil {
             return selectedSightingID == nil ? "Turtle Profile" : "Sighting Details"
         }
-        let rawTitle: String
-        switch store.activeSection {
-        case .individuals, .favorites, .scientistReview:
-            rawTitle = AppSection.individuals.title
-        default:
-            rawTitle = store.activeSection.title
-        }
-        return store.localization.localized(rawTitle)
+        return store.localization.localized(store.activeSection.title)
     }
 
     private func openMap(turtleID: String?) {
@@ -363,54 +356,46 @@ struct ContentView: View {
                 onFocusConsumed: { focusedMapTurtleID = nil },
                 onOpenSighting: openSighting)
         case .individuals:
-            VStack(spacing: 0) {
-                catalogTabs
-                IndividualsView(
-                    turtles: store.turtles,
-                    total: store.totalIndividuals,
-                    searchText: $store.searchText,
-                    selectedCondition: $store.selectedCondition,
-                    favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
-                    onToggleFavorite: store.toggleFavorite,
-                    onSelect: store.select,
-                    selectedSpecies: $store.selectedSpecies,
-                    pageSize: $store.individualsPageSize,
-                    offset: store.individualsOffset,
-                    isLoading: store.isIndividualsLoading,
-                    onPage: { page in Task { await store.loadIndividualsPage(page) } },
-                    sort: $store.sort
-                )
-            }
+            IndividualsView(
+                turtles: store.turtles,
+                total: store.totalIndividuals,
+                searchText: $store.searchText,
+                selectedCondition: $store.selectedCondition,
+                favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                onToggleFavorite: store.toggleFavorite,
+                onSelect: store.select,
+                selectedSpecies: $store.selectedSpecies,
+                pageSize: $store.individualsPageSize,
+                offset: store.individualsOffset,
+                isLoading: store.isIndividualsLoading,
+                onPage: { page in Task { await store.loadIndividualsPage(page) } },
+                sort: $store.sort,
+                savedTurtles: store.favoriteTurtles
+            )
         case .sightings:
             SightingsListView(sightings: store.sightings, onSelect: openSighting)
         case .scientistReview:
-            VStack(spacing: 0) {
-                catalogTabs
-                NotSureWorkspaceView(store: store, onOpenPractice: {
-                    store.isReviewPracticePresented = true
-                })
-            }
+            NotSureWorkspaceView(store: store, onOpenPractice: {
+                store.isReviewPracticePresented = true
+            })
         case .identification:
             I3SWorkspaceView(store: store)
         case .favorites:
-            VStack(spacing: 0) {
-                catalogTabs
-                FavoritesView(
-                    turtles: store.favoriteTurtles,
-                    searchText: $store.searchText,
-                    selectedCondition: $store.selectedCondition,
-                    favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
-                    onToggleFavorite: store.toggleFavorite,
-                    onSelect: store.select,
-                    onBrowseIndividuals: {
-                        store.searchText = ""
-                        store.selectedSpecies = nil
-                        store.selectedCondition = nil
-                        store.activeSection = .individuals
-                    },
-                    selectedSpecies: $store.selectedSpecies
-                )
-            }
+            FavoritesView(
+                turtles: store.favoriteTurtles,
+                searchText: $store.searchText,
+                selectedCondition: $store.selectedCondition,
+                favoriteIDs: Set(store.favoriteTurtles.map(\.id)),
+                onToggleFavorite: store.toggleFavorite,
+                onSelect: store.select,
+                onBrowseIndividuals: {
+                    store.searchText = ""
+                    store.selectedSpecies = nil
+                    store.selectedCondition = nil
+                    store.activeSection = .individuals
+                },
+                selectedSpecies: $store.selectedSpecies
+            )
         case .settings:
             SettingsView(store: store, model: store.organizationKeySettings)
         }
@@ -418,69 +403,6 @@ struct ContentView: View {
     private func openSighting(_ sighting: Sighting) {
         selectedSightingID = sighting.id
         store.select(store.turtle(forID: sighting.turtleID) ?? sighting.turtleReference)
-    }
-
-    private var catalogTabs: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 3) {
-                catalogTab(
-                    "Individuals",
-                    icon: "tortoise",
-                    count: store.totalIndividuals,
-                    selected: store.activeSection == .individuals
-                ) {
-                    store.activeSection = .individuals
-                }
-                catalogTab(
-                    "Watchlist",
-                    icon: "bookmark",
-                    count: store.favoriteTurtles.count,
-                    selected: store.activeSection == .favorites
-                ) {
-                    store.activeSection = .favorites
-                }
-                catalogTab(
-                    "Not Sure",
-                    icon: "questionmark.circle",
-                    count: store.notSureAttentionCount,
-                    selected: store.activeSection == .scientistReview
-                ) {
-                    store.openNotSureReview()
-                }
-            }
-            .padding(3)
-            .background(AdaColors.card, in: Capsule())
-            .overlay(Capsule().stroke(AdaColors.line, lineWidth: 1))
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, AdaLayout.pagePadding)
-        .padding(.bottom, 10)
-    }
-
-    private func catalogTab(_ title: String, icon: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: selected && icon == "bookmark" ? "bookmark.fill" : icon)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
-                Text(count.formatted())
-                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(selected ? .white.opacity(0.92) : AdaColors.secondaryInk)
-                    .padding(.horizontal, 7)
-                    .frame(height: 18)
-                    .background(selected ? .white.opacity(0.18) : AdaColors.surfaceMuted, in: Capsule())
-            }
-            .foregroundStyle(selected ? .white : AdaColors.secondaryInk)
-            .padding(.horizontal, 13)
-            .frame(height: 32)
-            .background(selected ? AdaColors.navy : .clear, in: Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.14), value: selected)
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
 }

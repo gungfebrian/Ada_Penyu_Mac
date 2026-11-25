@@ -513,7 +513,13 @@ private struct DashboardWidgetGrid: View {
                 FigCraftFavoritesWidget(
                     favorites: store.favoriteTurtles,
                     onSelect: onSelect,
-                    onBrowseIndividuals: onBrowseTurtles
+                    onBrowseIndividuals: {
+                        if !store.favoriteTurtles.isEmpty {
+                            store.activeSection = .favorites
+                        } else {
+                            onBrowseTurtles()
+                        }
+                    }
                 )
             }
         }
@@ -768,20 +774,6 @@ enum SightingsWindowSpan: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum SightingsChartStyle: String, CaseIterable, Identifiable, Sendable {
-    case points = "Line"
-    case bars = "Bars"
-
-    var id: Self { self }
-
-    var symbol: String {
-        switch self {
-        case .points: "point.topleft.down.to.point.bottomright.curvepath"
-        case .bars: "chart.bar.fill"
-        }
-    }
-}
-
 /// Pure, unit-testable sliding window over monthly sightings anchored to the latest month ("Now").
 struct SightingsTimelineWindow {
     let allMonths: [DashboardSnapshot.Month]
@@ -802,6 +794,8 @@ struct SightingsTimelineWindow {
 
     var isAtNow: Bool { clampedOffset == 0 }
 
+    var canScrub: Bool { maxOffset > 0 }
+
     var visibleMonths: [DashboardSnapshot.Month] {
         guard !allMonths.isEmpty else { return [] }
         let endIndex = max(0, allMonths.count - 1 - clampedOffset)
@@ -809,13 +803,127 @@ struct SightingsTimelineWindow {
         return Array(allMonths[startIndex...endIndex])
     }
 
+    /// Clean date window range without redundant "· Now" suffix.
     var rangeLabel: String {
         guard let first = visibleMonths.first, let last = visibleMonths.last else {
             return "No recorded sightings"
         }
-        let endText = Self.isCurrentMonth(last.month) ? "\(Self.shortMonthYear(last.month)) · Now" : Self.shortMonthYear(last.month)
+        let endText = Self.shortMonthYear(last.month)
         if first.month == last.month { return endText }
         return "\(Self.shortMonthYear(first.month)) – \(endText)"
+    }
+
+    /// Proportional scrubber viewport pill frame (`leading`, `width`) along a track of `trackWidth`.
+    /// When `clampedOffset == 0` ("Now"), `leading + width == trackWidth` (100% right-aligned).
+    func scrubberPillFrame(trackWidth: CGFloat, minimumPillWidth: CGFloat = 44) -> (leading: CGFloat, width: CGFloat) {
+        guard trackWidth > 0, !allMonths.isEmpty else { return (0, 0) }
+        let proportion = CGFloat(visibleCount) / CGFloat(max(allMonths.count, 1))
+        let pillWidth = min(trackWidth, max(minimumPillWidth, trackWidth * proportion))
+        let travel = max(0, trackWidth - pillWidth)
+        let progress: CGFloat = maxOffset > 0
+            ? CGFloat(maxOffset - clampedOffset) / CGFloat(maxOffset)
+            : 1.0
+        return (travel * progress, pillWidth)
+    }
+
+    /// Maps a horizontal track click/drag center X to a clamped `endOffsetFromNow`.
+    func offset(forTrackCenterX x: CGFloat, trackWidth: CGFloat, minimumPillWidth: CGFloat = 44) -> Int {
+        guard maxOffset > 0, trackWidth > 0 else { return 0 }
+        let (_, pillWidth) = scrubberPillFrame(trackWidth: trackWidth, minimumPillWidth: minimumPillWidth)
+        let travel = max(1, trackWidth - pillWidth)
+        let desiredLeading = min(max(0, x - pillWidth * 0.5), travel)
+        let progress = desiredLeading / travel
+        let target = maxOffset - Int((progress * CGFloat(maxOffset)).rounded())
+        return min(max(0, target), maxOffset)
+    }
+
+    /// Maps a relative horizontal drag delta starting from `startOffset` to a clamped `endOffsetFromNow`.
+    func offset(fromStartingOffset startOffset: Int, dragDeltaX: CGFloat, trackWidth: CGFloat, minimumPillWidth: CGFloat = 44) -> Int {
+        guard maxOffset > 0, trackWidth > 0 else { return 0 }
+        let (_, pillWidth) = scrubberPillFrame(trackWidth: trackWidth, minimumPillWidth: minimumPillWidth)
+        let travel = max(1, trackWidth - pillWidth)
+        let clampedStart = min(max(0, startOffset), maxOffset)
+        let startProgress = CGFloat(maxOffset - clampedStart) / CGFloat(maxOffset)
+        let nextProgress = min(1, max(0, startProgress + dragDeltaX / travel))
+        let target = maxOffset - Int((nextProgress * CGFloat(maxOffset)).rounded())
+        return min(max(0, target), maxOffset)
+    }
+
+    /// Evenly spaced, non-colliding X-axis tick indices always anchored at `0` and `count - 1`.
+    /// Never places a tick directly adjacent to `count - 1` when `count > 6`.
+    static func xAxisTickIndices(count: Int) -> [Int] {
+        guard count > 0 else { return [] }
+        if count <= 6 { return Array(0..<count) }
+        let targetCount = count <= 8 ? 4 : (count <= 10 ? 5 : 6)
+        let step = Double(count - 1) / Double(targetCount - 1)
+        return (0..<targetCount).map { idx in
+            if idx == targetCount - 1 { return count - 1 }
+            return Int((Double(idx) * step).rounded())
+        }
+    }
+
+    /// Fritsch-Carlson monotone-clamped cubic Bezier control points for smooth curves with zero overshoot
+    /// and strictly flat horizontal segments across consecutive equal values (e.g. `0` runs).
+    static func monotoneCubicControlPoints(for points: [CGPoint]) -> [(cp1: CGPoint, cp2: CGPoint)] {
+        let n = points.count
+        guard n >= 2 else { return [] }
+
+        var h = Array(repeating: CGFloat(0), count: n - 1)
+        var delta = Array(repeating: CGFloat(0), count: n - 1)
+        for i in 0..<(n - 1) {
+            h[i] = max(0.0001, points[i + 1].x - points[i].x)
+            delta[i] = (points[i + 1].y - points[i].y) / h[i]
+        }
+
+        var tangents = Array(repeating: CGFloat(0), count: n)
+        tangents[0] = delta[0]
+        tangents[n - 1] = delta[n - 2]
+
+        if n > 2 {
+            for i in 1..<(n - 1) {
+                if delta[i - 1] * delta[i] <= 0 {
+                    tangents[i] = 0
+                } else {
+                    let w1 = 2 * h[i] + h[i - 1]
+                    let w2 = h[i] + 2 * h[i - 1]
+                    tangents[i] = (w1 + w2) / (w1 / delta[i - 1] + w2 / delta[i])
+                }
+            }
+        }
+
+        for i in 0..<(n - 1) {
+            if abs(delta[i]) < 1e-6 {
+                tangents[i] = 0
+                tangents[i + 1] = 0
+            } else {
+                var alpha = tangents[i] / delta[i]
+                var beta = tangents[i + 1] / delta[i]
+                if alpha < 0 {
+                    tangents[i] = 0
+                    alpha = 0
+                }
+                if beta < 0 {
+                    tangents[i + 1] = 0
+                    beta = 0
+                }
+                let radiusSquared = alpha * alpha + beta * beta
+                if radiusSquared > 9 {
+                    let tau = 3.0 / sqrt(radiusSquared)
+                    tangents[i] = tau * alpha * delta[i]
+                    tangents[i + 1] = tau * beta * delta[i]
+                }
+            }
+        }
+
+        var controls: [(cp1: CGPoint, cp2: CGPoint)] = []
+        controls.reserveCapacity(n - 1)
+        for i in 0..<(n - 1) {
+            let step = h[i] / 3.0
+            let cp1 = CGPoint(x: points[i].x + step, y: points[i].y + tangents[i] * step)
+            let cp2 = CGPoint(x: points[i + 1].x - step, y: points[i + 1].y - tangents[i + 1] * step)
+            controls.append((cp1, cp2))
+        }
+        return controls
     }
 
     static func currentMonthKey(now: Date = Date()) -> String {
@@ -845,7 +953,6 @@ struct FigCraftTrendWidget: View {
     @Binding var chartMode: ChartMode
 
     @State private var span: SightingsWindowSpan = .oneYear
-    @State private var chartStyle: SightingsChartStyle = .points
     @State private var endOffsetFromNow: Int = 0
     @State private var activeMonthIndex: Int? = nil
 
@@ -886,42 +993,61 @@ struct FigCraftTrendWidget: View {
         visibleMonths.reduce(0) { $0 + metricValue($1) }
     }
 
-    private var windowMonthlyAverage: Double {
-        guard !visibleMonths.isEmpty else { return 0 }
-        return Double(windowTotal) / Double(visibleMonths.count)
-    }
-
     private var activeMonth: DashboardSnapshot.Month? {
         guard let idx = activeMonthIndex, visibleMonths.indices.contains(idx) else { return nil }
         return visibleMonths[idx]
     }
 
-    private var activeDeltaText: (text: String, positive: Bool)? {
+    private var activeDelta: (badge: String, comparisonMonth: String, positive: Bool)? {
         guard let idx = activeMonthIndex, idx > 0, visibleMonths.indices.contains(idx) else { return nil }
         let curr = metricValue(visibleMonths[idx])
         let prev = metricValue(visibleMonths[idx - 1])
         let diff = curr - prev
-        if diff == 0 { return ("Same as \(SightingsTimelineWindow.shortMonth(visibleMonths[idx - 1].month))", true) }
+        guard diff != 0 else { return nil }
         let sign = diff > 0 ? "+" : ""
-        return ("\(sign)\(diff) vs \(SightingsTimelineWindow.shortMonth(visibleMonths[idx - 1].month))", diff > 0)
+        return ("\(sign)\(diff)", SightingsTimelineWindow.shortMonth(visibleMonths[idx - 1].month), diff > 0)
+    }
+
+    private var headerSubtitle: String {
+        guard let focused = activeMonth else {
+            return window.rangeLabel
+        }
+        let monthText = SightingsTimelineWindow.shortMonthYear(focused.month)
+        if let delta = activeDelta {
+            return "\(monthText) · vs \(delta.comparisonMonth)"
+        }
+        return monthText
+    }
+
+    private var displayedMetricValue: Int {
+        if let focused = activeMonth {
+            return metricValue(focused)
+        }
+        return windowTotal
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             headerRow
 
             SightingsLineChart(
                 months: visibleMonths,
                 chartMode: chartMode,
-                style: chartStyle,
                 interactive: true,
                 selectedIndex: $activeMonthIndex
             )
-            .frame(height: 162)
+            .frame(height: 168)
 
-            timelineFooter
+            if window.canScrub {
+                FigCraftTimelineScrubber(
+                    window: window,
+                    earliestLabel: SightingsTimelineWindow.shortMonthYear(sourceMonths.first?.month ?? ""),
+                    endOffsetFromNow: $endOffsetFromNow,
+                    onScrubStart: { activeMonthIndex = nil }
+                )
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 286, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 268, maxHeight: .infinity, alignment: .topLeading)
         .adaCard(padding: 22)
         .onChange(of: span) { _, _ in
             endOffsetFromNow = min(endOffsetFromNow, window.maxOffset)
@@ -935,249 +1061,177 @@ struct FigCraftTrendWidget: View {
     }
 
     private var headerRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                SectionTitle("Sightings over time", subtitle: window.rangeLabel)
-                HStack(spacing: 6) {
-                    // Metric toggle (Sightings vs New turtles)
-                    HStack(spacing: 2) {
-                        metricChip("Sightings", mode: .sightings)
-                        metricChip("New", mode: .newIndividuals)
-                    }
-                    .padding(2)
-                    .background(AdaColors.surfaceMuted, in: Capsule())
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Sightings over time")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(AdaColors.ink)
+                    .lineLimit(1)
 
-                    // Window span selector (6M | 1Y | 2Y)
-                    HStack(spacing: 2) {
-                        ForEach(availableSpans) { option in
-                            let selected = span == option
-                            Button {
-                                withAnimation(.easeOut(duration: 0.16)) { span = option }
-                            } label: {
-                                Text(option.rawValue)
-                                    .font(.system(size: 10, weight: selected ? .semibold : .medium))
-                                    .foregroundStyle(selected ? .white : AdaColors.secondaryInk)
-                                    .padding(.horizontal, 8)
-                                    .frame(height: 22)
-                                    .background(selected ? AdaColors.navy : .clear, in: Capsule())
-                                    .contentShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(2)
-                    .background(AdaColors.surfaceMuted, in: Capsule())
-
-                    // Style toggle (Discrete points line vs Bars)
-                    HStack(spacing: 2) {
-                        ForEach(SightingsChartStyle.allCases) { option in
-                            let selected = chartStyle == option
-                            Button {
-                                withAnimation(.easeOut(duration: 0.14)) { chartStyle = option }
-                            } label: {
-                                Image(systemName: option.symbol)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(selected ? .white : AdaColors.secondaryInk)
-                                    .frame(width: 24, height: 22)
-                                    .background(selected ? AdaColors.navy : .clear, in: Capsule())
-                                    .contentShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .help(option == .points ? "Line with monthly data points" : "Monthly bar chart")
-                        }
-                    }
-                    .padding(2)
-                    .background(AdaColors.surfaceMuted, in: Capsule())
-                }
+                Text(headerSubtitle)
+                    .font(.system(size: 12, weight: activeMonth == nil ? .regular : .medium))
+                    .foregroundStyle(activeMonth == nil ? AdaColors.secondaryInk : AdaColors.ink.opacity(0.75))
+                    .lineLimit(1)
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 8)
 
-            if let focused = activeMonth {
-                HStack(spacing: 14) {
-                    VStack(alignment: .trailing, spacing: 3) {
-                        HStack(spacing: 5) {
-                            if SightingsTimelineWindow.isCurrentMonth(focused.month) {
-                                Circle().fill(AdaColors.green).frame(width: 6, height: 6)
-                            }
-                            Text(SightingsTimelineWindow.shortMonthYear(focused.month) + (SightingsTimelineWindow.isCurrentMonth(focused.month) ? " · Now" : ""))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(AdaColors.accent)
-                        }
-                        Text(metricValue(focused).formatted())
-                            .font(.system(size: 20, weight: .semibold).monospacedDigit())
-                    }
-                    if let delta = activeDeltaText {
-                        VStack(alignment: .trailing, spacing: 3) {
-                            Text("Change")
-                                .font(.system(size: 9))
-                                .foregroundStyle(AdaColors.secondaryInk)
-                            Text(delta.text)
-                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(delta.positive ? AdaColors.green : AdaColors.orange)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background((delta.positive ? AdaColors.green : AdaColors.orange).opacity(0.11), in: Capsule())
-                        }
+            HStack(alignment: .center, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(displayedMetricValue.formatted())
+                        .font(.system(size: 24, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(AdaColors.ink)
+                        .fixedSize()
+                        .contentTransition(.numericText())
+
+                    if let delta = activeDelta {
+                        Text(delta.badge)
+                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(delta.positive ? AdaColors.green : AdaColors.orange)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background((delta.positive ? AdaColors.green : AdaColors.orange).opacity(0.11), in: Capsule())
+                            .fixedSize()
                     }
                 }
-            } else {
-                HStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(chartMode == .sightings ? "Window total" : "New turtles")
-                            .font(.system(size: 9))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                        Text(windowTotal.formatted())
-                            .font(.system(size: 18, weight: .semibold).monospacedDigit())
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Monthly avg")
-                            .font(.system(size: 9))
-                            .foregroundStyle(AdaColors.secondaryInk)
-                        Text(windowMonthlyAverage.formatted(.number.precision(.fractionLength(1))))
-                            .font(.system(size: 18, weight: .semibold).monospacedDigit())
+
+                HStack(spacing: 2) {
+                    ForEach(availableSpans) { option in
+                        let selected = span == option
+                        Button {
+                            withAnimation(.easeOut(duration: 0.16)) { span = option }
+                        } label: {
+                            Text(option.rawValue)
+                                .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                                .foregroundStyle(selected ? .white : AdaColors.secondaryInk)
+                                .fixedSize()
+                                .padding(.horizontal, 9)
+                                .frame(height: 24)
+                                .background(selected ? AdaColors.navy : .clear, in: Capsule())
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
+                .padding(3)
+                .background(AdaColors.surfaceMuted, in: Capsule())
+                .fixedSize()
             }
         }
     }
+}
 
-    private func metricChip(_ title: String, mode: ChartMode) -> some View {
-        let selected = chartMode == mode
-        return Button {
-            withAnimation(.easeOut(duration: 0.14)) { chartMode = mode }
-        } label: {
-            Text(title)
-                .font(.system(size: 10, weight: selected ? .semibold : .medium))
-                .foregroundStyle(selected ? .white : AdaColors.secondaryInk)
-                .padding(.horizontal, 9)
-                .frame(height: 22)
-                .background(selected ? AdaColors.navy : .clear, in: Capsule())
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-    }
+/// Custom FigCraft timeline scrubber rail with proportional draggable viewport pill anchored to "Now".
+private struct FigCraftTimelineScrubber: View {
+    let window: SightingsTimelineWindow
+    let earliestLabel: String
+    @Binding var endOffsetFromNow: Int
+    var onScrubStart: () -> Void = {}
 
-    @ViewBuilder
-    private var timelineFooter: some View {
-        if window.maxOffset > 0 {
-            // Slidable time-window bar (left = older history, right = Now)
-            HStack(spacing: 8) {
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        endOffsetFromNow = min(window.maxOffset, endOffsetFromNow + 1)
-                        activeMonthIndex = nil
-                    }
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 10, weight: .bold))
-                        .frame(width: 24, height: 24)
-                        .background(AdaColors.surfaceMuted, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(endOffsetFromNow >= window.maxOffset ? AdaColors.secondaryInk.opacity(0.35) : AdaColors.ink)
-                .disabled(endOffsetFromNow >= window.maxOffset)
-                .help("Earlier month")
+    @State private var dragStartOffset: Int? = nil
+    @State private var dragGrabbedPill: Bool = false
 
-                Text(SightingsTimelineWindow.shortMonthYear(sourceMonths.first?.month ?? ""))
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(AdaColors.secondaryInk)
-                    .fixedSize()
-
-                Slider(
-                    value: Binding(
-                        get: { Double(window.maxOffset - window.clampedOffset) },
-                        set: { newValue in
-                            let target = window.maxOffset - Int(newValue.rounded())
-                            if target != endOffsetFromNow {
-                                endOffsetFromNow = max(0, min(window.maxOffset, target))
-                                activeMonthIndex = nil
-                            }
-                        }
-                    ),
-                    in: 0...Double(window.maxOffset),
-                    step: 1
-                )
-                .tint(AdaColors.navy)
-                .controlSize(.mini)
-                .accessibilityLabel("Slide timeline window toward now")
-
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        endOffsetFromNow = max(0, endOffsetFromNow - 1)
-                        activeMonthIndex = nil
-                    }
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .frame(width: 24, height: 24)
-                        .background(AdaColors.surfaceMuted, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(window.isAtNow ? AdaColors.secondaryInk.opacity(0.35) : AdaColors.ink)
-                .disabled(window.isAtNow)
-                .help("Later month")
-
-                nowSnapButton(isAnchored: window.isAtNow) {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        endOffsetFromNow = 0
-                        activeMonthIndex = max(0, visibleMonths.count - 1)
-                    }
-                }
-            }
-        } else if visibleMonths.count >= 2 {
-            // Direct month scrubber right up to Now when viewing the full loaded span
-            let maxIdx = visibleMonths.count - 1
-            let currentIdx = activeMonthIndex ?? maxIdx
-            let isAtLatest = currentIdx == maxIdx
-            HStack(spacing: 8) {
-                Text(SightingsTimelineWindow.shortMonthYear(visibleMonths.first?.month ?? ""))
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(AdaColors.secondaryInk)
-                    .fixedSize()
-
-                Slider(
-                    value: Binding(
-                        get: { Double(currentIdx) },
-                        set: { activeMonthIndex = min(maxIdx, max(0, Int($0.rounded()))) }
-                    ),
-                    in: 0...Double(maxIdx),
-                    step: 1
-                )
-                .tint(AdaColors.navy)
-                .controlSize(.mini)
-                .accessibilityLabel("Scrub sightings timeline to now")
-
-                nowSnapButton(isAnchored: isAtLatest) {
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        activeMonthIndex = maxIdx
-                    }
-                }
-            }
-        } else {
-            Text("Hover or drag across the graph to inspect monthly counts.")
-                .font(.system(size: 9.5))
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(earliestLabel)
+                .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(AdaColors.secondaryInk)
-        }
-    }
+                .fixedSize()
 
-    private func nowSnapButton(isAnchored: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(isAnchored ? AdaColors.green : Color.white)
-                    .frame(width: 5.5, height: 5.5)
-                Text(isAnchored ? "Now" : "Slide to Now")
-                    .font(.system(size: 10, weight: .semibold))
+            GeometryReader { proxy in
+                let trackWidth = max(1, proxy.size.width)
+                let frame = window.scrubberPillFrame(trackWidth: trackWidth, minimumPillWidth: 44)
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(AdaColors.surfaceMuted)
+                        .frame(height: 6)
+                        .overlay {
+                            Capsule().strokeBorder(AdaColors.line, lineWidth: 0.5)
+                        }
+
+                    Capsule()
+                        .fill(AdaColors.navy.opacity(0.18))
+                        .overlay {
+                            Capsule()
+                                .strokeBorder(AdaColors.navy, lineWidth: 1.25)
+                        }
+                        .overlay {
+                            Capsule()
+                                .fill(AdaColors.navy.opacity(0.55))
+                                .frame(width: 14, height: 2)
+                        }
+                        .frame(width: frame.width, height: 10)
+                        .offset(x: frame.leading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            if dragStartOffset == nil {
+                                onScrubStart()
+                                let insidePill = value.startLocation.x >= frame.leading - 6
+                                    && value.startLocation.x <= frame.leading + frame.width + 6
+                                dragGrabbedPill = insidePill
+                                dragStartOffset = window.clampedOffset
+                            }
+                            let target: Int
+                            if dragGrabbedPill, let startOffset = dragStartOffset {
+                                target = window.offset(
+                                    fromStartingOffset: startOffset,
+                                    dragDeltaX: value.translation.width,
+                                    trackWidth: trackWidth,
+                                    minimumPillWidth: 44
+                                )
+                            } else {
+                                target = window.offset(
+                                    forTrackCenterX: value.location.x,
+                                    trackWidth: trackWidth,
+                                    minimumPillWidth: 44
+                                )
+                            }
+                            if target != endOffsetFromNow {
+                                endOffsetFromNow = target
+                            }
+                        }
+                        .onEnded { _ in
+                            dragStartOffset = nil
+                            dragGrabbedPill = false
+                        }
+                )
             }
-            .foregroundStyle(isAnchored ? AdaColors.navy : .white)
-            .padding(.horizontal, 10)
-            .frame(height: 24)
-            .background(isAnchored ? AdaColors.accentSoft : AdaColors.navy, in: Capsule())
-            .contentShape(Capsule())
+            .frame(height: 22)
+            .accessibilityElement()
+            .accessibilityLabel("Timeline range scrubber")
+            .accessibilityValue(window.rangeLabel)
+
+            if window.isAtNow {
+                Text("Now")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(AdaColors.secondaryInk)
+                    .fixedSize()
+            } else {
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        endOffsetFromNow = 0
+                        onScrubStart()
+                    }
+                } label: {
+                    Text("Now →")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .fixedSize()
+                        .padding(.horizontal, 10)
+                        .frame(height: 22)
+                        .background(AdaColors.navy, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Snap timeline window to the current month")
+            }
         }
-        .buttonStyle(.plain)
-        .help("Jump timeline to the current month")
     }
 }
 
@@ -1709,13 +1763,13 @@ private struct FigCraftFavoritesWidget: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                SectionTitle("Watchlist", subtitle: "\(favorites.count) tracked by this account")
+                SectionTitle("Saved", subtitle: "\(favorites.count) saved by this account")
                 Spacer()
                 Button("Browse →", action: onBrowseIndividuals).buttonStyle(.plain).font(.system(size: 11))
             }
 
             if favorites.isEmpty {
-                ContentUnavailableView("No tracked turtles", systemImage: "bookmark", description: Text("Bookmark an individual to track its encounters here."))
+                ContentUnavailableView("No saved turtles", systemImage: "bookmark", description: Text("Bookmark a sea turtle to track its encounters here."))
                     .frame(maxWidth: .infinity, minHeight: 160)
             } else {
                 ForEach(favorites.prefix(4)) { turtle in
@@ -1759,8 +1813,10 @@ private struct AppleStyleWidgetGallerySheet: View {
 
     private var filteredKinds: [DashboardWidgetKind] {
         DashboardWidgetKind.allCases.filter { kind in
+            let displayTitle = kind == .favoritesWatch ? "Saved" : kind.title
             let matchesCategory = selectedCategory == nil || kind.category == selectedCategory
             let matchesSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || displayTitle.localizedCaseInsensitiveContains(searchText)
                 || kind.title.localizedCaseInsensitiveContains(searchText)
                 || kind.category.rawValue.localizedCaseInsensitiveContains(searchText)
             return matchesCategory && matchesSearch
@@ -1957,7 +2013,7 @@ private struct WidgetGalleryPreviewCard: View {
                 }
 
                 HStack(alignment: .center) {
-                    Text(kind.title)
+                    Text(kind == .favoritesWatch ? "Saved" : kind.title)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(AdaColors.ink)
 
@@ -2233,20 +2289,17 @@ private struct SummaryButtonStyle: ButtonStyle {
 private struct SightingsLineChart: View {
     let months: [DashboardSnapshot.Month]
     var chartMode: ChartMode = .sightings
-    var style: SightingsChartStyle = .points
     var interactive: Bool = false
     @Binding var selectedIndex: Int?
 
     init(
         months: [DashboardSnapshot.Month],
         chartMode: ChartMode = .sightings,
-        style: SightingsChartStyle = .points,
         interactive: Bool = false,
         selectedIndex: Binding<Int?> = .constant(nil)
     ) {
         self.months = months
         self.chartMode = chartMode
-        self.style = style
         self.interactive = interactive
         self._selectedIndex = selectedIndex
     }
@@ -2262,36 +2315,21 @@ private struct SightingsLineChart: View {
         max(months.map(value(for:)).max() ?? 1, 1)
     }
 
-    /// Always includes the first month and the final ("Now") month so the current month is never hidden.
-    private func visibleTickIndices(count: Int) -> Set<Int> {
-        guard count > 0 else { return [] }
-        if count <= 7 { return Set(0..<count) }
-        let strideStep = count > 14 ? 3 : 2
-        var ticks = Set<Int>([0, count - 1])
-        var idx = strideStep
-        while idx < count - 1 {
-            if (count - 1) - idx >= max(1, strideStep - 1) {
-                ticks.insert(idx)
-            }
-            idx += strideStep
-        }
-        return ticks
-    }
-
     var body: some View {
         let values = months.map { CGFloat(value(for: $0)) }
         let maximum = CGFloat(maxCount)
         let yAxisWidth: CGFloat = interactive ? 26 : 0
         let plotInsetH: CGFloat = interactive ? 10 : 4
-        let topPad: CGFloat = interactive ? 24 : 8
-        let bottomPad: CGFloat = 4
-        let tickIndices = visibleTickIndices(count: months.count)
+        let topPad: CGFloat = interactive ? 10 : 6
+        let bottomPad: CGFloat = 6
+        let tickIndices = SightingsTimelineWindow.xAxisTickIndices(count: months.count)
 
         GeometryReader { proxy in
             let plotWidth = max(16, proxy.size.width - yAxisWidth)
             let xAxisHeight: CGFloat = 18
             let plotHeight = max(24, proxy.size.height - xAxisHeight - 6)
             let usableHeight = max(12, plotHeight - topPad - bottomPad)
+            let baselineY = topPad + usableHeight
 
             let xForIndex: (Int) -> CGFloat = { idx in
                 guard values.count > 1 else { return plotInsetH + (plotWidth - plotInsetH * 2) * 0.5 }
@@ -2305,139 +2343,124 @@ private struct SightingsLineChart: View {
             VStack(spacing: 6) {
                 HStack(spacing: 0) {
                     if interactive {
-                        VStack {
+                        ZStack(alignment: .trailing) {
                             Text("\(maxCount)")
-                            Spacer()
-                            Text("\((maxCount + 1) / 2)")
-                            Spacer()
+                                .position(x: yAxisWidth * 0.5 - 2, y: topPad)
+                            if maxCount > 1 {
+                                Text("\((maxCount + 1) / 2)")
+                                    .position(x: yAxisWidth * 0.5 - 2, y: topPad + usableHeight * 0.5)
+                            }
                             Text("0")
+                                .position(x: yAxisWidth * 0.5 - 2, y: baselineY)
                         }
-                        .font(.system(size: 8.5, weight: .medium).monospacedDigit())
+                        .font(.system(size: 9, weight: .medium).monospacedDigit())
                         .foregroundStyle(AdaColors.secondaryInk.opacity(0.75))
                         .frame(width: yAxisWidth, height: plotHeight, alignment: .trailing)
-                        .padding(.trailing, 4)
                     }
 
-                    ZStack(alignment: .topLeading) {
-                        Canvas { context, size in
-                            // Horizontal guide lines
-                            for step in 0...2 {
-                                let y = topPad + usableHeight * CGFloat(step) / 2.0
-                                var grid = Path()
-                                grid.move(to: CGPoint(x: 0, y: y))
-                                grid.addLine(to: CGPoint(x: size.width, y: y))
-                                context.stroke(grid, with: .color(AdaColors.line.opacity(0.85)), lineWidth: 0.6)
+                    Canvas { context, size in
+                        // Subtle horizontal guide lines
+                        for step in 0...2 {
+                            let y = topPad + usableHeight * CGFloat(step) / 2.0
+                            var grid = Path()
+                            grid.move(to: CGPoint(x: 0, y: y))
+                            grid.addLine(to: CGPoint(x: size.width, y: y))
+                            context.stroke(grid, with: .color(AdaColors.line.opacity(0.85)), lineWidth: 0.6)
+                        }
+
+                        guard !values.isEmpty else { return }
+
+                        let points = values.enumerated().map { idx, val in
+                            CGPoint(x: xForIndex(idx), y: yForValue(val))
+                        }
+                        guard let first = points.first, let last = points.last else { return }
+
+                        // Smooth monotone-clamped cubic Bezier curve (flat 0 runs stay strictly at 0)
+                        if points.count >= 2 {
+                            let controls = SightingsTimelineWindow.monotoneCubicControlPoints(for: points)
+                            var line = Path()
+                            line.move(to: first)
+                            for idx in 0..<(points.count - 1) {
+                                line.addCurve(
+                                    to: points[idx + 1],
+                                    control1: controls[idx].cp1,
+                                    control2: controls[idx].cp2
+                                )
                             }
 
-                            guard !values.isEmpty else { return }
-                            let baselineY = topPad + usableHeight
-
-                            if style == .bars {
-                                let slotW = (size.width - plotInsetH * 2) / CGFloat(max(values.count, 1))
-                                let barW = min(22, max(5, slotW * 0.58))
-                                for (idx, val) in values.enumerated() {
-                                    let cx = xForIndex(idx)
-                                    let topY = yForValue(val)
-                                    let barH = max(val > 0 ? 3 : 1.5, baselineY - topY)
-                                    let rect = CGRect(x: cx - barW * 0.5, y: baselineY - barH, width: barW, height: barH)
-                                    let isSelected = selectedIndex == idx
-                                    let isNow = idx == values.count - 1 && SightingsTimelineWindow.isCurrentMonth(months[idx].month)
-                                    let fillColor: Color = isSelected
-                                        ? AdaColors.accent
-                                        : (isNow ? AdaColors.navy : AdaColors.navy.opacity(val > 0 ? 0.72 : 0.16))
-                                    let barPath = Path(roundedRect: rect, cornerRadius: min(4, barW * 0.35))
-                                    context.fill(barPath, with: .color(fillColor))
-                                }
-                            } else {
-                                // Honest segmented line + discrete monthly data points (zero spline overshoot)
-                                let points = values.enumerated().map { idx, val in
-                                    CGPoint(x: xForIndex(idx), y: yForValue(val))
-                                }
-                                guard let first = points.first, let last = points.last else { return }
-
-                                var line = Path()
-                                line.move(to: first)
-                                for pt in points.dropFirst() {
-                                    line.addLine(to: pt)
-                                }
-
-                                var area = line
-                                area.addLine(to: CGPoint(x: last.x, y: baselineY))
-                                area.addLine(to: CGPoint(x: first.x, y: baselineY))
-                                area.closeSubpath()
-                                context.fill(
-                                    area,
-                                    with: .linearGradient(
-                                        Gradient(colors: [AdaColors.navy.opacity(0.14), AdaColors.navy.opacity(0.01)]),
-                                        startPoint: CGPoint(x: 0, y: topPad),
-                                        endPoint: CGPoint(x: 0, y: baselineY)
-                                    )
+                            var area = line
+                            area.addLine(to: CGPoint(x: last.x, y: baselineY))
+                            area.addLine(to: CGPoint(x: first.x, y: baselineY))
+                            area.closeSubpath()
+                            context.fill(
+                                area,
+                                with: .linearGradient(
+                                    Gradient(colors: [AdaColors.navy.opacity(0.10), AdaColors.navy.opacity(0.0)]),
+                                    startPoint: CGPoint(x: 0, y: topPad),
+                                    endPoint: CGPoint(x: 0, y: baselineY)
                                 )
-                                context.stroke(
-                                    line,
-                                    with: .color(AdaColors.navy),
-                                    style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round)
-                                )
+                            )
+                            context.stroke(
+                                line,
+                                with: .color(AdaColors.navy),
+                                style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round)
+                            )
+                        }
 
-                                // Draw discrete monthly nodes so real data points are unmistakably clear
-                                let nodeRadius: CGFloat = values.count > 14 ? 2.6 : 3.4
-                                for (idx, pt) in points.enumerated() {
-                                    let isNow = idx == points.count - 1 && SightingsTimelineWindow.isCurrentMonth(months[idx].month)
-                                    let isSelected = selectedIndex == idx
-                                    let r = isSelected ? 5.2 : (isNow ? 4.2 : nodeRadius)
-                                    let dot = Path(ellipseIn: CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2))
-                                    if isSelected {
-                                        let halo = Path(ellipseIn: CGRect(x: pt.x - 9, y: pt.y - 9, width: 18, height: 18))
-                                        context.fill(halo, with: .color(AdaColors.accent.opacity(0.20)))
-                                        context.fill(dot, with: .color(AdaColors.accent))
-                                        context.stroke(dot, with: .color(.white), lineWidth: 2.0)
-                                    } else if isNow {
-                                        context.fill(dot, with: .color(AdaColors.accent))
-                                        context.stroke(dot, with: .color(.white), lineWidth: 1.5)
-                                    } else {
-                                        context.fill(dot, with: .color(AdaColors.card))
-                                        context.stroke(dot, with: .color(AdaColors.navy), lineWidth: 1.7)
-                                    }
-                                }
-                            }
+                        // Subtle vertical hairline for the active hovered/scrubbed month
+                        if interactive, let activeIdx = selectedIndex, points.indices.contains(activeIdx) {
+                            let ax = points[activeIdx].x
+                            var guide = Path()
+                            guide.move(to: CGPoint(x: ax, y: topPad))
+                            guide.addLine(to: CGPoint(x: ax, y: baselineY))
+                            context.stroke(
+                                guide,
+                                with: .color(AdaColors.navy.opacity(0.24)),
+                                style: StrokeStyle(lineWidth: 1, dash: [3, 3])
+                            )
+                        }
 
-                            // Vertical scrub hairline for the active month
-                            if let activeIdx = selectedIndex, values.indices.contains(activeIdx) {
-                                let ax = xForIndex(activeIdx)
-                                var guide = Path()
-                                guide.move(to: CGPoint(x: ax, y: topPad - 6))
-                                guide.addLine(to: CGPoint(x: ax, y: baselineY))
-                                context.stroke(
-                                    guide,
-                                    with: .color(AdaColors.navy.opacity(0.35)),
-                                    style: StrokeStyle(lineWidth: 1, dash: [3, 3])
-                                )
+                        // Subtle dots ONLY on non-zero months (never noisy hollow circles on 0 months)
+                        if interactive {
+                            let subtleRadius: CGFloat = values.count > 14 ? 2.1 : 2.6
+                            for (idx, pt) in points.enumerated() {
+                                let isLast = idx == points.count - 1
+                                let isSelected = selectedIndex == idx
+                                guard !isSelected, !isLast, values[idx] > 0 else { continue }
+                                let dot = Path(ellipseIn: CGRect(
+                                    x: pt.x - subtleRadius,
+                                    y: pt.y - subtleRadius,
+                                    width: subtleRadius * 2,
+                                    height: subtleRadius * 2
+                                ))
+                                context.fill(dot, with: .color(AdaColors.navy))
+                                context.stroke(dot, with: .color(AdaColors.card), lineWidth: 1.25)
                             }
                         }
-                        .frame(width: plotWidth, height: plotHeight)
 
-                        // Floating compact readout badge above the scrubbed node
-                        if interactive, let activeIdx = selectedIndex, months.indices.contains(activeIdx) {
-                            let m = months[activeIdx]
-                            let val = value(for: m)
-                            let ax = xForIndex(activeIdx)
-                            let clampedX = min(max(ax, 66), max(66, plotWidth - 66))
-                            let isNow = SightingsTimelineWindow.isCurrentMonth(m.month)
-                            let unit = chartMode == .sightings ? (val == 1 ? "sighting" : "sightings") : (val == 1 ? "new turtle" : "new turtles")
-                            HStack(spacing: 5) {
-                                Text(SightingsTimelineWindow.shortMonth(m.month) + (isNow ? " · Now" : ""))
-                                    .font(.system(size: 9.5, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.78))
-                                Text("\(val) \(unit)")
-                                    .font(.system(size: 9.5, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(.white)
+                        // Latest endpoint accent dot (when not overridden by active hover on the same point)
+                        let lastIndex = points.count - 1
+                        if selectedIndex != lastIndex {
+                            let pt = last
+                            if interactive {
+                                let halo = Path(ellipseIn: CGRect(x: pt.x - 7, y: pt.y - 7, width: 14, height: 14))
+                                context.fill(halo, with: .color(AdaColors.navy.opacity(0.11)))
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3.5)
-                            .background(AdaColors.navy, in: Capsule())
-                            .shadow(color: Color.black.opacity(0.14), radius: 4, y: 1)
-                            .position(x: clampedX, y: 10)
-                            .allowsHitTesting(false)
+                            let r: CGFloat = interactive ? 3.5 : 2.6
+                            let dot = Path(ellipseIn: CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2))
+                            context.fill(dot, with: .color(AdaColors.navy))
+                            context.stroke(dot, with: .color(AdaColors.card), lineWidth: interactive ? 1.5 : 1.0)
+                        }
+
+                        // Crisp active hovered/scrubbed point with soft outer halo
+                        if interactive, let activeIdx = selectedIndex, points.indices.contains(activeIdx) {
+                            let pt = points[activeIdx]
+                            let halo = Path(ellipseIn: CGRect(x: pt.x - 8.5, y: pt.y - 8.5, width: 17, height: 17))
+                            context.fill(halo, with: .color(AdaColors.navy.opacity(0.15)))
+                            let r: CGFloat = 4.6
+                            let dot = Path(ellipseIn: CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2))
+                            context.fill(dot, with: .color(AdaColors.navy))
+                            context.stroke(dot, with: .color(AdaColors.card), lineWidth: 2.0)
                         }
                     }
                     .frame(width: plotWidth, height: plotHeight)
@@ -2448,7 +2471,7 @@ private struct SightingsLineChart: View {
                         case .active(let location):
                             selectedIndex = nearestIndex(forX: location.x, plotWidth: plotWidth, inset: plotInsetH)
                         case .ended:
-                            break
+                            selectedIndex = nil
                         }
                     }
                     .gesture(
@@ -2460,20 +2483,18 @@ private struct SightingsLineChart: View {
                     )
                 }
 
-                // X-axis month labels (anchored cleanly to exact node X positions, always showing Now!)
+                // Non-overlapping 3-letter X-axis month labels (never append "· Now")
                 ZStack(alignment: .leading) {
-                    ForEach(Array(months.enumerated()), id: \.offset) { index, month in
-                        if tickIndices.contains(index) {
-                            let isNow = index == months.count - 1 && SightingsTimelineWindow.isCurrentMonth(month.month)
-                            let isSelected = selectedIndex == index
-                            let rawX = yAxisWidth + xForIndex(index)
-                            let clampedX = min(max(rawX, yAxisWidth + 16), max(yAxisWidth + 16, proxy.size.width - (isNow ? 22 : 14)))
-                            Text(isNow ? "\(SightingsTimelineWindow.shortMonth(month.month)) · Now" : SightingsTimelineWindow.shortMonth(month.month))
-                                .font(.system(size: 9, weight: (isNow || isSelected) ? .semibold : .regular))
-                                .foregroundStyle(isSelected ? AdaColors.navy : (isNow ? AdaColors.accent : AdaColors.secondaryInk))
-                                .fixedSize()
-                                .position(x: clampedX, y: xAxisHeight * 0.5)
-                        }
+                    ForEach(tickIndices, id: \.self) { index in
+                        let month = months[index]
+                        let isSelected = selectedIndex == index
+                        let rawX = yAxisWidth + xForIndex(index)
+                        let clampedX = min(max(rawX, yAxisWidth + 14), max(yAxisWidth + 14, proxy.size.width - 14))
+                        Text(SightingsTimelineWindow.shortMonth(month.month))
+                            .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(isSelected ? AdaColors.ink : AdaColors.secondaryInk)
+                            .fixedSize()
+                            .position(x: clampedX, y: xAxisHeight * 0.5)
                     }
                 }
                 .frame(width: proxy.size.width, height: xAxisHeight)
@@ -2495,44 +2516,39 @@ private struct SightingsLineChart: View {
 struct SightingMapPreview: View {
     let sightings: [Sighting]
 
-    private var previewPins: [Sighting] {
-        // Keep mini overview map clean across both Bali and pan-Asian Super Account datasets
-        var seenCells = Set<String>()
-        var result: [Sighting] = []
-        let cellSize = region.span.latitudeDelta > 8 ? 4.0 : 0.03
-        for item in sightings {
-            let key = "\(Int((item.coordinate.latitude / cellSize).rounded())):\(Int((item.coordinate.longitude / cellSize).rounded()))"
-            if seenCells.insert(key).inserted {
-                result.append(item)
-            }
-            if result.count >= 16 { break }
-        }
-        return result
-    }
-
     var body: some View {
-        Map(initialPosition: .region(region), interactionModes: []) {
-            ForEach(previewPins) { sighting in
-                Annotation(sighting.displayName, coordinate: .init(latitude: sighting.coordinate.latitude, longitude: sighting.coordinate.longitude), anchor: .bottom) {
-                    TurtleMapPin(state: .other).scaleEffect(0.68, anchor: .bottom)
+        let previewRegion = region
+        GeometryReader { proxy in
+            let clusters = MapSightingLayout.clusters(
+                for: sightings,
+                in: previewRegion,
+                mapSize: proxy.size
+            )
+            Map(initialPosition: .region(previewRegion), interactionModes: []) {
+                ForEach(clusters) { cluster in
+                    if cluster.isMerged {
+                        Annotation("\(cluster.count) sightings", coordinate: cluster.coordinate, anchor: .center) {
+                            ClusterMapPin(count: cluster.count)
+                                .scaleEffect(0.82)
+                        }
+                        .annotationTitles(.hidden)
+                    } else {
+                        Annotation(cluster.primarySighting.displayName, coordinate: cluster.coordinate, anchor: .bottom) {
+                            TurtleMapPin(state: .other, count: cluster.count)
+                                .scaleEffect(0.72, anchor: .bottom)
+                        }
+                        .annotationTitles(.hidden)
+                    }
                 }
-                .annotationTitles(.hidden)
             }
+            .id("\(sightings.count)-\(sightings.first?.id ?? "empty")")
+            .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            .accessibilityLabel("Sighting locations map preview")
         }
-        .id("\(sightings.count)-\(sightings.first?.id ?? "empty")")
-        .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
-        .accessibilityLabel("Sighting locations map preview")
     }
 
     private var region: MKCoordinateRegion {
-        let lat = sightings.map(\.coordinate.latitude), lon = sightings.map(\.coordinate.longitude)
-        guard let minLat = lat.min(), let maxLat = lat.max(), let minLon = lon.min(), let maxLon = lon.max() else {
-            return .init(center: .init(latitude: -8.72, longitude: 115.2), span: .init(latitudeDelta: 0.3, longitudeDelta: 0.3))
-        }
-        return .init(
-            center: .init(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2),
-            span: .init(latitudeDelta: max(0.06, (maxLat - minLat) * 1.5), longitudeDelta: max(0.06, (maxLon - minLon) * 1.5))
-        )
+        MapSightingLayout.region(containing: sightings)
     }
 }
 
