@@ -356,6 +356,7 @@ protocol TurtleRepository: AnyObject {
     func reviewQueue(limit: Int, offset: Int) async throws -> V2Page<MobileReviewSighting>
     func reviewSighting(id: UUID) async throws -> MobileReviewSighting
     func reviewMatchResults(logID: UUID) async throws -> [ReviewMatchResult]
+    func reviewPhotoMetadata(logID: UUID, attemptID: UUID) async throws -> ReviewPhotoDelivery?
     func reviewQueries(logID: UUID, attemptID: UUID) async throws -> [ReviewQueryEvidence]
     func rematchReview(logID: UUID, command: ReviewRematchCommand, crop: Data?) async throws -> ReviewMatchResult
     func confirmReview(logID: UUID, attemptID: UUID, turtleID: UUID) async throws
@@ -387,6 +388,7 @@ extension TurtleRepository {
         return row
     }
     func reviewMatchResults(logID: UUID) async throws -> [ReviewMatchResult] { [] }
+    func reviewPhotoMetadata(logID: UUID, attemptID: UUID) async throws -> ReviewPhotoDelivery? { nil }
     func reviewQueries(logID: UUID, attemptID: UUID) async throws -> [ReviewQueryEvidence] { [] }
     func rematchReview(logID: UUID, command: ReviewRematchCommand, crop: Data?) async throws -> ReviewMatchResult { throw NotSureReviewError.searchUnavailable }
     func confirmReview(logID: UUID, attemptID: UUID, turtleID: UUID) async throws { throw NotSureReviewError.searchUnavailable }
@@ -2507,6 +2509,13 @@ extension RemoteTurtleRepository {
         let page: V2Page<ReviewMatchResult> = try await client.get("api/v2/logs/\(logID.uuidString.lowercased())/match-results",
             queryItems: [URLQueryItem(name: "limit", value: "1"), URLQueryItem(name: "offset", value: "0")])
         return page.items
+    }
+    func reviewPhotoMetadata(logID: UUID, attemptID: UUID) async throws -> ReviewPhotoDelivery? {
+        do {
+            return try await client.get("api/v2/logs/\(logID.uuidString.lowercased())/match-results/\(attemptID.uuidString.lowercased())/photos")
+        } catch let error as APIError where error.statusCode == 404 {
+            return nil // Older backend. Other failures must remain visible.
+        }
     }
     func reviewQueries(logID: UUID, attemptID: UUID) async throws -> [ReviewQueryEvidence] {
         try await client.get("api/v2/logs/\(logID.uuidString.lowercased())/match-results/\(attemptID.uuidString.lowercased())/queries")

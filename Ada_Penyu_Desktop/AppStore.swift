@@ -141,6 +141,31 @@ final class AppStore: ObservableObject {
     private var dashboardRequest = 0
     private var allRequest = 0
     private var photoCache: [String: NSImage] = [:]
+    @Published private(set) var reviewThumbnails: [String: NSImage] = [:]
+    private var photoDelivery: PhotoDelivery?
+    private var reviewContexts: [UUID: ReviewPhotoContext] = [:]
+    private var reviewReferences: [UUID: [String: PhotoReference]] = [:]
+    private lazy var reviewPhotoMetadata = ReviewPhotoMetadataStore { [weak self] context in
+        guard let self else { throw CancellationError() }
+        return try await self.repository.reviewPhotoMetadata(logID: context.logID, attemptID: context.attemptID)
+    }
+    private var queueRenewal: Task<Void, Never>?
+    private var queuePhotoEpoch = 0
+
+    private func deliveryLoader() -> PhotoDelivery {
+        let scope = "\(apiBaseURLString)-\(sessionGeneration.uuidString)-\(notSureReviewScope ?? "")"
+        if let current = photoDelivery, current.scope == scope { return current }
+        photoDelivery?.clear()
+        let loader = PhotoDelivery(scope: scope) { [weak self] path in
+            guard let self else { throw CancellationError() }
+            let data = try await self.repository.fetchPhotoData(pathOrURL: path)
+            guard NSImage(data: data) != nil else { throw NotSureReviewError.invalidPhoto }
+            return data
+        }
+        photoDelivery = loader
+        return loader
+    }
+
     private var keySettingsObservation: AnyCancellable?
     private var localizationObservation: AnyCancellable?
     private var contourPreferencesObservation: AnyCancellable?
@@ -676,7 +701,6 @@ final class AppStore: ObservableObject {
             try checkReviewContext(generation, scope: scope)
         }
         try checkReviewContext(generation, scope: scope)
-        if result.queries == nil { result.queries = try await repository.reviewQueries(logID: logID, attemptID: result.id) }
         try await hydrateMobileReview(sighting, result: result, generation: generation, scope: scope)
         try checkReviewContext(generation, scope: scope)
         if let usedAttemptID, pendingReviewAttempts[logID]?.command.attemptID == usedAttemptID {
@@ -690,38 +714,67 @@ final class AppStore: ObservableObject {
     }
 
     private func hydrateMobileReview(_ sighting: MobileReviewSighting, result: ReviewMatchResult, generation: UUID, scope: String?, recordDeltas: Bool = false) async throws {
-        let evidence = result.queries ?? []
-        let selected: [(TurtlePhotoSide, String, UUID?)]
-        if !evidence.isEmpty { selected = evidence.map { ($0.side, $0.url, $0.photoID) } }
-        else {
-            // Older snapshots retain query sides but no photo IDs. Only unambiguous same-side sources are usable.
+        let context = ReviewPhotoContext(logID: sighting.id, attemptID: result.id)
+        let metadata = try await reviewPhotoMetadata.load(context, refreshing: true)
+        try checkReviewContext(generation, scope: scope)
+        let observedEpoch = reviewPhotoMetadata.epoch(context)
+        var evidence = result.queries ?? []
+        if metadata == nil && result.queries == nil {
+            evidence = try await repository.reviewQueries(logID: sighting.id, attemptID: result.id)
+        }
+        let selected: [(TurtlePhotoSide, PhotoReference, UUID?)]
+        if let metadata {
+            guard !metadata.queries.isEmpty else {
+                throw APIError.notFound("Historical query photo unavailable. Start a new match to review current photos.")
+            }
+            selected = metadata.queries.map { ($0.side, $0.photo, $0.photoID) }
+        } else if !evidence.isEmpty {
+            selected = evidence.map { ($0.side, PhotoReference(url: $0.url), $0.photoID) }
+        } else {
             guard !result.querySides.isEmpty, sighting.headPhotos.allSatisfy({ $0.side != nil }) else {
                 throw ReviewInputSelectionRequired(sighting: sighting)
             }
             selected = try result.querySides.map { side in
                 let photos = sighting.headPhotos.filter { $0.side == side }
                 guard photos.count == 1, let photo = photos.first else { throw ReviewInputSelectionRequired(sighting: sighting) }
-                return (side, photo.fetchPath, Optional(photo.id))
+                return (side, photo.reference, Optional(photo.id))
             }
         }
         guard let primary = selected.first else { throw NotSureReviewError.invalidPhoto }
-        let bytes = try await repository.fetchPhotoData(pathOrURL: primary.1)
-        try checkReviewContext(generation, scope: scope)
-        guard NSImage(data: bytes) != nil else { throw NotSureReviewError.invalidPhoto }
+        func queryBytes(_ entry: (TurtlePhotoSide, PhotoReference, UUID?)) async throws -> Data {
+            var renewal: PhotoDelivery.Renewal?
+            if metadata != nil {
+                renewal = { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    let refreshed = try await self.reviewPhotoMetadata.load(context, after: observedEpoch)
+                    return refreshed?.queries.first(where: { $0.side == entry.0 })?.photo
+                }
+            }
+            guard let bytes = try await deliveryLoader().data(for: entry.1, representation: .original, renewal: renewal) else {
+                throw NotSureReviewError.invalidPhoto
+            }
+            try checkReviewContext(generation, scope: scope)
+            return bytes
+        }
+        let bytes = try await queryBytes(primary)
         var companion: NotSureReviewPhoto?
         if let other = selected.dropFirst().first {
-            let data = try await repository.fetchPhotoData(pathOrURL: other.1)
-            try checkReviewContext(generation, scope: scope)
-            guard NSImage(data: data) != nil else { throw NotSureReviewError.invalidPhoto }
-            companion = NotSureReviewPhoto(data: data)
+            companion = NotSureReviewPhoto(data: try await queryBytes(other))
         }
+        var freshReferences: [String: PhotoReference] = [:]
         let references = result.candidates.map { candidate in
             let side: TurtlePhotoSide = primary.0
-            let path = side == .left ? candidate.turtle.identityPhotos?.left?.url : candidate.turtle.identityPhotos?.right?.url
+            let delivered = metadata?.candidates.first { $0.turtleID == candidate.turtle.id && $0.side == side }
+            let legacy = side == .left ? candidate.turtle.identityPhotos?.left : candidate.turtle.identityPhotos?.right
+            let ref: PhotoReference?
+            if metadata != nil { ref = delivered?.photo }
+            else { ref = legacy ?? (candidate.turtle.identityPhotos == nil ? PhotoReference(url: "/api/v2/individuals/\(candidate.turtle.id.uuidString.lowercased())/photos/\(side.rawValue)") : nil) }
+            if let ref { freshReferences[candidate.turtle.id.uuidString] = ref }
             return EscalatedNotSureCandidate(id: candidate.turtle.id.uuidString, rank: candidate.rank,
                 name: candidate.turtle.name, profileCode: candidate.turtle.profileCode, side: side, sideMatches: true,
                 dateText: "", location: "", confidencePercent: Int((candidate.confidence * 100).rounded()), photo: nil,
-                photoPath: path ?? (candidate.turtle.identityPhotos == nil ? "/api/v2/individuals/\(candidate.turtle.id.uuidString.lowercased())/photos/\(side.rawValue)" : nil), sampleImageName: nil, fingerprint: nil, isBundledExample: false)
+                photoPath: ref?.url, photoRevision: ref?.revision, photoAvailability: delivered?.availability,
+                sampleImageName: nil, fingerprint: nil, isBundledExample: false)
         }
         var item = escalatedNotSureCases.first(where: { $0.sourceLogID == sighting.id }) ?? EscalatedNotSureCase(
             id: sighting.id, title: sighting.location.name, side: primary.0, photo: NotSureReviewPhoto(data: bytes),
@@ -740,16 +793,34 @@ final class AppStore: ObservableObject {
         } else {
             item.candidates = references.map { fresh in
                 var candidate = fresh
-                candidate.photo = item.candidates.first(where: { $0.id == fresh.id && $0.side == fresh.side })?.photo
+                candidate.photo = fresh.photoPath == nil ? nil : item.candidates.first(where: {
+                    $0.id == fresh.id && $0.side == fresh.side && $0.photoRevision == fresh.photoRevision
+                })?.photo
                 return candidate
             }
         }
         item.replaceQueryEvidence(side: primary.0, photo: NotSureReviewPhoto(data: bytes), companion: companion)
         item.matchAttemptID = result.id
         item.reviewInputs = selected.map { ReviewQueryInput(photoID: $0.2, side: $0.0, file: nil) }
+        reviewContexts[item.id] = context
+        reviewReferences[item.id] = freshReferences
+        reviewThumbnails = reviewThumbnails.filter { $0.key.hasPrefix(item.id.uuidString + ":") }
+
         if item.note.isEmpty, let note = sighting.notes, !note.isEmpty { try item.apply(.saveNote(note)) }
         try checkReviewContext(generation, scope: scope)
         try saveNotSureCase(item)
+    }
+
+    private func candidateRenewal(caseID: UUID, candidateID: String, side: TurtlePhotoSide) -> PhotoDelivery.Renewal? {
+        guard let context = reviewContexts[caseID] else { return nil }
+        let epoch = reviewPhotoMetadata.epoch(context)
+        return { [weak self] in
+            guard let self else { throw CancellationError() }
+            let metadata = try await self.reviewPhotoMetadata.load(context, after: epoch)
+            let ref = metadata?.candidates.first { $0.turtleID.uuidString == candidateID && $0.side == side }?.photo
+            if let ref { self.reviewReferences[caseID]?[candidateID] = ref }
+            return ref
+        }
     }
 
     func loadNotSureCandidatePhoto(caseID: UUID, candidateID: String) async throws {
@@ -759,13 +830,77 @@ final class AppStore: ObservableObject {
         let generation = sessionGeneration
         let scope = notSureReviewScope
         let attempt = item.matchAttemptID
-        let bytes = try await repository.fetchPhotoData(pathOrURL: path)
+        let ref = reviewReferences[caseID]?[candidateID] ?? PhotoReference(url: path)
+        guard let bytes = try await deliveryLoader().data(for: ref, representation: .original,
+            renewal: candidateRenewal(caseID: caseID, candidateID: candidateID, side: candidate.side)) else {
+            throw NotSureReviewError.invalidPhoto
+        }
         try checkReviewContext(generation, scope: scope)
-        guard NSImage(data: bytes) != nil else { throw NotSureReviewError.invalidPhoto }
         guard var current = escalatedNotSureCases.first(where: { $0.id == caseID }), current.matchAttemptID == attempt,
-              let index = current.candidates.firstIndex(where: { $0.id == candidateID && $0.photoPath == path }) else { return }
+              let index = current.candidates.firstIndex(where: { $0.id == candidateID && $0.photoPath == path && $0.photoRevision == candidate.photoRevision }) else { return }
         current.candidates[index].photo = NotSureReviewPhoto(data: bytes)
         try saveNotSureCase(current)
+    }
+
+    func prefetchNotSureCandidatePhotos(caseID: UUID, priorityCandidateID: String?) async throws {
+        guard let item = escalatedNotSureCases.first(where: { $0.id == caseID }) else { return }
+        let primary = item.candidates.firstIndex { $0.id == priorityCandidateID } ?? 0
+        let ordered = Array(item.candidates.dropFirst(primary).prefix(2))
+        let keep = Set(ordered.map(\.id))
+        let loader = deliveryLoader()
+        let keys = Set(ordered.compactMap { reviewReferences[caseID]?[$0.id]?.key(scope: loader.scope, representation: .original) })
+        loader.cancelOriginals(except: keys)
+        // Bound decoded candidate originals to this selection and one neighbour.
+        for index in escalatedNotSureCases.indices {
+            for candidate in escalatedNotSureCases[index].candidates.indices {
+                if escalatedNotSureCases[index].id != caseID || !keep.contains(escalatedNotSureCases[index].candidates[candidate].id) {
+                    escalatedNotSureCases[index].candidates[candidate].photo = nil
+                }
+            }
+        }
+        for candidate in ordered {
+            try Task.checkCancellation()
+            do { try await loadNotSureCandidatePhoto(caseID: caseID, candidateID: candidate.id) }
+            catch is CancellationError { throw CancellationError() }
+            catch { if candidate.id == priorityCandidateID { throw error } }
+        }
+    }
+
+    func loadNotSureThumbnail(caseID: UUID, candidateID: String) async {
+        guard let item = escalatedNotSureCases.first(where: { $0.id == caseID }),
+              let candidate = item.candidates.first(where: { $0.id == candidateID }),
+              let ref = reviewReferences[caseID]?[candidateID], ref.revision != nil else { return }
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        do {
+            guard let data = try await deliveryLoader().data(for: ref, representation: .thumbnail,
+                renewal: candidateRenewal(caseID: caseID, candidateID: candidateID, side: candidate.side)) else { return }
+            try checkReviewContext(generation, scope: scope)
+            reviewThumbnails[caseID.uuidString + ":" + candidateID] = NSImage(data: data)
+        } catch { /* Keep a placeholder; original comparison remains independent. */ }
+    }
+
+    func loadQueueThumbnail(sightingID: UUID, photo: MobileReviewPhoto) async -> NSImage? {
+        let generation = sessionGeneration
+        let epoch = queuePhotoEpoch
+        do {
+            let data = try await deliveryLoader().data(for: photo.reference, representation: .thumbnail) { [weak self] in
+                guard let self else { throw CancellationError() }
+                if self.queuePhotoEpoch == epoch {
+                    if let pending = self.queueRenewal { await pending.value }
+                    else {
+                        let task = Task { await self.loadMobileReviewQueue() }
+                        self.queueRenewal = task
+                        await task.value
+                        self.queueRenewal = nil
+                        self.queuePhotoEpoch += 1
+                    }
+                }
+                return self.mobileReviewRows.first(where: { $0.id == sightingID })?.photos.first(where: { $0.id == photo.id })?.reference
+            }
+            guard generation == sessionGeneration, !Task.isCancelled, let data else { return nil }
+            return NSImage(data: data)
+        } catch { return nil }
     }
 
     private func prepareDemoReview(_ sighting: MobileReviewSighting, generation: UUID, scope: String?) async throws {
@@ -829,8 +964,7 @@ final class AppStore: ObservableObject {
             }
             var result = try await repository.rematchReview(logID: logID, command: pending.command, crop: pending.crop)
             try checkReviewContext(generation, scope: scope)
-            if result.queries == nil { result.queries = try await repository.reviewQueries(logID: logID, attemptID: result.id) }
-            try await hydrateMobileReview(sighting, result: result, generation: generation, scope: scope, recordDeltas: true)
+                try await hydrateMobileReview(sighting, result: result, generation: generation, scope: scope, recordDeltas: true)
             try checkReviewContext(generation, scope: scope)
             if pendingReviewAttempts[logID]?.command.attemptID == pending.command.attemptID {
                 pendingReviewAttempts.removeValue(forKey: logID)
@@ -1044,6 +1178,11 @@ final class AppStore: ObservableObject {
         mapTask?.cancel()
         demoReloadTask?.cancel()
         photoCache.removeAll()
+        photoDelivery?.clear(); photoDelivery = nil
+        reviewPhotoMetadata.clear()
+        reviewContexts.removeAll(); reviewReferences.removeAll(); reviewThumbnails.removeAll()
+        queueRenewal?.cancel(); queueRenewal = nil; queuePhotoEpoch += 1
+
         turtles = []
         analyticsTurtles = []
         favoriteTurtles = []

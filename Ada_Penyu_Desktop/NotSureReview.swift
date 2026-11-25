@@ -50,6 +50,8 @@ struct EscalatedNotSureCandidate: Codable, Identifiable {
     let confidencePercent: Int
     var photo: NotSureReviewPhoto?
     var photoPath: String? = nil
+    var photoRevision: String? = nil
+    var photoAvailability: String? = nil
     let sampleImageName: String?
     let fingerprint: I3SFingerprint?
     let isBundledExample: Bool

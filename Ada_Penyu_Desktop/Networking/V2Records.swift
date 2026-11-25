@@ -28,12 +28,7 @@ struct IndividualDraft: Encodable {
     }
 }
 
-struct V2Photo: Decodable {
-    let url: String
-    let capturedAt: Date?
-    let uploadedAt: Date
-    enum CodingKeys: String, CodingKey { case url, capturedAt = "captured_at", uploadedAt = "uploaded_at" }
-}
+typealias V2Photo = PhotoReference
 
 struct V2Location: Decodable {
     let name: String

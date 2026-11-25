@@ -153,7 +153,7 @@ Both Debug and Release default to `https://api.donagondev.my.id`. Debug builds e
 
 Sign-in loads the actual account and organization. **Remember me** stores only rotating refresh credentials in this Mac's data-protection Keychain. Passwords and access tokens are never persisted. Launch restores a remembered session before private requests; concurrent unauthorized requests share one refresh. Sign Out clears private records, images, and workspace state and requests server-side session revocation. Keychain persistence requires an appropriately signed app; storage errors are surfaced rather than downgrading to plaintext.
 
-Profiles, sighting history, and identity-photo uploads use `/api/v2`. Authentication, favorites, dashboard/map, exports, overlays, and current photo matching use their supported `/api/v1` routes. Matching migration is recorded as a deferred checklist pending Gung's sighting workflow. See [API v2 and session setup](docs/api-v2.md).
+Profiles, sighting history, and identity-photo uploads use `/api/v2`. Authentication, favorites, dashboard/map, exports, overlays, and current photo matching use their supported `/api/v1` routes. Matching migration is recorded as a deferred checklist pending Gung's sighting workflow. See [API v2 and session setup](docs/api-v2.md). Not Sure cards load thumbnails, and the comparison panel loads originals, from `GET /api/v2/logs/{log_id}/match-results/{attempt_id}/photos`. Signed URLs stay in memory.
 
 ### Running the Local Backend Stack
 
