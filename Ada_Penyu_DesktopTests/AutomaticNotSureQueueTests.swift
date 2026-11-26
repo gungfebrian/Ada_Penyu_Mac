@@ -39,6 +39,13 @@ final class AutomaticNotSureQueueTests: XCTestCase {
     "candidates":[{"turtle_id":"\(APIFixtures.turtleID)","name":"Amina","profile_code":"000123","rank":1,"confidence":0.85,"above_threshold":true}]}
     """ }
 
+    static let desktopReview = """
+    {"coverage_percent":70,"candidate_total":1,"eligible_count":1,"compared_count":1,"excluded_count":0,
+    "parent_attempt_id":null,"rejected_candidate_ids":[],"can_create_new":false}
+    """
+    static var desktopMatch: String { String(match.trimmingCharacters(in: .whitespacesAndNewlines).dropLast()) + ",\"review\":" + desktopReview + "}" }
+    static var savedDesktopMatch: String { String(savedMatch.trimmingCharacters(in: .whitespacesAndNewlines).dropLast()) + ",\"review\":" + desktopReview + "}" }
+
     func testMetadataQueueLoadsWithoutPhotosOrMatchingAndPreservesPagination() async throws {
         var calls: [String] = []
         BackendStub.handler = { request in
@@ -58,7 +65,7 @@ final class AutomaticNotSureQueueTests: XCTestCase {
         XCTAssertEqual(store.mobileReviewRows.first?.headPhotos.first?.side, .right)
     }
 
-    func testSelectedSavedAttemptLoadsQueryOnlyAndConfirmationFailureStaysPending() async throws {
+    func testSelectedSavedDesktopAttemptLoadsQueryOnlyAndConfirmationFailureStaysPending() async throws {
         var calls: [String] = []
         var allowConfirmation = false
         let image = try XCTUnwrap(I3SSampleLibrary.sample(forFilenameOrID: "Amina1_L"))
@@ -75,8 +82,9 @@ final class AutomaticNotSureQueueTests: XCTestCase {
                 XCTAssertEqual(body?["turtle_id"]?.lowercased(), APIFixtures.turtleID)
                 return allowConfirmation ? (200, APIFixtures.data("{}")) : (409, APIFixtures.data("{\"detail\":\"Changed on another device\"}"))
             }
+            if path.hasSuffix("/review") { return (200, APIFixtures.data(Self.desktopReview)) }
             if path.hasSuffix("/queries") { return (200, APIFixtures.data("[{\"side\":\"right\",\"photo_id\":\"\(Self.photoID)\",\"sha256\":\"abc\",\"url\":\"/retained-query\"}]")) }
-            if path.hasSuffix("/match-results") { return (200, APIFixtures.page(Self.savedMatch)) }
+            if path.hasSuffix("/match-results") { return (200, APIFixtures.page(Self.savedDesktopMatch)) }
             if path == "/retained-query" || path == "/candidate-image" || path.hasSuffix("/photos/right") { return (200, bytes) }
             if path == "/api/v2/logs" { return (200, APIFixtures.page(Self.sighting)) }
             return (200, APIFixtures.data(Self.sighting))
@@ -119,8 +127,9 @@ final class AutomaticNotSureQueueTests: XCTestCase {
             if path.contains("/match-results/") && path.hasSuffix("/photos") { return (404, APIFixtures.data("{}")) }
             if path.hasSuffix("/rematch") {
                 matches += 1
-                return (200, APIFixtures.data(Self.match))
+                return (200, APIFixtures.data(Self.desktopMatch))
             }
+            if path.hasSuffix("/review") { return (200, APIFixtures.data(Self.desktopReview)) }
             if path.hasSuffix("/queries") { return (200, APIFixtures.data(matches == 0 ? "[]" : "[{\"side\":\"right\",\"photo_id\":\"\(Self.photoID)\",\"url\":\"/retained-query\"}]")) }
             if path.hasSuffix("/match-results") { return (200, APIFixtures.page(Self.savedMatch)) }
             if path == "/retained-query" { return (200, bytes) }
@@ -154,8 +163,9 @@ final class AutomaticNotSureQueueTests: XCTestCase {
                 manifests.append(body.components(separatedBy: "\r\n\r\n").dropFirst().first?.components(separatedBy: "\r\n--").first ?? "")
                 XCTAssertFalse(body.contains("filename="))
                 if manifests.count == 1 { return (503, APIFixtures.data("{\"detail\":\"Try again\"}")) }
-                return (200, APIFixtures.data(Self.match))
+                return (200, APIFixtures.data(Self.desktopMatch))
             }
+            if path.hasSuffix("/review") { return (200, APIFixtures.data(Self.desktopReview)) }
             if path.hasSuffix("/queries") { return (200, APIFixtures.data("[{\"side\":\"right\",\"photo_id\":\"\(Self.photoID)\",\"url\":\"/retained-query\"}]")) }
             if path == "/retained-query" { return (200, bytes) }
             return (200, APIFixtures.data(unsaved))
@@ -279,6 +289,7 @@ final class AutomaticNotSureQueueTests: XCTestCase {
                 return (503, APIFixtures.data("{\"detail\":\"Unavailable\"}"))
             }
             if path.hasSuffix("/match-results") { return (200, APIFixtures.page(Self.savedMatch)) }
+            if path.hasSuffix("/review") { return (200, APIFixtures.data(Self.desktopReview)) }
             if path.hasSuffix("/queries") { return (200, APIFixtures.data("[]")) }
             if path == "/retained-query" || path == "/query-image" || path == "/left-query" { return (200, bytes) }
             return (200, APIFixtures.data(paired))
