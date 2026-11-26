@@ -45,3 +45,11 @@ Deploy the backend's v2 contract and apply its required migrations, including `0
 Superpowers and Matt Pocock's skills are installed as pinned project-local copies under `.agents/skills`, with source manifests and licenses in `.agents`. They are available to subsequent Codex turns; refresh/restart the session if the skill catalog has not updated. Upstream experimental skills from Matt's `in-progress` directory are included because the complete repository set was requested; their presence does not activate them automatically for unrelated work.
 
 The iOS asset import is recorded in `asset-import.json`. Existing Mac sets and icons are retained. Imported SVG body-part assets have a namespace to avoid generated-symbol collisions; otherwise unassigned side-photo variants live in Resources/Artwork. Shared fonts and their license files are copied without changing the Mac app's typography.
+
+## Expanded desktop Not Sure review
+
+The Mac requests review_coverage70 on a new desktop review. The existing mobile match remains in history. “Didn’t find a match? Search all” expands to100 using the immutable parent query. Complete results, including weak candidates, are loaded from saved pages; counts distinguish compared reference photos, excluded turtles and explicitly rejected candidates. × Reject/Restore save to the server before changing local state.
+
+Same turtle is an audited decision. New turtle creates and links a real identity only after a complete100% search, all candidates rejected, no exclusions, sufficient source photos on both sides, and explicit photo-quality confirmation and reason. Retry keeps its decision identity. Completed server identities cannot be reopened locally. Demo/local review behavior is retained.
+
+Requires companion [backend PR16](https://github.com/abui-am/turtle-identification-be/pull/16) and compatible inference deployment. An older backend fails visibly instead of claiming desktop coverage. See the [shared design](superpowers/specs/2026-11-26-expanded-not-sure-review/design.md).

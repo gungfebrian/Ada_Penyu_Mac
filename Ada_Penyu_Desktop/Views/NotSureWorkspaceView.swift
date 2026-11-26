@@ -626,6 +626,18 @@ private struct NotSureCaseDetail: View {
     @State private var inlineError: String?
     @State private var searchRequest: UUID?
     @State private var isSearching = false
+    @State private var searchCoverage = 70
+    @State private var retryPendingSearch = false
+    @State private var queuedCrop: (rect: CGRect, rotation: Double, usePair: Bool)?
+    @State private var pageTask: Task<Void, Never>?
+    @State private var viewIsActive = false
+    @State private var isSavingCandidateReview = false
+    @State private var isLoadingMoreCandidates = false
+    @State private var newTurtleName = ""
+    @State private var newTurtleCode = ""
+    @State private var newTurtleSpecies: TurtleSpecies? = nil
+    @State private var newTurtlePhotosAdequate = false
+    @State private var newTurtleID = UUID()
     @State private var isSavingVerdict = false
     @State private var confirmation: DecisionOutcome?
     @State private var selectedChip = ""
@@ -823,7 +835,8 @@ private struct NotSureCaseDetail: View {
     }
 
     private var canConfirmSameTurtle: Bool {
-        guard isPending, !isSearching, !isSavingVerdict, let selectedCandidate else { return false }
+        guard isPending, !isSearching, !isSavingVerdict, !isSavingCandidateReview, let selectedCandidate else { return false }
+        if item.sourceLogID != nil && !store.isDemoBypassActive && item.desktopReview == nil { return false }
         return item.canRecommend(selectedCandidate)
     }
 
@@ -871,7 +884,9 @@ private struct NotSureCaseDetail: View {
                     Spacer()
                     if store.hasPendingNotSureMatch(item.id) {
                         Button("Retry match") {
-                            Task { await runLiveSearch(overridePhotoData: nil, usePairedSide: false, retryPreviousAttempt: true) }
+                            retryPendingSearch = true
+                            queuedCrop = nil
+                            searchRequest = UUID()
                         }
                         .disabled(isSearching)
                     }
@@ -924,11 +939,27 @@ private struct NotSureCaseDetail: View {
         }
         .task(id: searchRequest) {
             guard searchRequest != nil else { return }
-            await runLiveSearch(overridePhotoData: nil, usePairedSide: false)
+            if let crop = queuedCrop {
+                queuedCrop = nil
+                await runCroppedLiveSearch(rect: crop.rect, rotationDegrees: crop.rotation, usePairedSide: crop.usePair)
+            } else {
+                let retry = retryPendingSearch
+                retryPendingSearch = false
+                await runLiveSearch(overridePhotoData: nil, usePairedSide: false, retryPreviousAttempt: retry, coverage: searchCoverage)
+            }
         }
         .task(id: item.id) {
-            guard liveSearchAvailable, item.candidates.isEmpty else { return }
-            await runLiveSearch(overridePhotoData: nil, usePairedSide: false)
+            newTurtleID = UUID()
+            newTurtleName = ""
+            newTurtleCode = ""
+            newTurtleSpecies = nil
+            newTurtlePhotosAdequate = false
+            guard liveSearchAvailable else { return }
+            if item.sourceLogID != nil {
+                guard item.desktopReview == nil else { return }
+            } else { guard item.candidates.isEmpty else { return } }
+            searchCoverage = 70
+            searchRequest = UUID()
         }
         .task(id: isBlinking) {
             guard isBlinking else { return }
@@ -940,9 +971,15 @@ private struct NotSureCaseDetail: View {
         }
         .onChange(of: sightingPatchSource, initial: true) { _, _ in updatePatchSources() }
         .onChange(of: candidatePatchSource) { _, _ in updatePatchSources() }
-        .onChange(of: activeSightingSide) { _, _ in
+        .onChange(of: activeSightingSide) { _, side in
             viewports.sighting = NotSurePhotoViewport()
+            viewports.candidate = NotSurePhotoViewport()
             viewports.overlay = NotSurePhotoViewport()
+            Task {
+                do { try await store.alignNotSureCandidatePhotos(caseID: item.id, side: side) }
+                catch is CancellationError { }
+                catch { if !Task.isCancelled { inlineError = error.localizedDescription } }
+            }
         }
         .onChange(of: selectedCandidate?.id) { _, _ in
             viewports.candidate = NotSurePhotoViewport()
@@ -966,6 +1003,12 @@ private struct NotSureCaseDetail: View {
                 }
             }
         }
+        .onAppear { viewIsActive = true }
+        .onDisappear {
+            viewIsActive = false
+            pageTask?.cancel()
+            searchRequest = nil
+        }
         .sheet(item: $confirmation) { verdictSheet(for: $0) }
         .sheet(isPresented: $showsCropSheet) {
             NotSureHeadCropSheet(
@@ -979,9 +1022,15 @@ private struct NotSureCaseDetail: View {
                     showsCropSheet = false
                 },
                 onCropAndResearch: { rect, rotationDeg, usePair in
-                    Task { await runCroppedLiveSearch(rect: rect, rotationDegrees: rotationDeg, usePairedSide: usePair) }
+                    queuedCrop = (rect, rotationDeg, usePair)
+                    retryPendingSearch = false
+                    searchCoverage = 70
+                    searchRequest = UUID()
                 },
-                onCancel: { showsCropSheet = false }
+                onCancel: {
+                    if isCropResearching { searchRequest = nil }
+                    showsCropSheet = false
+                }
             )
         }
     }
@@ -1896,7 +1945,7 @@ private struct NotSureCaseDetail: View {
     private var candidateStagePane: some View {
         let candBadge: String = {
             guard let cand = selectedCandidate else { return "CANDIDATE" }
-            let score = cand.isBundledExample ? "SAMPLE" : "\(cand.confidencePercent)%"
+            let score = cand.isBundledExample ? "SAMPLE" : (item.desktopReview == nil ? "\(cand.confidencePercent)%" : "Score \(cand.confidencePercent)%")
             return "#\(cand.rank) \(cand.name) · \(score)"
         }()
         let showContoursLayer = stageMode == .contours || (stageMode == .align && !linesOnly)
@@ -2268,11 +2317,12 @@ private struct NotSureCaseDetail: View {
                             .foregroundStyle(customQueryROI != nil ? AdaColors.accent : AdaColors.secondaryInk)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isSearching || isSavingCandidateReview || isLoadingMoreCandidates || isSavingVerdict)
                     .help(liveSearchAvailable ? "Crop, level tilt & re-match" : "Crop head region")
                 }
 
                 if liveSearchAvailable {
-                    Button { searchRequest = UUID() } label: {
+                    Button { searchCoverage = 70; searchRequest = UUID() } label: {
                         if isSearching {
                             ProgressView().controlSize(.mini)
                         } else {
@@ -2282,8 +2332,21 @@ private struct NotSureCaseDetail: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .disabled(isSearching)
+                    .disabled(isSearching || isSavingCandidateReview || isLoadingMoreCandidates || isSavingVerdict)
                     .help("Search gallery again")
+                }
+            }
+
+            if let state = item.desktopReview {
+                DesktopReviewProgressCard(state: state, isSearching: isSearching,
+                    isBusy: isSearching || isSavingCandidateReview || isLoadingMoreCandidates,
+                    onSearchAll: { searchCoverage = 100; searchRequest = UUID() },
+                    onStopWaiting: { searchRequest = nil })
+            } else if isSearching {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Searching reference photos…").font(.caption)
+                    Button("Stop waiting") { searchRequest = nil }
                 }
             }
 
@@ -2316,6 +2379,26 @@ private struct NotSureCaseDetail: View {
                     }
                 }
                 .scrollIndicators(.hidden)
+            }
+
+            if store.hasMoreNotSureCandidates(item.id) {
+                Button {
+                    isLoadingMoreCandidates = true
+                    pageTask = Task {
+                        defer { isLoadingMoreCandidates = false }
+                        do { try await store.loadMoreNotSureCandidates(item.id) }
+                        catch is CancellationError { }
+                        catch { inlineError = error.localizedDescription }
+                    }
+                } label: {
+                    HStack {
+                        if isLoadingMoreCandidates { ProgressView().controlSize(.mini) }
+                        Text("Load more candidates")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isLoadingMoreCandidates || isSearching || isSavingCandidateReview)
             }
 
             if !isPending && !item.note.isEmpty {
@@ -2359,7 +2442,7 @@ private struct NotSureCaseDetail: View {
                         }
                         HStack(spacing: 4) {
                             NotSureMetaTag(
-                                title: candidate.evidenceLabel,
+                                title: item.desktopReview != nil && !candidate.isBundledExample ? "Score \(candidate.confidencePercent)%" : candidate.evidenceLabel,
                                 tint: selected ? AdaColors.navy : AdaColors.secondaryInk,
                                 background: selected ? AdaColors.navy.opacity(0.10) : AdaColors.surfaceMuted
                             )
@@ -2392,12 +2475,7 @@ private struct NotSureCaseDetail: View {
 
             if isPending && !isSearching {
                 Button {
-                    if rejected {
-                        perform(.restoreCandidate(candidate.id))
-                        if rejectedCandidates.isEmpty { showsRejected = false }
-                    } else {
-                        rejectAndAdvance(candidate)
-                    }
+                    setCandidateRejected(candidate, rejected: !rejected)
                 } label: {
                     Image(systemName: rejected ? "arrow.uturn.backward" : "xmark")
                         .font(.system(size: 10, weight: .bold))
@@ -2406,6 +2484,7 @@ private struct NotSureCaseDetail: View {
                         .background(AdaColors.surfaceMuted, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .disabled(isSavingCandidateReview || isLoadingMoreCandidates)
                 .help(rejected ? "Restore candidate" : "Not this turtle")
                 .accessibilityLabel("\(rejected ? "Restore" : "Reject") \(candidate.name)")
             }
@@ -2467,7 +2546,9 @@ private struct NotSureCaseDetail: View {
                     Label("New turtle", systemImage: "plus")
                 }
                 .buttonStyle(NotSurePillButtonStyle(.secondary, height: 38))
-                .disabled(isSearching || isCropResearching || isSavingVerdict)
+                .disabled(isSearching || isCropResearching || isSavingVerdict || isSavingCandidateReview ||
+                    (item.sourceLogID != nil && !store.isDemoBypassActive && item.desktopReview?.canCreateNew != true))
+                .help(item.desktopReview?.canCreateNew == true ? "Create a turtle from the reviewed sighting" : "Search all and rule out every candidate; both photo sides must be available")
 
                 Button {
                     if let cand = selectedCandidate {
@@ -2477,8 +2558,8 @@ private struct NotSureCaseDetail: View {
                     Label("Same turtle", systemImage: "checkmark")
                 }
                 .buttonStyle(NotSurePillButtonStyle(.primary, height: 38))
-                .disabled(!canConfirmSameTurtle || isCropResearching)
-            } else {
+                .disabled(!canConfirmSameTurtle || isCropResearching || isSavingCandidateReview || isLoadingMoreCandidates)
+            } else if !item.hasDurableIdentityDecision || store.isDemoBypassActive {
                 Button("Reopen review") {
                     if perform(.reopen) {
                         patchSession = NotSurePatchSession()
@@ -2548,7 +2629,15 @@ private struct NotSureCaseDetail: View {
                 }
             }
 
-            TextField("Optional note", text: $confirmationNote)
+            if case .newTurtle = outcome, item.sourceLogID != nil, !store.isDemoBypassActive {
+                ReviewNewTurtleFields(name: $newTurtleName, profileCode: $newTurtleCode,
+                    species: $newTurtleSpecies, photosAdequate: $newTurtlePhotosAdequate)
+            }
+
+            if let inlineError {
+                Text(inlineError).font(.caption).foregroundStyle(AdaColors.red)
+            }
+            TextField("Decision reason (required)", text: $confirmationNote)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .padding(.horizontal, 12)
@@ -2561,19 +2650,30 @@ private struct NotSureCaseDetail: View {
                 Button("Cancel") { confirmation = nil }
                     .keyboardShortcut(.cancelAction)
                     .buttonStyle(NotSurePillButtonStyle(.subtle, height: 34))
+                    .disabled(isSavingVerdict)
                 Button {
                     let finalNote = confirmationNote.trimmingCharacters(in: .whitespacesAndNewlines)
                     Task {
                         isSavingVerdict = true
                         defer { isSavingVerdict = false }
                         do {
-                            try await store.resolveNotSureCaseAndSyncBackend(item.id, action: outcome.action(note: finalNote))
+                            if case .newTurtle = outcome, item.sourceLogID != nil, !store.isDemoBypassActive {
+                                guard let species = newTurtleSpecies else { throw APIError.validation("Select the turtle species.") }
+                                let draft = IndividualDraft(id: newTurtleID, profileCode: newTurtleCode,
+                                    name: newTurtleName.trimmingCharacters(in: .whitespacesAndNewlines),
+                                    species: species.apiValue, sex: "unknown", firstSeenAt: item.createdAt)
+                                try await store.createNotSureTurtle(caseID: item.id, draft: draft,
+                                    photosAdequate: newTurtlePhotosAdequate, note: finalNote)
+                            } else {
+                                try await store.resolveNotSureCaseAndSyncBackend(item.id, action: outcome.action(note: finalNote))
+                            }
+                            guard viewIsActive else { return }
                             inlineError = nil
                             confirmation = nil
                             if let onNext { onNext() }
                         } catch {
+                            guard viewIsActive else { return }
                             inlineError = error.localizedDescription
-                            confirmation = nil
                         }
                     }
                 } label: {
@@ -2585,7 +2685,10 @@ private struct NotSureCaseDetail: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(NotSurePillButtonStyle(.primary, height: 34))
-                .disabled(confirmationNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSavingVerdict)
+                .disabled(confirmationNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSavingVerdict ||
+                    (outcome.id == "new-turtle" && item.sourceLogID != nil && !store.isDemoBypassActive &&
+                     (!newTurtlePhotosAdequate || newTurtleSpecies == nil || newTurtleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                      newTurtleCode.count != 6 || !newTurtleCode.utf8.allSatisfy { (48...57).contains($0) })))
             }
         }
         .padding(22)
@@ -2841,12 +2944,19 @@ private struct NotSureCaseDetail: View {
         withAnimation(.easeOut(duration: 0.16)) { alignPresentation = .curtain }
     }
 
-    private func rejectAndAdvance(_ candidate: EscalatedNotSureCandidate) {
-        let remainingAfter = availableCandidates.filter { $0.id != candidate.id }
-        if perform(.rejectCandidate(candidate.id)) {
-            if selectedCandidateID == candidate.id || selectedCandidate?.id == candidate.id {
-                selectedCandidateID = remainingAfter.first?.id ?? ""
-            }
+    private func setCandidateRejected(_ candidate: EscalatedNotSureCandidate, rejected: Bool) {
+        isSavingCandidateReview = true
+        Task {
+            defer { isSavingCandidateReview = false }
+            do {
+                try await store.setNotSureCandidateRejected(caseID: item.id, candidateID: candidate.id, rejected: rejected)
+                guard viewIsActive else { return }
+                inlineError = nil
+                if rejected {
+                    selectedCandidateID = availableCandidates.first(where: { $0.id != candidate.id })?.id ?? ""
+                } else if rejectedCandidates.count <= 1 { showsRejected = false }
+            } catch is CancellationError { }
+            catch { inlineError = error.localizedDescription }
         }
     }
 
@@ -3006,7 +3116,7 @@ private struct NotSureCaseDetail: View {
         await runLiveSearch(overridePhotoData: preparedJPEG, usePairedSide: usePairedSide)
     }
 
-    private func runLiveSearch(overridePhotoData: Data?, usePairedSide: Bool, retryPreviousAttempt: Bool = false) async {
+    private func runLiveSearch(overridePhotoData: Data?, usePairedSide: Bool, retryPreviousAttempt: Bool = false, coverage: Int = 70) async {
         guard liveSearchAvailable, !isSearching else { return }
         isSearching = true
         inlineError = nil
@@ -3016,7 +3126,8 @@ private struct NotSureCaseDetail: View {
                 for: item.id,
                 overridePhotoData: overridePhotoData,
                 usePairedSide: usePairedSide,
-                retryPreviousAttempt: retryPreviousAttempt
+                retryPreviousAttempt: retryPreviousAttempt,
+                reviewCoverage: coverage
             )
             guard !Task.isCancelled else { return }
             showsRejected = false
@@ -3472,11 +3583,12 @@ private struct NotSureHeadCropSheet: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(AdaColors.secondaryInk)
                 Spacer()
-                Button("Cancel", action: onCancel)
+                Button(isSearching ? "Stop waiting" : "Cancel", action: onCancel)
                     .keyboardShortcut(.cancelAction)
                     .buttonStyle(NotSurePillButtonStyle(.subtle, height: 34))
                 Button("Apply contours") { onApplyLocal(cropRect) }
                     .buttonStyle(NotSurePillButtonStyle(.secondary, height: 34))
+                    .disabled(isSearching)
                 if liveSearchAvailable {
                     Button {
                         onCropAndResearch(cropRect, rotationDegrees, usePairedSide)

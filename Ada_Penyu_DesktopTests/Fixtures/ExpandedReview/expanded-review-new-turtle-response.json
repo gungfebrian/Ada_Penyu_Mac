@@ -1,0 +1,105 @@
+{
+  "id": "532c82a0-d1de-45a6-a19a-a53865faeaae",
+  "observed_at": "2026-10-21T07:12:44Z",
+  "event": {
+    "type": "sighting"
+  },
+  "location": {
+    "name": "Sample beach",
+    "coordinates": null
+  },
+  "condition": null,
+  "body_inspection": null,
+  "body_findings_revision": 0,
+  "body_spots": [],
+  "tags": [],
+  "is_draft": false,
+  "turtle_id": "4a8bbacb-0550-44ff-b802-ca01b451c888",
+  "behavior": null,
+  "measurements": null,
+  "vital_status": null,
+  "identification_attempt_id": "2ee57322-5cc3-4602-a811-20714a97b65a",
+  "identification": {
+    "method": "new_individual",
+    "confidence": null
+  },
+  "match_result": {
+    "review": {
+      "coverage_percent": 100,
+      "candidate_total": 1,
+      "eligible_count": 1,
+      "compared_count": 1,
+      "excluded_count": 0,
+      "parent_attempt_id": "0030d04a-9618-48cc-a485-4887a983c2d1",
+      "rejected_candidate_ids": [
+        "78752435-2fa4-45e6-979e-ec0cd50f5c4f"
+      ],
+      "can_create_new": false
+    },
+    "id": "2ee57322-5cc3-4602-a811-20714a97b65a",
+    "created_at": "2026-11-26T14:56:31.323449Z",
+    "query_sides": [
+      "left"
+    ],
+    "match_state": "review",
+    "agreed": null,
+    "gallery_size": 1,
+    "candidates": [
+      {
+        "turtle_id": "78752435-2fa4-45e6-979e-ec0cd50f5c4f",
+        "name": "Turtle 0",
+        "profile_code": "000000",
+        "rank": 1,
+        "confidence": 1.0,
+        "above_threshold": false
+      }
+    ]
+  },
+  "notes": null,
+  "photos": [
+    {
+      "revision": "e653f94f-71ea-4cfd-ba5f-566f888c83c8",
+      "thumbnail": {
+        "revision": "jpeg-v1-384-q80",
+        "url": "/api/v2/photo-assets/e653f94f-71ea-4cfd-ba5f-566f888c83c8/thumbnail",
+        "download_url": null,
+        "expires_at": null,
+        "width": 64,
+        "height": 64,
+        "content_type": "image/jpeg"
+      },
+      "id": "687974e8-69c7-4fc5-a42a-fa950ed1e90d",
+      "url": "/api/v2/logs/532c82a0-d1de-45a6-a19a-a53865faeaae/photos/687974e8-69c7-4fc5-a42a-fa950ed1e90d",
+      "download_url": null,
+      "expires_at": null,
+      "captured_at": null,
+      "uploaded_at": "2026-11-26T14:56:31.357106Z",
+      "marking_id": null,
+      "side": "right",
+      "body_spot_id": null
+    },
+    {
+      "revision": "f36b78e3-28e9-4f08-a8be-6991c8552a38",
+      "thumbnail": {
+        "revision": "jpeg-v1-384-q80",
+        "url": "/api/v2/photo-assets/f36b78e3-28e9-4f08-a8be-6991c8552a38/thumbnail",
+        "download_url": null,
+        "expires_at": null,
+        "width": 64,
+        "height": 64,
+        "content_type": "image/jpeg"
+      },
+      "id": "8df399b5-e574-4274-89fe-1106019d20e6",
+      "url": "/api/v2/logs/532c82a0-d1de-45a6-a19a-a53865faeaae/photos/8df399b5-e574-4274-89fe-1106019d20e6",
+      "download_url": null,
+      "expires_at": null,
+      "captured_at": null,
+      "uploaded_at": "2026-11-26T14:56:31.270499Z",
+      "marking_id": null,
+      "side": "left",
+      "body_spot_id": null
+    }
+  ],
+  "created_at": "2026-11-26T14:56:31.258534Z",
+  "updated_at": "2026-11-26T14:56:31.424780Z"
+}
