@@ -70,6 +70,28 @@ final class ExpandedReviewTests: XCTestCase {
         XCTAssertEqual(store.escalatedNotSureCases.first?.matchAttemptID, firstID)
     }
 
+    func testCameraMatchWithoutPhotoIDUsesTheSightingHeadPhoto() async throws {
+        let bytes = try image()
+        var manifests: [String] = []
+        BackendStub.handler = { request in
+            if request.url!.path.hasSuffix("/rematch") {
+                manifests.append(String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "")
+                return (200, try self.result(self.firstID))
+            }
+            if request.url!.path.hasSuffix("/queries") {
+                return (200, APIFixtures.data("[{\"side\":\"right\",\"photo_id\":null,\"url\":\"/retained-query\"}]"))
+            }
+            return self.fallback(request, bytes: bytes, reviewState: self.state())
+        }
+        defer { BackendStub.handler = nil }
+        let store = try await store()
+        try await store.prepareMobileReview(logID)
+        try await store.startDesktopReviewIfNeeded(try XCTUnwrap(store.escalatedNotSureCases.first?.id))
+        let manifest = try XCTUnwrap(manifests.first)
+        XCTAssertTrue(manifest.contains("\"review_coverage\":70"))
+        XCTAssertTrue(manifest.lowercased().contains(AutomaticNotSureQueueTests.photoID))
+    }
+
     func testExplicitExpansionUsesParentAndAdoptsServerRejections() async throws {
         let bytes = try image(); var manifests: [String] = []; var expanded = false
         BackendStub.handler = { request in
@@ -281,6 +303,74 @@ final class ExpandedReviewTests: XCTestCase {
         XCTAssertEqual(Set(inputs.compactMap { $0["side"] as? String }),Set(["left","right"]))
         XCTAssertEqual(inputs.count,2)
         XCTAssertNotNil(store.escalatedNotSureCases.first?.companion)
+    }
+
+    func testSeventyPercentRetrySearchesBothHeadPhotos() async throws {
+        let bytes = try image()
+        let leftID = "30000000-0000-4000-8000-000000000098"
+        var sighting = try XCTUnwrap(JSONSerialization.jsonObject(with: APIFixtures.data(AutomaticNotSureQueueTests.sighting)) as? [String: Any])
+        var photos = sighting["photos"] as! [[String: Any]]
+        photos.append(["id": leftID, "url": "/retained-query", "side": "left", "marking_id": NSNull(), "body_spot_id": NSNull()])
+        sighting["photos"] = photos
+        let source = try JSONSerialization.data(withJSONObject: sighting)
+        var manifest: [String: Any] = [:]
+        BackendStub.handler = { request in
+            let path = request.url!.path
+            if path == "/api/v2/logs/\(self.logID.uuidString.lowercased())" { return (200, source) }
+            if path.hasSuffix("/rematch") {
+                let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+                let jsonText = body.components(separatedBy: "\r\n\r\n").dropFirst().first?.components(separatedBy: "\r\n--").first ?? ""
+                manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(jsonText.utf8)) as? [String: Any])
+                var result = try XCTUnwrap(JSONSerialization.jsonObject(with: self.result(self.firstID)) as? [String: Any])
+                result["query_sides"] = ["left", "right"]
+                result["queries"] = [
+                    ["side": "left", "photo_id": leftID, "url": "/retained-query"],
+                    ["side": "right", "photo_id": AutomaticNotSureQueueTests.photoID, "url": "/retained-query"]
+                ]
+                return (200, try JSONSerialization.data(withJSONObject: result))
+            }
+            return self.fallback(request, bytes: bytes, reviewState: self.state())
+        }
+        defer { BackendStub.handler = nil }
+        let store = try await store()
+        try await store.prepareMobileReview(logID)
+        let id = try XCTUnwrap(store.escalatedNotSureCases.first?.id)
+        try await store.findNotSureCandidates(for: id, reviewCoverage: 70)
+        let inputs = try XCTUnwrap(manifest["inputs"] as? [[String: Any]])
+        XCTAssertEqual(manifest["review_coverage"] as? Int, 70)
+        XCTAssertEqual(Set(inputs.compactMap { $0["side"] as? String }), Set(["left", "right"]))
+        XCTAssertEqual(Set(inputs.compactMap { ($0["photo_id"] as? String)?.lowercased() }), Set([leftID, AutomaticNotSureQueueTests.photoID]))
+    }
+
+    func testChoosingTheOtherSideLoadsThatCandidatePhoto() async throws {
+        let bytes = try image()
+        let metadata = """
+        {"attempt_id":"\(firstID.uuidString)","queries":[{"side":"right","photo_id":"\(AutomaticNotSureQueueTests.photoID)","photo":{"url":"/retained-query"}}],
+        "candidates":[
+        {"turtle_id":"\(turtleID.uuidString)","side":"right","availability":"available","photo":{"url":"/candidate-image"}},
+        {"turtle_id":"\(turtleID.uuidString)","side":"left","availability":"available","photo":{"url":"/left-candidate"}}]}
+        """
+        var requested: [String] = []
+        BackendStub.handler = { request in
+            let path = request.url!.path
+            if path.hasSuffix("/left-candidate") {
+                requested.append(path)
+                return (200, bytes)
+            }
+            if path.hasSuffix("/photos") { return (200, APIFixtures.data(metadata)) }
+            if path.hasSuffix("/rematch") { return (200, try self.result(self.firstID)) }
+            return self.fallback(request, bytes: bytes, reviewState: self.state())
+        }
+        defer { BackendStub.handler = nil }
+        let store = try await store()
+        try await store.prepareMobileReview(logID)
+        let id = try XCTUnwrap(store.escalatedNotSureCases.first?.id)
+        try await store.startDesktopReviewIfNeeded(id)
+        XCTAssertEqual(store.escalatedNotSureCases.first?.candidates.first?.side, .right)
+        try await store.alignNotSureCandidatePhotos(caseID: id, side: .left)
+        XCTAssertEqual(store.escalatedNotSureCases.first?.candidates.first?.side, .left)
+        XCTAssertEqual(store.escalatedNotSureCases.first?.candidates.first?.photoPath, "/left-candidate")
+        XCTAssertEqual(requested, ["/left-candidate"])
     }
 
     func testNewDesktopPreparationRejectsLegacyRematchResponse() async throws {

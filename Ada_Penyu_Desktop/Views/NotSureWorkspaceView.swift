@@ -971,9 +971,15 @@ private struct NotSureCaseDetail: View {
         }
         .onChange(of: sightingPatchSource, initial: true) { _, _ in updatePatchSources() }
         .onChange(of: candidatePatchSource) { _, _ in updatePatchSources() }
-        .onChange(of: activeSightingSide) { _, _ in
+        .onChange(of: activeSightingSide) { _, side in
             viewports.sighting = NotSurePhotoViewport()
+            viewports.candidate = NotSurePhotoViewport()
             viewports.overlay = NotSurePhotoViewport()
+            Task {
+                do { try await store.alignNotSureCandidatePhotos(caseID: item.id, side: side) }
+                catch is CancellationError { }
+                catch { if !Task.isCancelled { inlineError = error.localizedDescription } }
+            }
         }
         .onChange(of: selectedCandidate?.id) { _, _ in
             viewports.candidate = NotSurePhotoViewport()

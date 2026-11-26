@@ -152,6 +152,7 @@ final class AppStore: ObservableObject {
     private var photoDelivery: PhotoDelivery?
     private var reviewContexts: [UUID: ReviewPhotoContext] = [:]
     private var reviewReferences: [UUID: [String: PhotoReference]] = [:]
+    private var reviewSideReferences: [UUID: [String: PhotoReference]] = [:]
     private var reviewReferenceEpoch: [UUID: Int] = [:]
     private lazy var reviewPhotoMetadata = ReviewPhotoMetadataStore { [weak self] context in
         guard let self else { throw CancellationError() }
@@ -543,6 +544,35 @@ final class AppStore: ObservableObject {
         if let identityKey { pendingReviewIdentities.removeValue(forKey: identityKey) }
     }
 
+    /// A camera match stores the query without a photo id. The sighting head photo
+    /// saved afterward is the reference a desktop search can send.
+    private func linkedReviewInputs(_ inputs: [ReviewQueryInput], sighting: MobileReviewSighting) -> [ReviewQueryInput] {
+        inputs.map { input in
+            guard input.photoID == nil, input.file == nil else { return input }
+            let sameSide = sighting.headPhotos.filter { $0.side == input.side }
+            if sameSide.count == 1, let photo = sameSide.first {
+                return ReviewQueryInput(photoID: photo.id, side: input.side, file: nil)
+            }
+            if sighting.headPhotos.count == 1, let photo = sighting.headPhotos.first,
+               photo.side == nil || photo.side == input.side {
+                return ReviewQueryInput(photoID: photo.id, side: input.side, file: nil)
+            }
+            return input
+        }
+    }
+
+    /// A 70% gallery retry compares every uniquely sided head photo. A one-sided
+    /// sighting, a cropped photo, and a 100% expansion stay on their existing inputs.
+    private func pairedReviewInputs(_ inputs: [ReviewQueryInput], sighting: MobileReviewSighting) -> [ReviewQueryInput] {
+        let linked = linkedReviewInputs(inputs, sighting: sighting)
+        guard let defaults = sighting.defaultInputs,
+              Set(defaults.map(\.side)) == Set([TurtlePhotoSide.left, .right]) else { return linked }
+        var bySide: [TurtlePhotoSide: ReviewQueryInput] = [:]
+        for input in defaults { bySide[input.side] = input }
+        for input in linked { bySide[input.side] = input }
+        return [TurtlePhotoSide.left, .right].compactMap { bySide[$0] }
+    }
+
     func startDesktopReviewIfNeeded(_ caseID: UUID) async throws {
         guard let item = escalatedNotSureCases.first(where: { $0.id == caseID }),
               item.desktopReview == nil, item.decision == .pending,
@@ -906,6 +936,7 @@ final class AppStore: ObservableObject {
             companion = NotSureReviewPhoto(data: try await queryBytes(other))
         }
         var freshReferences: [String: PhotoReference] = [:]
+        var sideReferences: [String: PhotoReference] = [:]
         let references = result.candidates.map { candidate in
             let side: TurtlePhotoSide = primary.0
             let delivered = metadata?.candidates.first { $0.turtleID == candidate.turtle.id && $0.side == side }
@@ -914,6 +945,11 @@ final class AppStore: ObservableObject {
             if metadata != nil { ref = delivered?.photo }
             else { ref = legacy ?? (candidate.turtle.identityPhotos == nil ? PhotoReference(url: "/api/v2/individuals/\(candidate.turtle.id.uuidString.lowercased())/photos/\(side.rawValue)") : nil) }
             if let ref { freshReferences[candidate.turtle.id.uuidString] = ref }
+            for photoSide in TurtlePhotoSide.allCases {
+                if let sideRef = candidateSideReference(candidate, side: photoSide, metadata: metadata) {
+                    sideReferences["\(candidate.turtle.id.uuidString)|\(photoSide.rawValue)"] = sideRef
+                }
+            }
             return EscalatedNotSureCandidate(id: candidate.turtle.id.uuidString, rank: candidate.rank,
                 name: candidate.turtle.name, profileCode: candidate.turtle.profileCode, side: side, sideMatches: true,
                 dateText: "", location: "", confidencePercent: Int((candidate.confidence * 100).rounded()), photo: nil,
@@ -955,6 +991,7 @@ final class AppStore: ObservableObject {
         item.reviewInputs = selected.map { ReviewQueryInput(photoID: $0.2, side: $0.0, file: nil) }
         reviewContexts[item.id] = context
         reviewReferences[item.id] = freshReferences
+        reviewSideReferences[item.id] = sideReferences
         reviewReferenceEpoch[item.id] = observedEpoch
         reviewThumbnails = reviewThumbnails.filter { $0.key.hasPrefix(item.id.uuidString + ":") }
 
@@ -986,6 +1023,41 @@ final class AppStore: ObservableObject {
         }
         reviewReferences[caseID] = refs
         reviewReferenceEpoch[caseID] = reviewPhotoMetadata.epoch(context)
+    }
+
+    private func candidateSideReference(_ candidate: ReviewMatchResult.Candidate, side: TurtlePhotoSide, metadata: ReviewPhotoDelivery?) -> PhotoReference? {
+        if let metadata, let pinned = metadata.candidates.first(where: { $0.turtleID == candidate.turtle.id && $0.side == side }) {
+            return pinned.photo
+        }
+        let legacy = side == .left ? candidate.turtle.identityPhotos?.left : candidate.turtle.identityPhotos?.right
+        if let legacy { return legacy }
+        guard candidate.turtle.identityPhotos == nil else { return nil }
+        return PhotoReference(url: "/api/v2/individuals/\(candidate.turtle.id.uuidString.lowercased())/photos/\(side.rawValue)")
+    }
+
+    /// The Left/Right chip changes which head is on screen. Candidate photos follow that side.
+    func alignNotSureCandidatePhotos(caseID: UUID, side: TurtlePhotoSide) async throws {
+        guard let item = escalatedNotSureCases.first(where: { $0.id == caseID }) else { return }
+        let generation = sessionGeneration
+        let scope = notSureReviewScope
+        let attempt = item.matchAttemptID
+        for candidate in item.candidates where candidate.side != side {
+            guard let ref = reviewSideReferences[caseID]?["\(candidate.id)|\(side.rawValue)"] else { continue }
+            guard let bytes = try await deliveryLoader().data(for: ref, representation: .original,
+                renewal: candidateRenewal(caseID: caseID, candidateID: candidate.id, side: side)),
+                  NSImage(data: bytes) != nil else { continue }
+            try checkReviewContext(generation, scope: scope)
+            guard var current = escalatedNotSureCases.first(where: { $0.id == caseID }), current.matchAttemptID == attempt,
+                  let index = current.candidates.firstIndex(where: { $0.id == candidate.id && $0.side != side }) else { continue }
+            current.candidates[index].side = side
+            current.candidates[index].sideMatches = true
+            current.candidates[index].photo = NotSureReviewPhoto(data: bytes)
+            current.candidates[index].photoPath = ref.url
+            current.candidates[index].photoRevision = ref.revision
+            reviewReferences[caseID]?[candidate.id] = ref
+            reviewThumbnails[caseID.uuidString + ":" + candidate.id] = NSImage(data: bytes)
+            try saveNotSureCase(current)
+        }
     }
 
     func loadNotSureCandidatePhoto(caseID: UUID, candidateID: String) async throws {
@@ -1118,13 +1190,27 @@ final class AppStore: ObservableObject {
             let pending: PendingReviewAttempt
             if retryPreviousAttempt {
                 guard let retry = pendingReviewAttempts[logID] else { throw APIError.validation("There is no failed match to retry.") }
-                pending = retry
+                let inputs = (retry.command.reviewCoverage == 70 && retry.crop == nil)
+                    ? pairedReviewInputs(retry.command.inputs, sighting: sighting)
+                    : linkedReviewInputs(retry.command.inputs, sighting: sighting)
+                if inputs == retry.command.inputs {
+                    pending = retry
+                } else {
+                    pending = PendingReviewAttempt(command: ReviewRematchCommand(
+                        attemptID: UUID(), inputs: inputs, reviewCoverage: retry.command.reviewCoverage,
+                        parentAttemptID: retry.command.parentAttemptID), crop: retry.crop)
+                    pendingReviewAttempts[logID] = pending
+                }
             } else {
-                guard let sources = (usePairedSide ? sighting.defaultInputs : nil) ?? item.reviewInputs ?? sighting.defaultInputs,
+                let remembered = (usePairedSide ? sighting.defaultInputs : nil) ?? item.reviewInputs ?? sighting.defaultInputs
+                guard let sources = remembered.map({ linkedReviewInputs($0, sighting: sighting) }),
                       let primary = sources.first(where: { $0.side == item.side }) else {
                     throw ReviewInputSelectionRequired(sighting: sighting)
                 }
                 var inputs = (usePairedSide || reviewCoverage == 100) ? sources : [primary]
+                if reviewCoverage == 70, overridePhotoData == nil {
+                    inputs = pairedReviewInputs(inputs, sighting: sighting)
+                }
                 if overridePhotoData != nil, let index = inputs.firstIndex(where: { $0.side == item.side }) {
                     inputs[index] = ReviewQueryInput(photoID: primary.photoID, side: primary.side, file: "query_1")
                 }
@@ -1366,7 +1452,7 @@ final class AppStore: ObservableObject {
         photoCache.removeAll()
         photoDelivery?.clear(); photoDelivery = nil
         reviewPhotoMetadata.clear()
-        reviewContexts.removeAll(); reviewReferences.removeAll(); reviewReferenceEpoch.removeAll(); reviewThumbnails.removeAll()
+        reviewContexts.removeAll(); reviewReferences.removeAll(); reviewSideReferences.removeAll(); reviewReferenceEpoch.removeAll(); reviewThumbnails.removeAll()
         queueRenewal?.cancel(); queueRenewal = nil; queuePhotoEpoch += 1
 
         turtles = []

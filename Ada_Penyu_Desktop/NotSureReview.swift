@@ -43,8 +43,8 @@ struct EscalatedNotSureCandidate: Codable, Identifiable {
     let rank: Int
     let name: String
     let profileCode: String
-    let side: TurtlePhotoSide
-    let sideMatches: Bool
+    var side: TurtlePhotoSide
+    var sideMatches: Bool
     let dateText: String
     let location: String
     let confidencePercent: Int
