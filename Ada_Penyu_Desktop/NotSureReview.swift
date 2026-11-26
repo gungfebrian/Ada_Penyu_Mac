@@ -135,6 +135,7 @@ struct EscalatedNotSureCase: Codable, Identifiable {
     let isExample: Bool
     var matchAttemptID: UUID? = nil
     var reviewInputs: [ReviewQueryInput]? = nil
+    var desktopReview: DesktopReviewState? = nil
     var sourceLogID: UUID? = nil
     var createdAt = Date()
     private(set) var updatedAt = Date()
@@ -153,6 +154,10 @@ struct EscalatedNotSureCase: Codable, Identifiable {
     var queryPhotoData: Data { photo.data }
     var companionImage: NSImage? { companion?.image }
     var isFromMobileQueue: Bool { sourceLogID != nil }
+    var hasDurableIdentityDecision: Bool {
+        sourceLogID != nil && desktopReview != nil &&
+        (decision == .recommendedMatch || unknownOutcome == .newIndividual)
+    }
 
     var decisionSummaryTitle: String {
         switch decision {
@@ -172,6 +177,12 @@ struct EscalatedNotSureCase: Codable, Identifiable {
         self.side = side
         if self.photo.data != photo.data { self.photo = photo }
         if self.companion?.data != companion?.data { self.companion = companion }
+    }
+
+    /// Rejections belong to server-pinned evidence, not merely a local candidate ID.
+    mutating func adoptDesktopReview(_ state: DesktopReviewState) {
+        desktopReview = state
+        rejectedCandidateIDs = Set(state.rejectedCandidateIDs.map(\.uuidString))
     }
 
     func verifiedPairs(for candidateID: String) -> [PatternPairLink] {

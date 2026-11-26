@@ -22,9 +22,10 @@ extension APIClient {
         path: String,
         method: String = "POST",
         queryItems: [URLQueryItem] = [],
-        parts: [MultipartPart]
+        parts: [MultipartPart],
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> T {
-        let (data, _) = try await requestMultipartData(path: path, method: method, queryItems: queryItems, parts: parts)
+        let (data, _) = try await requestMultipartData(path: path, method: method, queryItems: queryItems, parts: parts, timeoutInterval: timeoutInterval)
         do {
             return try JSONDecoder.api.decode(T.self, from: data)
         } catch {
@@ -37,7 +38,8 @@ extension APIClient {
         method: String = "POST",
         queryItems: [URLQueryItem] = [],
         parts: [MultipartPart],
-        accept: String = "application/json"
+        accept: String = "application/json",
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> (Data, HTTPURLResponse) {
         let boundary = "Boundary-\(UUID().uuidString)"
         var body = Data()
@@ -62,24 +64,25 @@ extension APIClient {
             queryItems: queryItems,
             body: body,
             contentType: "multipart/form-data; boundary=\(boundary)",
-            accept: accept
+            accept: accept,
+            timeoutInterval: timeoutInterval
         )
     }
 
     func requestData(path: String, method: String, queryItems: [URLQueryItem] = [], body: Data? = nil,
-                     contentType: String = "application/json", accept: String = "application/json") async throws -> (Data, HTTPURLResponse) {
+                     contentType: String = "application/json", accept: String = "application/json", timeoutInterval: TimeInterval? = nil) async throws -> (Data, HTTPURLResponse) {
         if let direct = URL(string: path), direct.scheme != nil {
             guard ["http", "https"].contains(direct.scheme?.lowercased() ?? "") else { throw APIError.invalidResponse }
             let trusted = config.isTrustedOrigin(direct)
             let spec = APIRequest(method: method, path: path, body: body, contentType: contentType,
-                acceptedStatuses: Set(200..<300), authentication: trusted ? .required : .none, accept: accept, queryItems: queryItems)
+                acceptedStatuses: Set(200..<300), timeoutInterval: timeoutInterval, authentication: trusted ? .required : .none, accept: accept, queryItems: queryItems)
             let generation = authorization?.generation
             let result = try await sendHTTP(spec, url: direct)
             if let generation { try authorization?.check(generation) }
             return (result.value, result.http)
         }
         let result = try await sendHTTP(APIRequest(method: method, path: path, body: body, contentType: contentType,
-            acceptedStatuses: Set(200..<300), accept: accept, queryItems: queryItems))
+            acceptedStatuses: Set(200..<300), timeoutInterval: timeoutInterval, accept: accept, queryItems: queryItems))
         return (result.value, result.http)
     }
 }

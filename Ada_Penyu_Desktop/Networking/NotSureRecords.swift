@@ -54,7 +54,11 @@ struct ReviewRematchCommand: Encodable {
     let attemptID: UUID
     let inputs: [ReviewQueryInput]
     var limit = 8
-    enum CodingKeys: String, CodingKey { case inputs, limit, attemptID = "attempt_id" }
+    var reviewCoverage: Int? = nil
+    var parentAttemptID: UUID? = nil
+    enum CodingKeys: String, CodingKey {
+        case inputs, limit, attemptID = "attempt_id", reviewCoverage = "review_coverage", parentAttemptID = "parent_attempt_id"
+    }
 }
 
 struct ReviewQueryEvidence: Decodable {
@@ -69,6 +73,7 @@ struct ReviewMatchResult: Decodable {
     let querySides: [TurtlePhotoSide]
     let candidates: [Candidate]
     var queries: [ReviewQueryEvidence]?
+    var review: DesktopReviewState? = nil
     struct Candidate: Decodable {
         let rank: Int
         let confidence: Double
@@ -96,7 +101,7 @@ struct ReviewMatchResult: Decodable {
         struct Photos: Decodable { let left: V2Photo?; let right: V2Photo? }
         enum CodingKeys: String, CodingKey { case id, name, profileCode = "profile_code", identityPhotos = "identity_photos" }
     }
-    enum CodingKeys: String, CodingKey { case id, candidates, queries, querySides = "query_sides" }
+    enum CodingKeys: String, CodingKey { case id, candidates, queries, review, querySides = "query_sides" }
 }
 
 struct ReviewInputSelectionRequired: LocalizedError {

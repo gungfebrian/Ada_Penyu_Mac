@@ -360,6 +360,11 @@ protocol TurtleRepository: AnyObject {
     func reviewQueries(logID: UUID, attemptID: UUID) async throws -> [ReviewQueryEvidence]
     func rematchReview(logID: UUID, command: ReviewRematchCommand, crop: Data?) async throws -> ReviewMatchResult
     func confirmReview(logID: UUID, attemptID: UUID, turtleID: UUID) async throws
+    func reviewCandidatePage(logID: UUID, attemptID: UUID, limit: Int, offset: Int) async throws -> ReviewCandidatePage
+    func reviewState(logID: UUID, attemptID: UUID) async throws -> DesktopReviewState
+    func saveReviewRejection(logID: UUID, attemptID: UUID, command: ReviewRejectionCommand) async throws -> DesktopReviewState
+    func confirmDesktopReview(logID: UUID, command: ReviewIdentityCommand) async throws
+    func createReviewTurtle(logID: UUID, attemptID: UUID, command: ReviewNewTurtleCommand) async throws
     func listPendingSightings(limit: Int) async throws -> [PendingMobileSighting]
     func listLogs(identifiedOnly: Bool, limit: Int, offset: Int) async throws -> Page<OrganizationLog>
     func fetchLog(id: UUID) async throws -> OrganizationLog
@@ -392,6 +397,11 @@ extension TurtleRepository {
     func reviewQueries(logID: UUID, attemptID: UUID) async throws -> [ReviewQueryEvidence] { [] }
     func rematchReview(logID: UUID, command: ReviewRematchCommand, crop: Data?) async throws -> ReviewMatchResult { throw NotSureReviewError.searchUnavailable }
     func confirmReview(logID: UUID, attemptID: UUID, turtleID: UUID) async throws { throw NotSureReviewError.searchUnavailable }
+    func reviewCandidatePage(logID: UUID, attemptID: UUID, limit: Int, offset: Int) async throws -> ReviewCandidatePage { throw NotSureReviewError.searchUnavailable }
+    func reviewState(logID: UUID, attemptID: UUID) async throws -> DesktopReviewState { throw NotSureReviewError.searchUnavailable }
+    func saveReviewRejection(logID: UUID, attemptID: UUID, command: ReviewRejectionCommand) async throws -> DesktopReviewState { throw NotSureReviewError.searchUnavailable }
+    func confirmDesktopReview(logID: UUID, command: ReviewIdentityCommand) async throws { throw NotSureReviewError.searchUnavailable }
+    func createReviewTurtle(logID: UUID, attemptID: UUID, command: ReviewNewTurtleCommand) async throws { throw NotSureReviewError.searchUnavailable }
 
     func matchPhoto(imageData: Data, side: TurtlePhotoSide, limit: Int = 10) async throws -> MatchSearchOutcome {
         MatchSearchOutcome(querySide: side, gallerySize: 0, matchState: "no_match", candidates: [], isDualPair: false, pairAgreed: nil)
@@ -2506,9 +2516,13 @@ extension RemoteTurtleRepository {
         try await client.get("api/v2/logs/\(id.uuidString.lowercased())")
     }
     func reviewMatchResults(logID: UUID) async throws -> [ReviewMatchResult] {
-        let page: V2Page<ReviewMatchResult> = try await client.get("api/v2/logs/\(logID.uuidString.lowercased())/match-results",
-            queryItems: [URLQueryItem(name: "limit", value: "1"), URLQueryItem(name: "offset", value: "0")])
-        return page.items
+        let path = "api/v2/logs/\(logID.uuidString.lowercased())/match-results"
+        let query = [URLQueryItem(name: "limit", value: "1"), URLQueryItem(name: "offset", value: "0")]
+        let desktop: V2Page<ReviewMatchResult> = try await client.get(path,
+            queryItems: query + [URLQueryItem(name: "review_only", value: "true")])
+        if !desktop.items.isEmpty { return desktop.items }
+        let legacy: V2Page<ReviewMatchResult> = try await client.get(path, queryItems: query)
+        return legacy.items
     }
     func reviewPhotoMetadata(logID: UUID, attemptID: UUID) async throws -> ReviewPhotoDelivery? {
         do {
@@ -2523,7 +2537,11 @@ extension RemoteTurtleRepository {
     func rematchReview(logID: UUID, command: ReviewRematchCommand, crop: Data?) async throws -> ReviewMatchResult {
         var parts = [MultipartPart(name: "manifest", filename: nil, contentType: "application/json", data: try JSONEncoder().encode(command))]
         if let crop { parts.append(MultipartPart(name: "query_1", filename: "query.jpg", contentType: "image/jpeg", data: crop)) }
-        return try await client.requestMultipart(path: "api/v2/logs/\(logID.uuidString.lowercased())/rematch", parts: parts)
+        do {
+            return try await client.requestMultipart(path: "api/v2/logs/\(logID.uuidString.lowercased())/rematch", parts: parts, timeoutInterval: 3600)
+        } catch let error as APIError where error.statusCode == 422 && command.reviewCoverage != nil {
+            throw APIError.validation("The desktop review request was rejected. Check the photo inputs and ensure the server supports 70%/100% review. " + error.localizedDescription)
+        }
     }
     func confirmReview(logID: UUID, attemptID: UUID, turtleID: UUID) async throws {
         struct Confirmation: Encodable { let attempt_id: UUID; let turtle_id: UUID }

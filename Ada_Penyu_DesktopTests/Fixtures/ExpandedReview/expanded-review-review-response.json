@@ -1,0 +1,12 @@
+{
+  "coverage_percent": 100,
+  "candidate_total": 1,
+  "eligible_count": 1,
+  "compared_count": 1,
+  "excluded_count": 0,
+  "parent_attempt_id": "0030d04a-9618-48cc-a485-4887a983c2d1",
+  "rejected_candidate_ids": [
+    "78752435-2fa4-45e6-979e-ec0cd50f5c4f"
+  ],
+  "can_create_new": true
+}

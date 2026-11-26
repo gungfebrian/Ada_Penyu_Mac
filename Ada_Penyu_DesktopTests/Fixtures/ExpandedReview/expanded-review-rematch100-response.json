@@ -1,0 +1,64 @@
+{
+  "query_sides": [
+    "left"
+  ],
+  "match_state": "review",
+  "agreed": null,
+  "gallery_size": 53,
+  "candidates": [
+    {
+      "rank": 1,
+      "confidence": 0.5,
+      "above_threshold": false,
+      "turtle": {
+        "id": "ca8fea2b-eafc-4d0f-b480-b84c471a53be",
+        "profile_code": "000000",
+        "name": "Turtle 0",
+        "species": "green",
+        "sex": "unknown",
+        "identity_photos": {
+          "left": {
+            "revision": "d9ef3ed3-fcc9-49a8-8b9b-821d1a75d977",
+            "thumbnail": null,
+            "id": "65857edd-1e4f-41c7-9fb9-efade7ba38f9",
+            "url": "/api/v2/photo-assets/d9ef3ed3-fcc9-49a8-8b9b-821d1a75d977/original",
+            "download_url": null,
+            "expires_at": null,
+            "captured_at": null,
+            "uploaded_at": "2026-11-26T14:56:30.460988Z"
+          },
+          "right": null
+        },
+        "summary": {
+          "total_sightings": 0,
+          "latest_sighting": null,
+          "last_recorded_condition": null,
+          "latest_measurements": null,
+          "last_body_inspection": null
+        },
+        "tags": []
+      }
+    }
+  ],
+  "review": {
+    "coverage_percent": 100,
+    "candidate_total": 53,
+    "eligible_count": 53,
+    "compared_count": 53,
+    "excluded_count": 0,
+    "parent_attempt_id": "7bb4e623-871b-4edd-a332-d647c8479bdf",
+    "rejected_candidate_ids": [],
+    "can_create_new": false
+  },
+  "id": "431fe28f-dbdd-4681-b0af-0536f9219842",
+  "log_id": "9ddcb771-7fff-4b19-81f2-11f52ce2dd75",
+  "created_at": "2026-11-26T14:56:30.817040Z",
+  "queries": [
+    {
+      "side": "left",
+      "photo_id": "36c94973-3a68-4e05-8b87-4542ea591685",
+      "sha256": "67561fcbe26d3419db422820e9c636e8d7b807680fac1722e703850a2837ec67",
+      "url": "/api/v2/logs/9ddcb771-7fff-4b19-81f2-11f52ce2dd75/match-results/431fe28f-dbdd-4681-b0af-0536f9219842/queries/1"
+    }
+  ]
+}
